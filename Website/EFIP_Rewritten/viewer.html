@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <title>Artifact Viewer</title>
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://unpkg.com/three@0.158.0/build/three.module.js",
+      "three/examples/jsm/": "https://unpkg.com/three@0.158.0/examples/jsm/"
+    }
+  }
+  </script>
+  <link rel="stylesheet" href="css/style.css" />
+</head>
+<body class="viewer-body">
+
+  <a id="backLink" class="pill-button" href="index.html">&larr; Back to gallery</a>
+  <div id="status" class="pill-button status-pill">Loading model…</div>
+
+  <div id="infoPanelWrapper">
+    <button id="infoToggle" class="pill-button">Artifact Info &#x25BC;</button>
+    <div id="infoPanel">
+      <h2 id="infoName"></h2>
+      <span id="infoType" class="type-badge"></span>
+      <p id="infoDescription"></p>
+    </div>
+  </div>
+
+  <div id="lightingPanelWrapper">
+    <button id="lightingToggle" class="pill-button">Lighting &#x25BC;</button>
+    <div id="lightingPanel">
+      <label class="slider-row">
+        <div class="slider-row-header">
+          <span>Ambient brightness</span>
+          <output id="ambientValue">1.6</output>
+        </div>
+        <input type="range" id="ambientSlider" min="0" max="3" step="0.05" value="1.6" />
+      </label>
+      <label class="slider-row">
+        <div class="slider-row-header">
+          <span>Directional brightness</span>
+          <output id="directionalValue">1.4</output>
+        </div>
+        <input type="range" id="directionalSlider" min="0" max="3" step="0.05" value="1.4" />
+      </label>
+      <label class="slider-row">
+        <div class="slider-row-header">
+          <span>Light azimuth</span>
+          <output id="azimuthValue">45°</output>
+        </div>
+        <input type="range" id="azimuthSlider" min="-90" max="90" step="1" value="45" />
+      </label>
+      <label class="slider-row">
+        <div class="slider-row-header">
+          <span>Light elevation</span>
+          <output id="elevationValue">35°</output>
+        </div>
+        <input type="range" id="elevationSlider" min="-90" max="90" step="1" value="35" />
+      </label>
+    </div>
+  </div>
+
+  <div id="backgroundPanelWrapper">
+    <button id="backgroundToggle" class="pill-button">Background &#x25BC;</button>
+    <div id="backgroundPanel">
+      <label class="toggle-row">
+        <span>Show background</span>
+        <input type="checkbox" id="backgroundEnable" />
+      </label>
+      <label class="slider-row">
+        <div class="slider-row-header">
+          <span>Choose background</span>
+        </div>
+        <select id="backgroundSelect"></select>
+      </label>
+    </div>
+  </div>
+
+  <div id="handTrackingPanelWrapper">
+    <button id="handTrackingToggle" class="pill-button">Hand Tracking &#x25BC;</button>
+    <div id="handTrackingPanel">
+      <p class="panel-hint">
+        Uses your webcam to control a magnifying lens with your hand.
+        Point at the model to reveal a lit, zoomed-in view of the
+        surface; pinch to freeze the lens in place.
+      </p>
+      <div class="button-row">
+        <button id="handTrackingStart" class="panel-button primary">Start</button>
+        <button id="handTrackingStop" class="panel-button">Stop</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="gestureLabel"></div>
+  <video id="cameraPreview" autoplay playsinline muted></video>
+
+  <div id="rotationLockNote" class="pill-button"></div>
+
+  <script type="module" src="js/viewer.js"></script>
+</body>
+</html>

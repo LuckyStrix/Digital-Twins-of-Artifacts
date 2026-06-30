@@ -1,0 +1,16 @@
+{
+  "backgrounds": [
+    {
+      "id": "demo-colors",
+      "name": "Demo Colors",
+      "faces": {
+        "px": "demo-colors/px.png",
+        "nx": "demo-colors/nx.png",
+        "py": "demo-colors/py.png",
+        "ny": "demo-colors/ny.png",
+        "pz": "demo-colors/pz.png",
+        "nz": "demo-colors/nz.png"
+      }
+    }
+  ]
+}

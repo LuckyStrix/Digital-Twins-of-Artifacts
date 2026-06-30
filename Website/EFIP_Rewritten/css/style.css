@@ -1,0 +1,638 @@
+/* Cinzel (headings) and Lora (body/UI) — OFL-licensed, self-hosted from
+   Google Fonts. Cinzel's carved-inscription feel fits an artifact archive;
+   Lora keeps long descriptions and small UI text readable. */
+@font-face {
+  font-family: "Cinzel";
+  src: url("../assets/font/Cinzel-600.woff2") format("woff2");
+  font-weight: 600;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Cinzel";
+  src: url("../assets/font/Cinzel-700.woff2") format("woff2");
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Lora";
+  src: url("../assets/font/Lora-400.woff2") format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Lora";
+  src: url("../assets/font/Lora-400italic.woff2") format("woff2");
+  font-weight: 400;
+  font-style: italic;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Lora";
+  src: url("../assets/font/Lora-500.woff2") format("woff2");
+  font-weight: 500;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Lora";
+  src: url("../assets/font/Lora-600.woff2") format("woff2");
+  font-weight: 600;
+  font-style: normal;
+  font-display: swap;
+}
+
+:root {
+  --cream-light: #f3e7c6;
+  --cream-mid: #e8d5a5;
+  --cream-dark: #dcc08a;
+  --burgundy: #800020;
+  --ink: #222;
+  --paper: #fffaf0;
+  --shadow: rgba(0, 0, 0, 0.15);
+  --font-heading: "Cinzel", Georgia, "Times New Roman", serif;
+  --font-body: "Lora", Georgia, "Times New Roman", serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: var(--font-body);
+  background: linear-gradient(135deg, var(--cream-light) 0%, var(--cream-mid) 50%, var(--cream-dark) 100%);
+  color: var(--ink);
+  line-height: 1.5;
+}
+
+a {
+  color: var(--burgundy);
+}
+
+code {
+  background: rgba(0, 0, 0, 0.08);
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 0.9em;
+}
+
+/* ── Header ── */
+.site-header {
+  text-align: center;
+  padding: 64px 24px 48px;
+}
+
+.site-header .kicker {
+  margin: 0 0 6px;
+  font-size: 1.1rem;
+  font-style: italic;
+  letter-spacing: 0.04em;
+}
+
+.site-header h1 {
+  margin: 0 0 18px;
+  font-family: var(--font-heading);
+  font-size: 2.6rem;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  line-height: 1.25;
+}
+
+.site-header .project-description {
+  max-width: 680px;
+  margin: 0 auto;
+  font-size: 1.05rem;
+  opacity: 0.85;
+}
+
+.placeholder-text {
+  outline: 2px dashed rgba(128, 0, 32, 0.4);
+  outline-offset: 6px;
+  border-radius: 6px;
+}
+
+/* ── Main layout / sections ── */
+main {
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 0 24px;
+}
+
+.section {
+  background: rgba(255, 250, 240, 0.55);
+  border-radius: 20px;
+  padding: 40px 32px;
+  margin-bottom: 48px;
+  box-shadow: 0 4px 18px var(--shadow);
+}
+
+.section-heading {
+  text-align: center;
+  margin-bottom: 32px;
+}
+
+.section-heading h2 {
+  margin: 0 0 10px;
+  font-family: var(--font-heading);
+  font-size: 1.9rem;
+  font-weight: 600;
+}
+
+.section-subtitle {
+  margin: 0 auto;
+  max-width: 620px;
+  opacity: 0.8;
+}
+
+.status-message {
+  text-align: center;
+  opacity: 0.75;
+  font-style: italic;
+}
+
+/* ── Artifact groups & cards ── */
+.artifact-type-group {
+  margin-bottom: 36px;
+}
+
+.artifact-type-group:last-child {
+  margin-bottom: 0;
+}
+
+.type-heading {
+  font-family: var(--font-heading);
+  font-size: 1.3rem;
+  font-weight: 600;
+  margin: 0 0 16px;
+  padding-bottom: 8px;
+  border-bottom: 2px solid var(--cream-dark);
+  color: var(--burgundy);
+}
+
+.card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+  gap: 22px;
+}
+
+.artifact-card {
+  background: var(--paper);
+  border-radius: 16px;
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  box-shadow: 0 3px 10px var(--shadow);
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.artifact-card:hover {
+  transform: translateY(-4px);
+  box-shadow: 0 8px 20px var(--shadow);
+}
+
+.artifact-card .card-icon {
+  width: 84px;
+  height: 84px;
+  object-fit: contain;
+  margin-bottom: 12px;
+}
+
+.artifact-card h4 {
+  margin: 0 0 8px;
+  font-family: var(--font-body);
+  font-size: 1.15rem;
+  font-weight: 600;
+}
+
+.type-badge {
+  display: inline-block;
+  background: var(--cream-dark);
+  color: var(--burgundy);
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  padding: 4px 10px;
+  border-radius: 999px;
+  margin-bottom: 10px;
+}
+
+.artifact-card .card-description {
+  font-size: 0.92rem;
+  opacity: 0.85;
+  margin: 0 0 16px;
+  flex-grow: 1;
+}
+
+.card-link {
+  display: inline-block;
+  text-decoration: none;
+  font-weight: 600;
+  color: var(--burgundy);
+  border: 1.5px solid var(--burgundy);
+  padding: 8px 16px;
+  border-radius: 999px;
+  transition: background 0.2s ease, color 0.2s ease;
+}
+
+.card-link:hover {
+  background: var(--burgundy);
+  color: var(--cream-light);
+}
+
+/* ── Systems section (blank, user-filled) ── */
+.placeholder-block {
+  border: 2px dashed rgba(128, 0, 32, 0.35);
+  border-radius: 14px;
+  padding: 28px;
+  text-align: center;
+  opacity: 0.85;
+}
+
+/* ── Footer / contact ── */
+.site-footer {
+  text-align: center;
+  padding: 40px 24px 64px;
+}
+
+.site-footer h2 {
+  margin: 0 0 12px;
+  font-family: var(--font-heading);
+  font-size: 1.6rem;
+  font-weight: 600;
+}
+
+.site-footer .placeholder-note {
+  opacity: 0.7;
+  font-size: 0.95rem;
+}
+
+/* ══════════════════════════════════════════════════════════
+   Viewer page
+   ══════════════════════════════════════════════════════════ */
+
+body.viewer-body {
+  margin: 0;
+  overflow: hidden;
+  background: #14110d;
+  color: #fff;
+  touch-action: none;
+}
+
+body.viewer-body canvas {
+  display: block;
+}
+
+.pill-button {
+  position: fixed;
+  background: rgba(0, 0, 0, 0.65);
+  color: #fff;
+  text-decoration: none;
+  border: none;
+  padding: 8px 16px;
+  border-radius: 10px;
+  font-family: var(--font-body);
+  font-size: 13px;
+  cursor: pointer;
+  z-index: 50;
+  transition: background 0.2s ease;
+}
+
+.pill-button:hover {
+  background: rgba(255, 255, 255, 0.18);
+}
+
+#backLink {
+  top: 12px;
+  left: 12px;
+}
+
+.status-pill {
+  top: 12px;
+  right: 12px;
+  cursor: default;
+  transition: opacity 1s ease, background 0.2s ease;
+}
+
+#infoPanelWrapper {
+  position: fixed;
+  bottom: 24px;
+  left: 12px;
+  z-index: 50;
+}
+
+#infoToggle {
+  position: static;
+}
+
+#infoPanel {
+  display: none;
+  position: absolute;
+  bottom: 44px;
+  left: 0;
+  background: rgba(240, 217, 160, 0.95);
+  color: #1a1a1a;
+  padding: 16px 18px;
+  border-radius: 12px;
+  width: 320px;
+  max-width: 80vw;
+  box-shadow: 0 8px 25px rgba(0, 0, 0, 0.45);
+}
+
+#infoPanel.open {
+  display: block;
+}
+
+#infoPanel h2 {
+  margin: 0 0 8px;
+  font-family: var(--font-body);
+  font-size: 1.2rem;
+  font-weight: 600;
+  color: var(--burgundy);
+}
+
+#infoPanel p {
+  margin: 10px 0 0;
+  font-size: 0.92rem;
+  white-space: pre-line;
+}
+
+#lightingPanelWrapper {
+  position: fixed;
+  bottom: 24px;
+  right: 12px;
+  z-index: 50;
+}
+
+#lightingToggle {
+  position: static;
+}
+
+#lightingPanel {
+  display: none;
+  position: absolute;
+  bottom: 44px;
+  right: 0;
+  background: rgba(240, 217, 160, 0.95);
+  color: #1a1a1a;
+  padding: 18px 20px;
+  border-radius: 12px;
+  width: 420px;
+  max-width: 92vw;
+  box-shadow: 0 8px 25px rgba(0, 0, 0, 0.45);
+}
+
+#lightingPanel.open {
+  display: block;
+}
+
+.slider-row {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 16px;
+  font-size: 0.8rem;
+}
+
+.slider-row:last-child {
+  margin-bottom: 0;
+}
+
+.slider-row-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+}
+
+.slider-row input[type="range"] {
+  width: 100%;
+  height: 22px;
+  accent-color: var(--burgundy);
+}
+
+.slider-row output {
+  font-weight: 600;
+  color: var(--burgundy);
+}
+
+#backgroundPanelWrapper {
+  position: fixed;
+  bottom: 70px;
+  right: 12px;
+  z-index: 50;
+}
+
+#backgroundToggle {
+  position: static;
+}
+
+#backgroundPanel {
+  display: none;
+  position: absolute;
+  bottom: 44px;
+  right: 0;
+  background: rgba(240, 217, 160, 0.95);
+  color: #1a1a1a;
+  padding: 18px 20px;
+  border-radius: 12px;
+  width: 300px;
+  max-width: 92vw;
+  box-shadow: 0 8px 25px rgba(0, 0, 0, 0.45);
+}
+
+#backgroundPanel.open {
+  display: block;
+}
+
+.toggle-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 16px;
+  font-size: 0.8rem;
+}
+
+.toggle-row input[type="checkbox"] {
+  width: 18px;
+  height: 18px;
+  accent-color: var(--burgundy);
+  cursor: pointer;
+}
+
+#backgroundPanel select {
+  width: 100%;
+  padding: 7px 8px;
+  border-radius: 8px;
+  border: 1px solid rgba(0, 0, 0, 0.25);
+  background: var(--paper);
+  color: #1a1a1a;
+  font-family: var(--font-body);
+  font-size: 0.85rem;
+}
+
+#backgroundPanel select:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+#handTrackingPanelWrapper {
+  position: fixed;
+  bottom: 116px;
+  right: 12px;
+  z-index: 50;
+}
+
+/* Hides a stacked panel's button+toggle while a different one in the
+   same corner is open, so an open panel never renders behind another
+   button's fixed position. */
+.panel-hidden {
+  display: none;
+}
+
+#handTrackingToggle {
+  position: static;
+}
+
+#handTrackingPanel {
+  display: none;
+  position: absolute;
+  bottom: 44px;
+  right: 0;
+  background: rgba(240, 217, 160, 0.95);
+  color: #1a1a1a;
+  padding: 18px 20px;
+  border-radius: 12px;
+  width: 300px;
+  max-width: 92vw;
+  box-shadow: 0 8px 25px rgba(0, 0, 0, 0.45);
+}
+
+#handTrackingPanel.open {
+  display: block;
+}
+
+.panel-hint {
+  font-size: 0.78rem;
+  line-height: 1.45;
+  margin: 0 0 14px;
+  opacity: 0.85;
+}
+
+.button-row {
+  display: flex;
+  gap: 10px;
+}
+
+.panel-button {
+  flex: 1;
+  border: 1.5px solid var(--burgundy);
+  background: transparent;
+  color: var(--burgundy);
+  padding: 8px 12px;
+  border-radius: 999px;
+  font-family: var(--font-body);
+  font-size: 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.2s ease, color 0.2s ease;
+}
+
+.panel-button:hover {
+  background: rgba(128, 0, 32, 0.08);
+}
+
+.panel-button.primary {
+  background: var(--burgundy);
+  color: var(--cream-light);
+}
+
+.panel-button.primary:hover {
+  background: #660019;
+}
+
+.panel-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  background: transparent;
+  color: var(--burgundy);
+}
+
+#gestureLabel {
+  position: fixed;
+  bottom: 64px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(0, 0, 0, 0.65);
+  padding: 5px 12px;
+  border-radius: 8px;
+  font-size: 11px;
+  z-index: 50;
+  color: #f0d9a0;
+  opacity: 0;
+  transition: opacity 0.3s;
+}
+
+#gestureLabel.visible {
+  opacity: 1;
+}
+
+#cameraPreview {
+  position: fixed;
+  right: 12px;
+  bottom: 162px;
+  width: 96px;
+  max-width: 20vw;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  opacity: 0.7;
+  z-index: 15;
+  transform: scaleX(-1);
+  background: #000;
+  display: none;
+}
+
+@media (max-width: 700px) {
+  #cameraPreview {
+    width: 72px;
+    max-width: 24vw;
+  }
+}
+
+#rotationLockNote {
+  display: none;
+  bottom: 24px;
+  left: 50%;
+  transform: translateX(-50%);
+  cursor: default;
+}
+
+#rotationLockNote.visible {
+  display: block;
+}
+
+@media (max-width: 600px) {
+  .site-header h1 {
+    font-size: 2rem;
+  }
+
+  .section {
+    padding: 28px 18px;
+  }
+
+  #infoPanel,
+  #lightingPanel,
+  #backgroundPanel,
+  #handTrackingPanel {
+    width: 80vw;
+  }
+}

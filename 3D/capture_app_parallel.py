@@ -65,7 +65,7 @@ class CaptureApp:
         ttk.Label(cfg, text="Camera Delay (s):").grid(row=4, column=0, sticky="w", pady=(6, 0))
         delay_row = ttk.Frame(cfg)
         delay_row.grid(row=4, column=1, columnspan=2, sticky="w", padx=6, pady=(6, 0))
-        self.delay_var = tk.StringVar(value="0.12")
+        self.delay_var = tk.StringVar(value="0.3")
         ttk.Entry(delay_row, textvariable=self.delay_var, width=8).grid(row=0, column=0)
         ttk.Label(delay_row, text="delay between each camera's shot (0 = all at once)",
                   foreground="#666").grid(row=0, column=1, padx=(8, 0))

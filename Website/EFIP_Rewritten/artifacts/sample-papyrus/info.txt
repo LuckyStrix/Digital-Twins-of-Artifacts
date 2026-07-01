@@ -1,9 +1,5 @@
-Name: Book of the Dead Fragment (Demo Artifact - Front)
+Name: Demo Artifact from Cary Collection
 Type: papyrus
-Description: This is a placeholder artifact included so the gallery and
-3D viewer have something to display out of the box. Delete this whole
-folder once real artifacts from the modeling pipeline have been added.
+Description: This is a modern replica of what a papyrus manuscript would have looked like, given to the project for testing purposes. 
 
-It stands in for a fragment of an ancient Egyptian funerary papyrus
-scroll, and demonstrates how an artifact's name, type, and description
-flow from a folder in artifacts/ into a gallery card and viewer page.
+It stands in for a papyrus scroll, and demonstrates how an artifact's name, type, and description flow from a folder in artifacts/ into a gallery card and viewer page.

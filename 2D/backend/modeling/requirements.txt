@@ -1,0 +1,21 @@
+# Python dependencies for backend/modeling/modeling_pipeline.py
+#
+# Install with:
+#   pip install -r requirements.txt
+# (or use the "Install Python Dependencies" button in run.py)
+
+numpy<2.0
+opencv-python-headless   # headless avoids conflicting with the opencv-python-headless
+                         # that rembg installs as its own dependency
+scipy
+pillow
+tifffile
+imagecodecs   # required: the input scroll/calibration TIFFs are LZW-compressed,
+              # and tifffile needs imagecodecs to decode LZW TIFFs (Stage 4 will crash without it)
+
+# Required by Stage 0 (Alpha Mask Generation), which runs on every full
+# pipeline execution by default (SKIP_MASK_GENERATION = False).
+# Pinned to 2.0.65: rembg>=2.0.66 requires numpy>=2.3.0, which conflicts
+# with the numpy<2.0 pin above.
+rembg==2.0.65
+onnxruntime

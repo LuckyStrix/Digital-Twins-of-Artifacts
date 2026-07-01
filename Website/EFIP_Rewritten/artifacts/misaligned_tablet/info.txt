@@ -1,0 +1,9 @@
+Name: Tablet (bad model) (Demo Artifact)
+Type: tablet
+Description: This is a placeholder artifact included so the gallery and
+3D viewer have something to display out of the box. Delete this whole
+folder once real artifacts from the modeling pipeline have been added.
+
+It stands in for a fragment of an ancient Egyptian funerary papyrus
+scroll, and demonstrates how an artifact's name, type, and description
+flow from a folder in artifacts/ into a gallery card and viewer page.

@@ -1,4 +1,4 @@
-Name: Book of the Dead Fragment (Demo Artifact)
+Name: Book of the Dead Fragment (Demo Artifact - Front)
 Type: papyrus
 Description: This is a placeholder artifact included so the gallery and
 3D viewer have something to display out of the box. Delete this whole

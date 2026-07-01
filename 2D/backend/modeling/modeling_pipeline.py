@@ -967,8 +967,8 @@ def _process_render_file(in_path: Path, out_path: Path) -> None:
     row_ax, col_ax = spatial_axes(img)
     h_in, w_in     = img.shape[row_ax], img.shape[col_ax]
 
-    img = rotate_ccw90(img)   # first 90° CCW
-    img = rotate_ccw90(img)   # second 90° CCW -> 180° total
+    #img = rotate_ccw90(img)   # first 90° CCW
+    #img = rotate_ccw90(img)   # second 90° CCW -> 180° total
     img = pad_to_pot(img)
 
     row_ax2, _ = spatial_axes(img)

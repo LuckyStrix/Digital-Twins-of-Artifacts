@@ -48,7 +48,7 @@ if __name__ == "__main__":
     # Write captures into the app's top-level data/ folder so the launcher
     # (run.py) can find them. This script lives in <app>/backend/capture/, so
     # the app root is three levels up. Originally a hard-coded OneDrive path.
-    app_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    app_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
     img_dir = os.path.join(app_root, "data", folder_name)
     os.makedirs(img_dir, exist_ok=True)
 

@@ -1,0 +1,10 @@
+# Core pipeline dependencies
+open3d
+numpy
+rembg[gpu]          # background removal; use rembg (no [gpu]) on CPU-only machines
+pillow              # photo gallery in the GUI
+
+# rembg model: birefnet-general is the default; others download on first use
+# System dependencies (install via apt, not pip):
+#   colmap
+#   exiftool

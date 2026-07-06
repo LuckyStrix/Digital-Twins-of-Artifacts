@@ -3,6 +3,7 @@ import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { OBJLoader } from "three/examples/jsm/loaders/OBJLoader.js";
 import { MTLLoader } from "three/examples/jsm/loaders/MTLLoader.js";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
+import { TrackballControls } from "three/examples/jsm/controls/TrackballControls.js";
 import { FilesetResolver, HandLandmarker } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14";
 
 // .glb and loose .gltf (+ .bin + textures) both go through GLTFLoader.
@@ -578,14 +579,29 @@ function loadScene(modelPath, mtlPath, artifactType) {
   revealLight.visible = false;
   scene.add(revealLight, revealLight.target);
 
-  const controls = new OrbitControls(camera, renderer.domElement);
-  controls.enableDamping = true;
-  controls.dampingFactor = 0.08;
-
+  let controls;
   if (isRotationLocked(artifactType)) {
+    // Papyrus and other locked types: OrbitControls with rotation disabled,
+    // leaving pan/zoom intact.
+    controls = new OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true;
+    controls.dampingFactor = 0.08;
     controls.enableRotate = false;
     rotationLockNote.textContent = "Rotation locked for this artifact type";
     rotationLockNote.classList.add("visible");
+  } else {
+    // Tablets (and anything not rotation-locked) can be spun freely in any
+    // direction. OrbitControls clamps the vertical/polar angle to (0, PI)
+    // via spherical.makeSafe(), so it can never roll over the poles no
+    // matter how min/maxPolarAngle are set. TrackballControls has no such
+    // clamp — it gives true unbounded rotation on every axis.
+    controls = new TrackballControls(camera, renderer.domElement);
+    controls.rotateSpeed = 3.0;
+    controls.zoomSpeed = 1.2;
+    controls.panSpeed = 0.8;
+    controls.staticMoving = false;
+    controls.dynamicDampingFactor = 0.08;
+    controls.handleResize();
   }
 
   ambientLight = new THREE.AmbientLight(0xffffff, DEFAULTS.ambient);
@@ -648,6 +664,8 @@ function loadScene(modelPath, mtlPath, artifactType) {
     renderer.setSize(window.innerWidth, window.innerHeight);
     renderer.getDrawingBufferSize(drawingBufferSize);
     sceneTarget.setSize(drawingBufferSize.x, drawingBufferSize.y);
+    // TrackballControls caches the viewport size for its rotate/pan math.
+    if (controls.handleResize) controls.handleResize();
   });
 
   function animate() {

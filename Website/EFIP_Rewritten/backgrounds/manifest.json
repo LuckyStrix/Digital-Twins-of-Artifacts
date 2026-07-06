@@ -1,6 +1,18 @@
 {
   "backgrounds": [
     {
+      "id": "boring",
+      "name": "Boring",
+      "faces": {
+        "px": "boring/px.png",
+        "nx": "boring/nx.png",
+        "py": "boring/py.png",
+        "ny": "boring/ny.png",
+        "pz": "boring/pz.png",
+        "nz": "boring/nz.png"
+      }
+    },
+    {
       "id": "demo-colors",
       "name": "Demo Colors",
       "faces": {

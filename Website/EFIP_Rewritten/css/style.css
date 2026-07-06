@@ -250,13 +250,101 @@ main {
   color: var(--cream-light);
 }
 
-/* ── Systems section (blank, user-filled) ── */
+/* ── Systems section ── */
 .placeholder-block {
   border: 2px dashed rgba(128, 0, 32, 0.35);
   border-radius: 14px;
   padding: 28px;
   text-align: center;
   opacity: 0.85;
+}
+
+/* Two roomy system cards, each filling half the section width. */
+.systems-grid {
+  grid-template-columns: 1fr 1fr;
+}
+
+.system-card {
+  background: var(--paper);
+  border-radius: 16px;
+  padding: 28px;
+  display: flex;
+  flex-direction: column;
+  text-align: left;
+  box-shadow: 0 3px 10px var(--shadow);
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.system-card:hover {
+  transform: translateY(-4px);
+  box-shadow: 0 8px 20px var(--shadow);
+}
+
+.system-card .type-badge {
+  align-self: flex-start;
+}
+
+.system-card h3 {
+  margin: 0 0 12px;
+  font-family: var(--font-heading);
+  font-size: 1.35rem;
+  font-weight: 600;
+  color: var(--burgundy);
+}
+
+.system-purpose {
+  margin: 0 0 20px;
+  opacity: 0.88;
+}
+
+.system-detail {
+  margin-bottom: 18px;
+}
+
+.system-detail h4 {
+  margin: 0 0 6px;
+  font-family: var(--font-body);
+  font-size: 0.8rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--burgundy);
+  opacity: 0.9;
+}
+
+.system-detail p {
+  margin: 0;
+  font-size: 0.95rem;
+  opacity: 0.85;
+}
+
+.system-steps {
+  margin: 0;
+  padding-left: 1.2em;
+  font-size: 0.95rem;
+  opacity: 0.85;
+}
+
+.system-steps li {
+  margin-bottom: 6px;
+}
+
+.system-steps li::marker {
+  color: var(--burgundy);
+  font-weight: 600;
+}
+
+.system-meta {
+  margin: 4px 0 18px;
+  font-size: 0.85rem;
+  font-style: italic;
+  opacity: 0.7;
+}
+
+/* Push the docs link to the bottom so cards of unequal length align. */
+.system-card .card-link {
+  margin-top: auto;
+  align-self: flex-start;
 }
 
 /* ── Footer / contact ── */
@@ -634,5 +722,12 @@ body.viewer-body canvas {
   #backgroundPanel,
   #handTrackingPanel {
     width: 80vw;
+  }
+}
+
+@media (max-width: 900px) {
+  .systems-grid {
+    grid-template-columns: 1fr;
+    max-width: 100%;
   }
 }

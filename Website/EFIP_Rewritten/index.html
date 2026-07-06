@@ -36,16 +36,81 @@
     <section id="systems" class="section">
       <div class="section-heading">
         <h2>Our Systems</h2>
-        <p class="section-subtitle placeholder-text">
-          TODO — this section is intentionally blank.
+        <p class="section-subtitle">
+          We built two purpose-designed imaging systems, each pairing a custom
+          capture rig with an automated modeling pipeline. Which one an artifact
+          uses depends on whether its shape carries meaning in three dimensions.
         </p>
       </div>
-      <div class="placeholder-block">
-        <p>
-          Replace this block (inside <code>#systems</code> in <code>index.html</code>)
-          with information about your capture and modeling systems — imaging
-          rigs, hardware, software pipeline, etc.
-        </p>
+
+      <div class="card-grid systems-grid">
+
+        <article class="system-card">
+          <span class="type-badge">2D &middot; Photometric Stereo</span>
+          <h3>Papyrus &amp; Flat Manuscripts</h3>
+          <p class="system-purpose">
+            For objects that need fine surface detail but little real depth —
+            papyrus, parchment, and other largely flat manuscripts. Instead of
+            reconstructing geometry, it recovers how the surface responds to
+            light to reveal texture, ink, and relief.
+          </p>
+
+          <div class="system-detail">
+            <h4>Capture rig</h4>
+            <p>
+              A DSLR tethered over USB, paired with an Arduino-driven
+              directional lighting array. It shoots the manuscript once per
+              light direction, capturing a set of same-frame images that differ
+              only in where the light comes from.
+            </p>
+          </div>
+
+          <div class="system-detail">
+            <h4>Modeling pipeline</h4>
+            <ol class="system-steps">
+              <li><strong>Directional-light capture</strong> — the rig fires each light in turn and saves the frames.</li>
+              <li><strong>Photometric stereo</strong> — the frames are combined into normal, albedo, and detail maps.</li>
+              <li><strong>Rendering</strong> — a Three.js / Vite stage bakes those maps into a textured <code>.glb</code> model.</li>
+              <li><strong>Viewer</strong> — the model opens in the interactive viewer above.</li>
+            </ol>
+          </div>
+
+          <p class="system-meta">Runs on Windows &middot; DSLR + Arduino lighting rig</p>
+          <a class="card-link" href="https://github.com/LuckyStrix/Digital-Twins-of-Artifacts/tree/main/2D" target="_blank" rel="noopener">Documentation &#8599;</a>
+        </article>
+
+        <article class="system-card">
+          <span class="type-badge">3D &middot; Photogrammetry</span>
+          <h3>Cuneiform Tablets &amp; Objects</h3>
+          <p class="system-purpose">
+            For artifacts whose form matters in every dimension — cuneiform
+            tablets, seals, and other objects with genuine depth. It
+            reconstructs true 3D geometry from many overlapping photographs.
+          </p>
+
+          <div class="system-detail">
+            <h4>Capture rig</h4>
+            <p>
+              A multi-camera rig, coordinated by an Arduino, photographs the
+              artifact from many angles at once so every surface is seen from
+              multiple viewpoints.
+            </p>
+          </div>
+
+          <div class="system-detail">
+            <h4>Modeling pipeline</h4>
+            <ol class="system-steps">
+              <li><strong>Background removal</strong> — each photo is isolated to just the artifact.</li>
+              <li><strong>COLMAP reconstruction</strong> — GPU-accelerated (CUDA) structure-from-motion and dense stereo build a point cloud.</li>
+              <li><strong>Alignment</strong> — FPFH feature matching merges the clouds from each side into one.</li>
+              <li><strong>Meshing</strong> — Open3D Poisson reconstruction turns the cloud into a textured model.</li>
+            </ol>
+          </div>
+
+          <p class="system-meta">Runs on WSL2 + NVIDIA GPU &middot; multi-camera rig</p>
+          <a class="card-link" href="https://github.com/LuckyStrix/Digital-Twins-of-Artifacts/tree/main/3D" target="_blank" rel="noopener">Documentation &#8599;</a>
+        </article>
+
       </div>
     </section>
 

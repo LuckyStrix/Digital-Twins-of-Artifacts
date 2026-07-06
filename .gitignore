@@ -1,1 +1,8 @@
 data/
+
+# Per-pillar Python virtualenvs
+.venv/
+
+# 3D: locally built CUDA COLMAP binary + its source/build tree (see 3D/Modeling/BUILDING_COLMAP.md)
+3D/Modeling/colmap_local
+3D/Modeling/colmap-src/

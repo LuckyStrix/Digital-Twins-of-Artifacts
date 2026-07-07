@@ -31,6 +31,18 @@ It defaults to the top-level data/ folder (where captures land); a fresh capture
 makes its own data/<timestamp>/ folder active, and "Select working image set"
 points it at any other scan folder.
 
+Optionally you can tick "Scan both sides of the object". Capture then shoots two
+scan sets (pausing so you can flip the object) into side1/ and side2/ subfolders
+of one working folder, and the modeling and rendering steps run once per side,
+each producing its own maps/ and model/ inside that side's folder:
+
+  <active folder>/
+    side1/  allLight.tiff ... wco.tiff   maps/   model/render.glb
+    side2/  allLight.tiff ... wco.tiff   maps/   model/render.glb
+
+When the box is left unticked everything behaves exactly as before (a single
+flat scan set with its own maps/ and model/ directly in the working folder).
+
 Usage:
     python3 run.py
 
@@ -66,10 +78,11 @@ import threading
 import time
 import urllib.request
 import webbrowser
+from datetime import datetime
 from pathlib import Path
 
 import tkinter as tk
-from tkinter import filedialog, scrolledtext
+from tkinter import filedialog, messagebox, scrolledtext
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Paths
@@ -102,6 +115,13 @@ CAPTURE_TIFFS = [
 MAPS_SUBDIR  = "maps"
 MODEL_SUBDIR = "model"
 GLB_NAME     = "render.glb"
+
+# Optional two-sided capture. When the user opts to scan both sides of the
+# object, the scroll scans (and the maps/ and model/ the pipeline derives from
+# them) live in these subfolders of the working folder instead of directly in
+# it. Single-sided captures keep the historic flat layout (scans directly in
+# the working folder), so nothing changes when only one side is scanned.
+SIDE_SUBDIRS = ("side1", "side2")
 
 # The render-ready maps the modeling pipeline produces (Stage 4 output) and the
 # renderer consumes. Used both to detect "maps already present" and to copy them
@@ -157,6 +177,9 @@ class PipelineApp:
         CAPTURE_DATA_DIR.mkdir(parents=True, exist_ok=True)
         self.active_dir = CAPTURE_DATA_DIR
 
+        # Whether Capture scans both sides of the object (see SIDE_SUBDIRS).
+        self.two_sides_var = tk.BooleanVar(value=False)
+
         self._build_ui()
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
         self.root.after(100, self._poll_log_queue)
@@ -204,8 +227,19 @@ class PipelineApp:
         select_btn = tk.Button(active_frame,
                                text="Select working image set (choose the active scan folder)",
                                command=self.on_select_folder, anchor="w")
-        select_btn.pack(fill=tk.X, padx=8, pady=(2, 8))
+        select_btn.pack(fill=tk.X, padx=8, pady=(2, 4))
         self.buttons.append(select_btn)
+
+        # When ticked, Capture (and Run Everything) scans both sides of the
+        # object into side1/ and side2/ subfolders, and the modeling / rendering
+        # steps produce their own outputs for each side. Left unticked, the
+        # pipeline behaves exactly as before (single flat scan set).
+        two_sides_chk = tk.Checkbutton(
+            active_frame,
+            text="Scan both sides of the object (stores them in side1/ and side2/)",
+            variable=self.two_sides_var, anchor="w")
+        two_sides_chk.pack(fill=tk.X, padx=6, pady=(0, 8))
+        self.buttons.append(two_sides_chk)
 
         button_frame = tk.Frame(self.root)
         button_frame.pack(fill=tk.X, padx=10)
@@ -353,11 +387,15 @@ class PipelineApp:
         self.active_dir = Path(folder)
         self.active_dir_var.set(str(self.active_dir))
         self.log(f"Active working folder set to: {self.active_dir}")
-        have = []
-        have.append("scans" if self._has_scans() else "no scans")
-        have.append("maps" if self._has_maps() else "no maps")
-        have.append(".glb" if self._has_glb() else "no .glb")
-        self.log("  Folder status: " + ", ".join(have) + ".")
+        for side in self._side_dirs():
+            label = self._side_label(side)
+            prefix = f"  {label}: " if label else "  Folder status: "
+            have = [
+                "scans" if self._has_scans(side) else "no scans",
+                "maps" if self._has_maps(side) else "no maps",
+                ".glb" if self._has_glb(side) else "no .glb",
+            ]
+            self.log(prefix + ", ".join(have) + ".")
         self.log("Click a step or 'Run Everything' to process it.")
 
     def on_open_focus_viewer(self):
@@ -488,11 +526,37 @@ class PipelineApp:
         return max(subdirs, key=lambda d: d.stat().st_mtime)
 
     # ── Active working folder ────────────────────────────────────────────────────
-    def _maps_dir(self) -> Path:
-        return self.active_dir / MAPS_SUBDIR
+    @property
+    def two_sides(self) -> bool:
+        """True when the user has opted to scan both sides of the object."""
+        return bool(self.two_sides_var.get())
 
-    def _glb_path(self) -> Path:
-        return self.active_dir / MODEL_SUBDIR / GLB_NAME
+    def _side_dirs(self) -> list:
+        """The per-side working directories to process for the active folder.
+
+        - Two-sided mode: <active>/side1 and <active>/side2.
+        - Single-sided mode: just the active folder itself (historic flat
+          layout, so every existing single-side folder keeps working as before).
+
+        If the active folder already contains side1/side2 subfolders (e.g. the
+        user selected an older two-sided set), those are used regardless of the
+        checkbox so the modeling / rendering steps still process both sides.
+        """
+        side_dirs = [self.active_dir / name for name in SIDE_SUBDIRS]
+        if self.two_sides:
+            return side_dirs
+        existing = [d for d in side_dirs if d.is_dir()]
+        return existing if existing else [self.active_dir]
+
+    def _side_label(self, side: Path) -> str:
+        """Short label for a side directory, empty when it's the flat active folder."""
+        return side.name if side != self.active_dir else ""
+
+    def _maps_dir(self, side: Path = None) -> Path:
+        return (side or self.active_dir) / MAPS_SUBDIR
+
+    def _glb_path(self, side: Path = None) -> Path:
+        return (side or self.active_dir) / MODEL_SUBDIR / GLB_NAME
 
     def _set_active_dir(self, path):
         """Set the active working folder and refresh its on-screen display.
@@ -515,15 +579,40 @@ class PipelineApp:
         d = d or self.active_dir
         return (d / MODEL_SUBDIR / GLB_NAME).exists()
 
-    def _run_capture_script(self) -> int:
-        """Run the shared capture script (Arduino + camera). Returns its exit code."""
+    def _ask_continue(self, title: str, message: str) -> bool:
+        """Pop a modal OK/Cancel dialog from a background thread; return True on OK.
+
+        Tk dialogs must run on the main thread, so schedule it there and block
+        the worker thread until the user answers."""
+        result = {}
+        done = threading.Event()
+
+        def ask():
+            result["ok"] = messagebox.askokcancel(title, message)
+            done.set()
+
+        self.root.after(0, ask)
+        done.wait()
+        return bool(result.get("ok"))
+
+    def _run_capture_script(self, capture_dir: Path = None) -> int:
+        """Run the shared capture script (Arduino + camera). Returns its exit code.
+
+        When capture_dir is given, the script writes the scans straight into it
+        (via PAPYRUS_CAPTURE_DIR) instead of minting its own timestamped folder."""
         if not CAPTURE_SCRIPT.exists():
             self.log(f"ERROR: capture script not found at {CAPTURE_SCRIPT}")
             return 1
         self.log("Running the capture rig (Arduino + camera)...")
         self.log("This requires the camera connected over USB and the Arduino "
                   "on a serial port, plus gphoto2/dcraw installed.")
-        rc = self.run_command([sys.executable, "-u", str(CAPTURE_SCRIPT)], cwd=CAPTURE_DIR)
+        env = None
+        if capture_dir is not None:
+            capture_dir.mkdir(parents=True, exist_ok=True)
+            env = dict(os.environ)
+            env["PAPYRUS_CAPTURE_DIR"] = str(capture_dir)
+        rc = self.run_command([sys.executable, "-u", str(CAPTURE_SCRIPT)],
+                              cwd=CAPTURE_DIR, env=env)
         if rc != 0:
             self.log(f"Capture exited with code {rc}.")
             self.log("If you saw 'ModuleNotFoundError: serial', install pyserial "
@@ -567,6 +656,10 @@ class PipelineApp:
             self.log(f"Focus viewer exited with code {rc}.")
 
     def step_run_capture(self):
+        if self.two_sides:
+            self._run_capture_two_sided()
+            return
+
         self.log("SCROLL CAPTURE — place the scroll on the stage before "
                   "continuing.")
         rc = self._run_capture_script()
@@ -590,6 +683,47 @@ class PipelineApp:
             missing = [n for n in CAPTURE_TIFFS if not (latest / n).exists()]
             self.log("WARNING: capture folder is missing: " + ", ".join(missing))
 
+    def _run_capture_two_sided(self):
+        """Capture both sides of the object into side1/ and side2/ subfolders of
+        one fresh working folder, pausing between them so the user can flip the
+        object over."""
+        working = CAPTURE_DATA_DIR / datetime.now().strftime("%d-%m-%y_%H-%M-%S")
+        self.log("TWO-SIDED SCROLL CAPTURE")
+        self.log(f"Working folder: {working}")
+
+        for idx, sub in enumerate(SIDE_SUBDIRS, start=1):
+            if idx == 1:
+                self.log(f"SIDE {idx} — place the scroll on the stage before "
+                          "continuing.")
+            else:
+                if not self._ask_continue(
+                        f"Capture side {idx}",
+                        f"Side {idx - 1} captured.\n\nFlip the scroll over to its "
+                        f"other side, then click OK to capture side {idx} "
+                        "(Cancel to stop)."):
+                    self.log("Two-sided capture cancelled after side "
+                              f"{idx - 1}.")
+                    # Side 1 is still on disk; make its set usable on its own.
+                    self._set_active_dir(working)
+                    return
+                self.log(f"SIDE {idx} — capturing the flipped scroll...")
+
+            dest = working / sub
+            rc = self._run_capture_script(capture_dir=dest)
+            if rc != 0:
+                self.log(f"Capture of {sub} failed (exit code {rc}); stopping.")
+                self._set_active_dir(working)
+                return
+            if not self._has_scans(dest):
+                missing = [n for n in CAPTURE_TIFFS if not (dest / n).exists()]
+                self.log(f"WARNING: {sub} is missing: " + ", ".join(missing))
+
+        self._set_active_dir(working)
+        self.log(f"Two-sided capture finished. Active working folder set to: {working}")
+        self.log("Both sides captured into side1/ and side2/. Make sure "
+                  "calibration images exist (Step 0 — Capture Calibration), then "
+                  "run the modeling pipeline.")
+
     def step_capture_calibration(self):
         self.log("CALIBRATION CAPTURE — place a sheet of flat copy paper (no "
                   "scroll) on the stage before continuing. The same lighting "
@@ -610,22 +744,34 @@ class PipelineApp:
                       "(Step 0 — Capture Scroll), then run the modeling pipeline.")
 
     def step_run_modeling(self):
+        sides = self._side_dirs()
+        for side in sides:
+            label = self._side_label(side)
+            if label:
+                self.log("=" * 64)
+                self.log(f"MODELING — {label}")
+                self.log("=" * 64)
+            self._run_modeling_for(side)
+
+    def _run_modeling_for(self, side: Path) -> int:
+        """Run the modeling pipeline on one side directory, writing its
+        render-ready maps into <side>/maps/. Returns the exit code."""
         script = MODELING_DIR / "modeling_pipeline.py"
-        if not self._has_scans():
-            self.log(f"WARNING: {self.active_dir} is missing some scroll scans.")
+        if not self._has_scans(side):
+            self.log(f"WARNING: {side} is missing some scroll scans.")
             self.log("Capture or select a folder with the full scan set "
                       f"({', '.join(CAPTURE_TIFFS)}) before running the pipeline.")
 
-        maps_dir = self._maps_dir()
+        maps_dir = self._maps_dir(side)
         maps_dir.mkdir(parents=True, exist_ok=True)
 
-        # Point the modeling pipeline at the active folder's scans and have it
-        # write its render-ready maps straight into <active>/maps/.
+        # Point the modeling pipeline at this side's scans and have it write its
+        # render-ready maps straight into <side>/maps/.
         env = dict(os.environ)
-        env["PAPYRUS_SCROLL_DIR"] = str(self.active_dir)
+        env["PAPYRUS_SCROLL_DIR"] = str(side)
         env["PAPYRUS_RENDER_OUT"] = str(maps_dir)
 
-        self.log(f"Running modeling pipeline on {self.active_dir} "
+        self.log(f"Running modeling pipeline on {side} "
                   "(this can take several minutes)...")
         self.log(f"Render-ready maps -> {maps_dir}")
         rc = self.run_command([sys.executable, "-u", script], cwd=MODELING_DIR, env=env)
@@ -635,9 +781,20 @@ class PipelineApp:
             self.log(f"Modeling pipeline exited with code {rc}.")
             self.log("If you saw 'ModuleNotFoundError', click "
                       "'Install Python dependencies' and try again.")
+        return rc
 
     def step_build_model(self):
-        maps_dir = self._maps_dir()
+        sides = self._side_dirs()
+        for side in sides:
+            label = self._side_label(side)
+            if label:
+                self.log("=" * 64)
+                self.log(f"BUILD 3D MODEL — {label}")
+                self.log("=" * 64)
+            self._build_model_for(side)
+
+    def _build_model_for(self, side: Path):
+        maps_dir = self._maps_dir(side)
         if not maps_dir.exists() or not any(maps_dir.glob("*_render.tiff")):
             self.log(f"No render-ready textures found in {maps_dir}")
             self.log("Run 'Step 2 — Run Modeling Pipeline' first.")
@@ -694,7 +851,7 @@ class PipelineApp:
 
         glb = RENDERING_DIR / "render.glb"
         if glb.exists():
-            dest = self._glb_path()
+            dest = self._glb_path(side)
             dest.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(glb, dest)
             #shutil.copy2(glb, WEBSITE_DIR / "render.glb")
@@ -734,34 +891,50 @@ class PipelineApp:
         - scroll scans present  -> skip capture
         - render-ready maps present -> skip modeling
         - render.glb present     -> skip render/build
+
+        In two-sided mode this runs the modeling and build stages once per side
+        (side1, side2), skipping whichever stages that side has already done.
         """
         self.log(f"Processing working folder: {self.active_dir}")
 
-        if self._has_scans():
+        # ── Capture ───────────────────────────────────────────────────────────
+        # Capture produces the side folders in two-sided mode, so run it whenever
+        # any side is missing its scan set, then re-resolve the side list.
+        sides = self._side_dirs()
+        if all(self._has_scans(s) for s in sides):
             self.log("Found a full set of scroll scans — skipping capture.")
         else:
             self.log("No complete scroll-scan set found — running capture.")
             self.step_run_capture()
-            if not self._has_scans():
+            sides = self._side_dirs()
+            if not sides or not all(self._has_scans(s) for s in sides):
                 self.log("Capture did not produce a full scan set; stopping.")
                 return
 
-        if self._has_maps():
-            self.log(f"Render-ready maps already in {self._maps_dir()} — "
-                      "skipping modeling.")
-        else:
-            self.step_run_modeling()
-            if not self._has_maps():
-                self.log("Modeling did not produce the expected maps; stopping.")
-                return
+        # ── Modeling + build, per side ────────────────────────────────────────
+        for side in sides:
+            label = self._side_label(side)
+            tag = f" [{label}]" if label else ""
 
-        if self._has_glb():
-            self.log(f"Model already built ({self._glb_path()}) — skipping render.")
-        else:
-            self.step_build_model()
-            if not self._has_glb():
-                self.log("Model build did not produce render.glb; stopping.")
-                return
+            if self._has_maps(side):
+                self.log(f"Render-ready maps already in {self._maps_dir(side)} — "
+                          f"skipping modeling{tag}.")
+            else:
+                self._run_modeling_for(side)
+                if not self._has_maps(side):
+                    self.log(f"Modeling did not produce the expected maps{tag}; "
+                              "stopping.")
+                    return
+
+            if self._has_glb(side):
+                self.log(f"Model already built ({self._glb_path(side)}) — "
+                          f"skipping render{tag}.")
+            else:
+                self._build_model_for(side)
+                if not self._has_glb(side):
+                    self.log(f"Model build did not produce render.glb{tag}; "
+                              "stopping.")
+                    return
 
         #self.step_open_viewer()
 

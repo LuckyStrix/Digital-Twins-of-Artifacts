@@ -160,14 +160,19 @@ SMOOTH_SIGMA = 200.0
 
 # ── Stage 2: Specular map parameters ──────────────────────────────────────────
 # Multiplicative boost applied to SpecularMap_Cal.tiff (the renderer's
-# specularIntensityMap source) before the [0,1] clip. The raw co-cross
-# specular signal tops out around 0.34, giving only a ~1.4% F0 boost on the
-# brightest ink - too small to register against the scene's diffuse term.
-# This scales the whole signal uniformly (preserving the relative ink/papyrus
-# proportions, i.e. no percentile/black-point shift) so the ink's reflectance
-# is visible. SpecularMap_Cal_stretched.tiff and the roughness map are derived
-# from the unboosted signal and are unaffected by this constant.
-SPECULAR_BOOST = 3.0
+# specularIntensityMap source) before the [0,1] clip. This scales the whole
+# signal uniformly (preserving the relative ink/papyrus proportions, i.e. no
+# percentile/black-point shift) so the ink's reflectance reaches ~1.0 on the
+# brightest ink. SpecularMap_Cal_stretched.tiff and the roughness map are
+# derived from the unboosted signal (self-normalised) and are unaffected by
+# this constant.
+#
+# Rescaled from 3.0 -> 0.9 alongside the switch to white-referenced calibration
+# (illumination_envelope): the co-cross specular signal is now ~3x brighter
+# (it used to top out ~0.34, needing 3.0x; it now tops out ~1.1). Leaving it at
+# 3.0 would hard-clip all ink to pure white and destroy the relative
+# proportions. Re-tune if the ink looks blown out or too flat.
+SPECULAR_BOOST = 3
 
 # ── Stage 3: Height map parameters ────────────────────────────────────────────
 # Physical elevation angle of each directional light above the horizontal plane.
@@ -363,6 +368,12 @@ def run_alpha_mask() -> None:
 #   geometry.  We fit a smooth envelope to that variation, then divide each
 #   scroll image by its matching envelope.  The result behaves as if captured
 #   under uniform, infinitely distant light with a perfect lens.
+#
+#   The envelope is left white-referenced (NOT normalised to median = 1), so
+#   the division also rescales the scroll to reflectance relative to the paper:
+#   a white surface reads ~1.0, papyrus reads its true (lower) albedo.  This
+#   keeps the calibrated images - and every map derived from them - at a
+#   natural brightness instead of the paper's dim single-light median level.
 
 def load16(path: Path) -> np.ndarray:
     """Load a 16-bit TIFF unchanged; raise clearly if the file is missing."""
@@ -374,15 +385,27 @@ def load16(path: Path) -> np.ndarray:
 
 def illumination_envelope(cal_uint16: np.ndarray) -> np.ndarray:
     """
-    Extract the smooth illumination envelope from a calibration image.
+    Extract the white-referenced illumination envelope from a calibration image.
 
     Steps:
       1. Convert to float luminance in [0, 1].
       2. Large Gaussian blur erases paper grain, keeping only the slow gradient.
-      3. Normalise to median = 1.0 (correction is relative, not absolute).
 
-    Returns float32 (H, W).  Values > 1 mean over-illuminated; < 1 mean
-    vignetted.  Dividing a scroll image by this envelope equalises the frame.
+    Returns float32 (H, W) equal to the copy paper's own luminance response
+    (reflectance x illumination x geometry).  Because the copy paper is a flat,
+    near-white reference, dividing a scroll image by this envelope both removes
+    the illumination gradient AND rescales to true relative albedo: a white,
+    fully-lit surface maps to ~1.0 everywhere, and the scroll reads as its
+    reflectance relative to the paper (papyrus / paper).
+
+    NOTE: an earlier version normalised this to median = 1.0.  That preserved
+    only the *relative* gradient, so the corrected images stayed pinned to the
+    paper's dim single-light median level (~0.29 for white paper under one
+    grazing light) - which made every downstream map, and the render, far
+    darker than the original photos.  It also scaled each of the four
+    directional lights by its own median (0.29 vs 0.37 ...), putting the N/E/S/W
+    images on slightly different brightness scales and biasing the normal-map
+    gradients.  Referencing to white (below) fixes both.
     """
     f = cal_uint16.astype(np.float64) / 65535.0
 
@@ -394,11 +417,13 @@ def illumination_envelope(cal_uint16: np.ndarray) -> np.ndarray:
 
     smooth = gaussian_filter(lum, sigma=SMOOTH_SIGMA)
 
+    # Sanity check only - the envelope itself is left in absolute (white-referenced)
+    # units so the correction rescales the scroll to relative albedo.
     med = float(np.median(smooth[smooth > 1e-4]))
     if med <= 0:
         raise ValueError("Calibration image appears empty - check the file.")
 
-    return (smooth / med).astype(np.float32)
+    return smooth.astype(np.float32)
 
 
 def apply_correction(scroll_uint16: np.ndarray, envelope: np.ndarray) -> np.ndarray:
@@ -406,8 +431,11 @@ def apply_correction(scroll_uint16: np.ndarray, envelope: np.ndarray) -> np.ndar
     Divide a scroll image by its illumination envelope.
 
     Each pixel is divided by the envelope value at that position, compensating
-    for vignetting, light falloff, and perspective angle differences.
-    The 0.05 floor prevents divide-by-zero in extremely dark corners.
+    for vignetting, light falloff, and perspective angle differences.  Because
+    the envelope is white-referenced (see illumination_envelope), this also
+    rescales the scroll to relative albedo - a white surface -> ~1.0.
+    The 0.05 floor prevents divide-by-zero (and runaway noise amplification) in
+    extremely dark corners where the paper received almost no light.
     Result is clipped to [0, 1] and returned as uint16.
     """
     s   = scroll_uint16.astype(np.float32) / 65535.0

@@ -619,6 +619,27 @@ function loadScene(modelPath, mtlPath, artifactType) {
     modelPath,
     mtlPath,
     (model) => {
+      // Some papyrus exports carry a baked negative-determinant node
+      // transform — a mirror, not a rotation (our sample/demo GLBs decompose
+      // to mirror-X ∘ rotX(180), det = -1). For freely-rotatable artifacts
+      // that's invisible because you can spin them around, but rotation-locked
+      // types are pinned to the +Z side, so the mirror shows up as
+      // horizontally-flipped text you can't turn away from. A rotation can't
+      // undo a reflection, so detect the mirrored world matrix and cancel it
+      // with a compensating horizontal (world-X) flip. Do this before the
+      // bounding-box/centering math below so it's computed in the fixed space.
+      if (isRotationLocked(artifactType)) {
+        model.updateMatrixWorld(true);
+        let mirrored = false;
+        model.traverse((obj) => {
+          if (obj.isMesh && obj.matrixWorld.determinant() < 0) mirrored = true;
+        });
+        if (mirrored) {
+          model.scale.x *= -1;
+          model.updateMatrixWorld(true);
+        }
+      }
+
       // Some scans/exports are thin shells or single-sided planes whose
       // winding doesn't reliably face the camera. Force double-sided
       // rendering so artifacts never disappear depending on view angle.

@@ -6,9 +6,13 @@ stage — to shoot the directional-light TIFFs the modeling pipeline needs.
 
 ## Contents
 
-- `arduinoIntegration.py` — main capture loop. Talks to the Arduino over serial,
-  triggers the camera for each lighting condition, and converts the RAW `.cr2`
-  files to TIFF with `dcraw`.
+- `arduinoIntegration.py` — main capture loop (**Windows**). Talks to the Arduino
+  over serial, triggers the camera for each lighting condition (gphoto2 via
+  msys2), and converts the RAW `.cr2` files to TIFF with `dcraw`.
+- `arduinoIntegration_linux.py` — **Linux** port of the same capture loop. Calls
+  gphoto2/dcraw natively and defaults to the `/dev/ttyACM0` serial port.
+- `focusViewer.py` / `focusViewer_linux.py` — Windows / Linux focus-check helpers
+  (live-view preview so the operator can set focus before a capture).
 - `serialTesting.py` — tiny helper to sanity-check the serial connection.
 - `IrisArduinoCode/IrisArduinoCode.ino` — firmware for the Arduino controlling
   the lights, aperture and rotation stage.
@@ -18,10 +22,15 @@ stage — to shoot the directional-light TIFFs the modeling pipeline needs.
 Capture only runs on the machine wired to the rig:
 
 - Camera connected over USB
-- Arduino on a serial port (the script opens `COM3` — change this for your OS;
-  e.g. `/dev/ttyUSB0` or `/dev/ttyACM0` on Linux)
+- Arduino on a serial port:
+  - **Windows:** `arduinoIntegration.py` opens `COM3`.
+  - **Linux:** `arduinoIntegration_linux.py` defaults to `/dev/ttyACM0`
+    (or `/dev/ttyUSB0` for CH340-based boards). Override either with the
+    `PAPYRUS_SERIAL_PORT` environment variable.
 - `pyserial`  → `pip install pyserial`
-- `gphoto2` and `dcraw` available on PATH (the script shells out to them)
+- `gphoto2` and `dcraw` available on PATH (the scripts shell out to them). On
+  Windows gphoto2 runs through msys2; on Linux install them natively
+  (`sudo apt install gphoto2 dcraw`).
 
 ## Output
 

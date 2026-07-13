@@ -6,23 +6,31 @@ the linked per-pillar README for the detailed steps.
 
 ## Prerequisites matrix
 
-| Pillar       | OS target        | Key system tools                          | Python |
-|--------------|------------------|-------------------------------------------|--------|
-| `2D/`        | **Windows**      | Node.js (LTS), msys2 + gphoto2, dcraw     | 3.9+   |
-| `3D/`        | **WSL2 (Ubuntu)**| CUDA-enabled COLMAP, exiftool, NVIDIA GPU | 3.9+   |
-| `Website/`   | any              | none (static site)                        | 3.x    |
+| Pillar       | OS target          | Key system tools                          | Python |
+|--------------|--------------------|-------------------------------------------|--------|
+| `2D/`        | **Windows / Linux**| Node.js (LTS), gphoto2, dcraw             | 3.9+   |
+| `3D/`        | **WSL2 (Ubuntu)**  | CUDA-enabled COLMAP, exiftool, NVIDIA GPU | 3.9+   |
+| `Website/`   | any                | none (static site)                        | 3.x    |
 
 The `2D/` and `3D/` pipelines run on **different operating systems** and keep
 their Python dependencies in separate `requirements.txt` files — do not try to
 install them into one shared environment.
 
-## Windows (for `2D/`)
+## Windows or Linux (for `2D/`)
 
-The `2D/` papyrus pipeline is a Windows desktop application driven by
-`2D/run.py`. Its launcher self-installs most dependencies; you only need to
-provide the tools it can't install for you (Python, Node.js, msys2/gphoto2,
-dcraw). See [`2D/README.md`](2D/README.md) for the full list and the one
-command to start it.
+The `2D/` papyrus pipeline is a desktop application with two builds of the same
+launcher:
+
+- **Windows** — run `2D/run.py` (gphoto2 through msys2, serial port `COM3`).
+- **Linux** — run `2D/run_linux.py` (native `gphoto2`/`dcraw` on PATH, serial
+  port `/dev/ttyACM0`). On Debian/Ubuntu:
+  `sudo apt install python3-tk gphoto2 dcraw`, and add yourself to the
+  `dialout` group for serial access (`sudo usermod -a -G dialout $USER`).
+
+Both builds share the same OS-independent modeling and rendering stages. The
+launcher self-installs the Python and Node packages; you only need to provide the
+tools it can't install for you (Python, Node.js, gphoto2, dcraw). See
+[`2D/README.md`](2D/README.md) for the full list and the one command to start it.
 
 ## WSL2 (for `3D/`)
 

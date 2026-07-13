@@ -8,7 +8,7 @@ Starting as Freshman Imaging Project and continued as Extended-FIP, we have crea
 ## Repository layout
 
 ```
-2D/        Papyrus photometric-stereo pipeline (Windows)  — see 2D/README.md
+2D/        Papyrus photometric-stereo pipeline (Windows/Linux) — see 2D/README.md
 3D/        Cuneiform-tablet COLMAP photogrammetry (WSL2)  — see 3D/README.md
 Website/   Static artifact gallery site (any OS)          — see Website/EFIP_Rewritten/README.md
 ```

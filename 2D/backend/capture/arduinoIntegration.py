@@ -35,7 +35,7 @@ def capture_image(filename):
               "Check that the camera is connected and gphoto2 can reach it.")
         print(" ")
         return
-
+    message_arduino(0, 0, 0, 0, 0, 1, 0, 1)
     #subprocess.run(f"exiftool -Orientation=1 -n {filename}.cr2", cwd=img_dir, shell=True)
     subprocess.run(f"dcraw -T -6 -W -o 0 -q 0 -t 0 {cr2}", cwd=img_dir, shell=True)
     print(filename + " captured!")
@@ -46,19 +46,21 @@ if __name__ == "__main__":
     # per-side side1/ or side2/ subfolder) via PAPYRUS_CAPTURE_DIR. When unset,
     # fall back to the historic behaviour: make a fresh timestamped folder in
     # the app's top-level data/ folder so the launcher (run.py) can find it.
+    folder_name = now.strftime("%d-%m-%y_%H-%M-%S")
     capture_dir = os.environ.get("PAPYRUS_CAPTURE_DIR")
     if capture_dir:
-        img_dir = capture_dir
+        img_dir = os.path.join(capture_dir, folder_name)
         print("Capture folder = " + img_dir)
         print(" ")
-    else:
-        folder_name = now.strftime("%d-%m-%y_%H-%M-%S")
+
+
+    '''else:
         print("Folder name = " + folder_name)
         print(" ")
         # This script lives in <app>/backend/capture/, so the app root is three
         # levels up. Originally a hard-coded OneDrive path.
         app_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
-        img_dir = os.path.join(app_root, "data", folder_name)
+        img_dir = os.path.join(app_root, "data", folder_name)'''
     os.makedirs(img_dir, exist_ok=True)
 
     #MAIN PHOTOGRAPHING LOOP

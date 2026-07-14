@@ -257,7 +257,6 @@ class PipelineApp:
         add_button("Step 1 — Capture Scroll (needs camera + Arduino)", self.on_run_capture)
         add_button("Step 2 — Run Modeling Pipeline", self.on_run_modeling)
         add_button("Step 3 — Build 3D Model (.glb)", self.on_build_model)
-        #add_button("Step 4 — Open 3D Viewer", self.on_open_viewer)
         tk.Frame(button_frame, height=1, bg="#cccccc").pack(fill=tk.X, pady=6)
         add_button("Run Everything (skips stages already done)", self.on_run_all,
                    font=("TkDefaultFont", 9, "bold"))
@@ -378,7 +377,7 @@ class PipelineApp:
         if self.busy:
             self.log("Busy — please wait for the current step to finish.")
             return
-        start = CAPTURE_DATA_DIR if CAPTURE_DATA_DIR.exists() else ROOT
+        start = self.active_dir if self.active_dir.exists() else ROOT
         folder = filedialog.askdirectory(
             initialdir=str(start), title="Select the image set to work with")
         if not folder:
@@ -387,6 +386,7 @@ class PipelineApp:
         self.active_dir = Path(folder)
         self.active_dir_var.set(str(self.active_dir))
         self.log(f"Active working folder set to: {self.active_dir}")
+        CAPTURE_DATA_DIR = self.active_dir
         for side in self._side_dirs():
             label = self._side_label(side)
             prefix = f"  {label}: " if label else "  Folder status: "
@@ -412,9 +412,6 @@ class PipelineApp:
 
     def on_build_model(self):
         self.run_in_background(self.step_build_model, "build 3D model")
-
-    #def on_open_viewer(self):
-    #    self.run_in_background(self.step_open_viewer, "open 3D viewer")
 
     def on_run_all(self):
         self.run_in_background(self.step_run_all, "full pipeline")
@@ -518,9 +515,9 @@ class PipelineApp:
 
     def _latest_capture_dir(self):
         """Most recently modified subfolder of the top-level data/, or None."""
-        if not CAPTURE_DATA_DIR.exists():
+        if not self.active_dir.exists():
             return None
-        subdirs = [d for d in CAPTURE_DATA_DIR.iterdir() if d.is_dir()]
+        subdirs = [d for d in self.active_dir.iterdir() if d.is_dir()]
         if not subdirs:
             return None
         return max(subdirs, key=lambda d: d.stat().st_mtime)
@@ -662,13 +659,13 @@ class PipelineApp:
 
         self.log("SCROLL CAPTURE — place the scroll on the stage before "
                   "continuing.")
-        rc = self._run_capture_script()
+        rc = self._run_capture_script(capture_dir=self.active_dir)
         if rc != 0:
             return
         latest = self._latest_capture_dir()
         if latest is None:
             self.log("Capture reported success but no output folder was found in "
-                      f"{CAPTURE_DATA_DIR}.")
+                      f"{self.active_dir}.")
             return
         # The capture script already wrote the scans into data/<timestamp>/,
         # which is a self-contained working folder — make it the active one
@@ -687,7 +684,7 @@ class PipelineApp:
         """Capture both sides of the object into side1/ and side2/ subfolders of
         one fresh working folder, pausing between them so the user can flip the
         object over."""
-        working = CAPTURE_DATA_DIR / datetime.now().strftime("%d-%m-%y_%H-%M-%S")
+        working = self.active_dir / datetime.now().strftime("%d-%m-%y_%H-%M-%S")
         self.log("TWO-SIDED SCROLL CAPTURE")
         self.log(f"Working folder: {working}")
 
@@ -728,13 +725,13 @@ class PipelineApp:
         self.log("CALIBRATION CAPTURE — place a sheet of flat copy paper (no "
                   "scroll) on the stage before continuing. The same lighting "
                   "sequence is used as for the scroll.")
-        rc = self._run_capture_script()
+        rc = self._run_capture_script(capture_dir=self.active_dir)
         if rc != 0:
             return
         latest = self._latest_capture_dir()
         if latest is None:
             self.log("Capture reported success but no output folder was found in "
-                      f"{CAPTURE_DATA_DIR}.")
+                      f"{self.active_dir}.")
             return
         self.log("Capture finished.")
         copied = self._import_capture_into(
@@ -860,31 +857,6 @@ class PipelineApp:
             #self.log("Click 'Step 4 — Open 3D Viewer' to see the result.")
         else:
             self.log("render.glb was not created — see log above for details.")
-    """
-    def step_open_viewer(self):
-        # Make sure the viewer shows the active folder's model.
-        active_glb = self._glb_path()
-        if active_glb.exists():
-            shutil.copy2(active_glb, WEBSITE_DIR / "render.glb")
-            self.log(f"Loading {active_glb} into the viewer.")
-        elif not (WEBSITE_DIR / "render.glb").exists():
-            self.log("No render.glb found for the active folder — build the model "
-                      "first (Step 3).")
-            return
-
-        if self.http_proc is None or self.http_proc.poll() is not None:
-            self.log(f"Starting local web server on port {HTTP_PORT}...")
-            self.http_proc = subprocess.Popen(
-                [sys.executable, "-m", "http.server", str(HTTP_PORT)],
-                cwd=str(WEBSITE_DIR), stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-            )
-            time.sleep(0.5)
-
-        url = f"http://localhost:{HTTP_PORT}/infoboxesweb2.html"
-        self.log(f"Opening {url}")
-        webbrowser.open(url)
-    """
     def _smart_run(self):
         """Run the pipeline on the active folder, skipping stages already done.
 

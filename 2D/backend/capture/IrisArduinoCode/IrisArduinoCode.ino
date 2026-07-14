@@ -87,7 +87,7 @@ void loop() {
             phase = 3;
           }
         }
-        delay(15);
+        delay(10);
         digitalWrite(s1_pin, LOW);
         digitalWrite(s2_pin, LOW);
         digitalWrite(s3_pin, LOW);

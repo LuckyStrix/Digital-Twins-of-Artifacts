@@ -23,6 +23,15 @@ file. The model can be any of:
 
 If a folder has more than one of these, .glb wins, then .gltf, then .obj.
 
+Two-sided artifacts (a papyrus scanned front and back) are the one
+exception: put both .glb files in the same folder and they become a
+single artifact with a "Flip to other side" button in the viewer. The
+alphabetically-first file is the front, so name them in the order you
+want them seen (e.g. side1.glb / side2.glb). This applies only to
+exactly two .glb files — three or more, or loose .gltf/.obj, still
+resolve to one model, since their companion .bin/.mtl files can't be
+told apart from a second side.
+
 The .txt file is written like this (field order doesn't matter):
 
     Name: Cuneiform Tablet 12
@@ -65,6 +74,17 @@ def find_model_file(folder):
         if matches:
             return matches
     return []
+
+
+def is_two_sided(models):
+    """True if these model files are a front/back pair rather than one model.
+
+    Exactly two .glb files in one folder means one artifact scanned from both
+    sides (the capture pipeline writes a render.glb per side). Anything else —
+    one model, three or more, or loose .gltf/.obj whose companion .bin/.mtl
+    files can't be told apart from a second side — is a single model.
+    """
+    return len(models) == 2 and all(m.suffix.lower() == ".glb" for m in models)
 
 
 def parse_info_txt(text):
@@ -115,7 +135,8 @@ def build():
         if not txts:
             print(f"skip '{folder.name}': no .txt file found", file=sys.stderr)
             continue
-        if len(models) > 1:
+        two_sided = is_two_sided(models)
+        if len(models) > 1 and not two_sided:
             print(f"warn '{folder.name}': multiple model files found, using '{models[0].name}'", file=sys.stderr)
         if len(txts) > 1:
             print(f"warn '{folder.name}': multiple .txt files found, using '{txts[0].name}'", file=sys.stderr)
@@ -135,6 +156,9 @@ def build():
             "description": info["description"],
             "model": f"{folder.name}/{model_file.name}",
         }
+
+        if two_sided:
+            entry["back"] = f"{folder.name}/{models[1].name}"
 
         if model_file.suffix.lower() == ".obj":
             mtls = sorted(folder.glob("*.mtl"))

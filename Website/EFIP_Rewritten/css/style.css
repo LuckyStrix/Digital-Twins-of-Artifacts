@@ -400,6 +400,15 @@ body.viewer-body canvas {
   background: rgba(255, 255, 255, 0.18);
 }
 
+.pill-button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.pill-button:disabled:hover {
+  background: rgba(0, 0, 0, 0.65);
+}
+
 #backLink {
   top: 12px;
   left: 12px;
@@ -655,6 +664,24 @@ body.viewer-body canvas {
   color: var(--burgundy);
 }
 
+#flipWrapper {
+  position: fixed;
+  bottom: 162px;
+  right: 12px;
+  z-index: 50;
+}
+
+#flipButton {
+  position: static;
+}
+
+/* Separate from .panel-hidden (which the stacked-panel logic toggles on
+   and off): this marks the artifact as having no second side at all, so
+   closing a panel must never reveal the button. */
+#flipWrapper.unavailable {
+  display: none;
+}
+
 #gestureLabel {
   position: fixed;
   bottom: 64px;
@@ -677,7 +704,7 @@ body.viewer-body canvas {
 #cameraPreview {
   position: fixed;
   right: 12px;
-  bottom: 162px;
+  bottom: 208px;
   width: 96px;
   max-width: 20vw;
   border-radius: 10px;

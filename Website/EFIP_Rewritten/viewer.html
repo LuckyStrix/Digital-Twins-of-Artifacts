@@ -93,6 +93,12 @@
     </div>
   </div>
 
+  <!-- Only revealed for artifacts whose folder holds a second .glb; see
+       loadScene() in js/viewer.js. -->
+  <div id="flipWrapper" class="unavailable">
+    <button id="flipButton" class="pill-button" disabled>Flip to other side</button>
+  </div>
+
   <div id="gestureLabel"></div>
   <video id="cameraPreview" autoplay playsinline muted></video>
 

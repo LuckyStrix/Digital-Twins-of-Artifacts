@@ -1,0 +1,626 @@
+<title>Digital Twins of Artifacts — Research Poster (Landscape)</title>
+<style>
+  /* ============================================================
+     Digital Twins of Artifacts — 48 x 36 in LANDSCAPE poster
+     Self-contained: opens in any browser, prints to 48x36 PDF,
+     and renders as a shareable web page. No external assets.
+     Sizing uses container-HEIGHT units (cqh): 1cqh = 1% of the
+     poster height = 0.36in in print, matching the portrait's
+     physical type scale exactly. Layout re-flows into 3 columns.
+     ============================================================ */
+
+  :root {
+    --paper:      #f6f3ed;
+    --paper-2:    #efeae0;
+    --paper-card: #fdfbf7;
+    --ink:        #241e19;
+    --ink-soft:   #5c5348;
+    --ink-faint:  #8a8073;
+    --rule:       #ddd6c8;
+    --accent:     #f76902;
+    --accent-deep:#b44a00;
+    --teal:       #1e5f74;
+    --teal-deep:  #164a5b;
+    --desk:       #e7e2d8;
+
+    --serif: "Palatino Linotype", Palatino, "Book Antiqua", "URW Palladio L", "P052", Georgia, serif;
+    --sans:  "Segoe UI", "Helvetica Neue", Helvetica, Arial, "Liberation Sans", sans-serif;
+  }
+  @media (prefers-color-scheme: dark) { :root { --desk: #1a1714; } }
+  :root[data-theme="dark"]  { --desk: #1a1714; }
+  :root[data-theme="light"] { --desk: #e7e2d8; }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--desk);
+    font-family: var(--sans);
+    color: var(--ink);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 3vh 2vw;
+    gap: 1.4vh;
+  }
+
+  .hint {
+    font-family: var(--sans);
+    font-size: 13px;
+    letter-spacing: .04em;
+    color: var(--ink-soft);
+    background: var(--paper-card);
+    border: 1px solid var(--rule);
+    border-radius: 6px;
+    padding: 8px 14px;
+    max-width: 92vw;
+    text-align: center;
+  }
+  @media (prefers-color-scheme: dark) { .hint { background:#2a2622; color:#cdc4b6; border-color:#3a352f; } }
+  :root[data-theme="dark"] .hint { background:#2a2622; color:#cdc4b6; border-color:#3a352f; }
+
+  /* ---- the sheet ---------------------------------------------------- */
+  .poster {
+    width: min(96vw, calc(90vh * 4 / 3));
+    aspect-ratio: 4 / 3;
+    background: var(--paper);
+    color: var(--ink);
+    container-type: size;
+    box-shadow: 0 2.2vh 6vh rgba(30,22,14,.28);
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+  }
+
+  /* ---- banner ------------------------------------------------------- */
+  .banner {
+    background: var(--accent);
+    color: var(--ink);
+    padding: 1.3cqh 2.4cqh 1.15cqh;
+    display: grid;
+    grid-template-columns: auto 1fr auto;
+    align-items: center;
+    gap: 2cqh;
+    border-bottom: 0.4cqh solid var(--ink);
+  }
+  .banner .logo {
+    width: 13cqh;
+    height: 6.2cqh;
+    background: var(--paper-card);
+    border: 0.2cqh dashed var(--accent-deep);
+    border-radius: 0.45cqh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    font-size: 0.9cqh;
+    letter-spacing: .1em;
+    text-transform: uppercase;
+    font-weight: 700;
+    color: var(--accent-deep);
+    line-height: 1.35;
+    padding: 0.4cqh;
+  }
+  .titlewrap { text-align: center; }
+  .kicker {
+    font-family: var(--sans);
+    font-size: 1.02cqh;
+    text-transform: uppercase;
+    letter-spacing: .26em;
+    font-weight: 700;
+    color: #3a2a18;
+    margin: 0 0 0.4cqh;
+  }
+  .banner h1 {
+    font-family: var(--serif);
+    font-weight: 700;
+    font-size: 4.5cqh;
+    line-height: 1.0;
+    letter-spacing: -0.01em;
+    margin: 0;
+    text-wrap: balance;
+  }
+  .authors {
+    font-family: var(--sans);
+    font-size: 1.28cqh;
+    font-weight: 600;
+    margin: 0.5cqh 0 0.12cqh;
+    color: var(--ink);
+  }
+  .affil {
+    font-family: var(--serif);
+    font-style: italic;
+    font-size: 1.14cqh;
+    color: #402f1e;
+    margin: 0;
+  }
+
+  /* ---- content grid (3 columns) ------------------------------------ */
+  .content {
+    flex: 1;
+    padding: 0.85cqh 1.2cqh;
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 0.6cqh;
+    align-content: start;
+  }
+  .span-2 { grid-column: span 2; }
+  .span-3 { grid-column: 1 / -1; }
+  .stack { display: flex; flex-direction: column; gap: 0.6cqh; }
+  .stack > .card { flex: 0 0 auto; }
+
+  .card {
+    --c: var(--accent);
+    background: var(--paper-card);
+    border: 0.09cqh solid var(--rule);
+    border-top: 0.34cqh solid var(--c);
+    border-radius: 0.5cqh;
+    padding: 0.8cqh 1.05cqh 0.88cqh;
+    display: flex;
+    flex-direction: column;
+    gap: 0.34cqh;
+  }
+  .card.teal { --c: var(--teal); }
+
+  .eyebrow {
+    font-family: var(--sans);
+    font-size: 0.82cqh;
+    text-transform: uppercase;
+    letter-spacing: .2em;
+    font-weight: 800;
+    color: var(--c);
+    margin: 0;
+  }
+  .card h2 {
+    font-family: var(--serif);
+    font-weight: 700;
+    font-size: 1.55cqh;
+    line-height: 1.06;
+    margin: -0.2cqh 0 0;
+    text-wrap: balance;
+    color: var(--ink);
+  }
+  .card p {
+    font-family: var(--sans);
+    font-size: 0.95cqh;
+    line-height: 1.26;
+    margin: 0;
+    color: var(--ink);
+  }
+  .card p.lead { font-size: 1.03cqh; }
+  .muted { color: var(--ink-soft); }
+
+  ul.tight {
+    margin: 0;
+    padding-left: 1.4cqh;
+    font-size: 0.91cqh;
+    line-height: 1.24;
+    display: flex;
+    flex-direction: column;
+    gap: 0.24cqh;
+  }
+  ul.tight li::marker { color: var(--c); }
+
+  /* ---- image / logo placeholders ----------------------------------- */
+  /* To use: replace the <div class="ph ..."> with an <img> carrying the
+     same height class, e.g. <img class="ph h-rig" style="object-fit:cover"
+     src="rig.jpg" alt="2D capture rig">                                   */
+  .ph {
+    width: 100%;
+    background:
+      repeating-linear-gradient(135deg, transparent 0 1.2cqh, rgba(30,95,116,.05) 1.2cqh 2.4cqh),
+      var(--paper-2);
+    border: 0.18cqh dashed var(--teal);
+    border-radius: 0.45cqh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    gap: 0.35cqh;
+    color: var(--teal-deep);
+    padding: 0.9cqh;
+  }
+  .ph svg { width: 2.8cqh; height: 2.8cqh; opacity: .8; }
+  .ph .ph-label { font-size: 0.98cqh; font-weight: 700; letter-spacing: .02em; }
+  .ph .ph-note  { font-size: 0.82cqh; color: var(--ink-faint); letter-spacing: .03em; }
+  .h-rig { height: 100%; min-height: 11cqh; }
+  .h-out { height: 9cqh; }
+
+  figure { margin: 0; display: flex; flex-direction: column; gap: 0.4cqh; }
+  figcaption {
+    font-family: var(--sans);
+    font-size: 0.83cqh;
+    line-height: 1.26;
+    color: var(--ink-soft);
+  }
+  figcaption b { color: var(--ink); }
+
+  /* system card: photo + diagram side by side to use the wide format */
+  .sysrow {
+    display: grid;
+    grid-template-columns: 1.05fr 1fr;
+    gap: 0.7cqh;
+    align-items: stretch;
+  }
+  .sysrow > figure { height: 100%; }
+
+  /* ---- small diagram block ----------------------------------------- */
+  .diagram {
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    gap: 0.5cqh;
+    background: var(--paper-2);
+    border-radius: 0.45cqh;
+    padding: 0.7cqh 0.85cqh;
+  }
+  .diagram svg { width: 100%; max-height: 9cqh; height: auto; display: block; }
+  .diagram .cap { font-family: var(--sans); font-size: 0.82cqh; line-height: 1.26; color: var(--ink-soft); }
+  .diagram .cap b { color: var(--ink); }
+
+  /* ---- pipeline flows ---------------------------------------------- */
+  .flow-title {
+    font-family: var(--sans);
+    font-size: 1.0cqh;
+    font-weight: 800;
+    letter-spacing: .01em;
+    margin: 0 0 -0.1cqh;
+    display: flex;
+    align-items: baseline;
+    gap: 0.6cqh;
+  }
+  .flow-title .tag {
+    font-size: 0.76cqh;
+    text-transform: uppercase;
+    letter-spacing: .14em;
+    color: var(--paper-card);
+    background: var(--c);
+    padding: 0.2cqh 0.65cqh;
+    border-radius: 1cqh;
+  }
+  .flow {
+    display: flex;
+    align-items: stretch;
+    gap: 0.5cqh;
+    margin-bottom: 0.05cqh;
+  }
+  .step {
+    flex: 1;
+    background: var(--paper-2);
+    border-radius: 0.45cqh;
+    border-top: 0.26cqh solid var(--c);
+    padding: 0.6cqh 0.75cqh 0.68cqh;
+    display: flex;
+    flex-direction: column;
+    gap: 0.25cqh;
+  }
+  .step .n {
+    font-family: var(--serif);
+    font-weight: 700;
+    font-size: 1.5cqh;
+    line-height: 1;
+    color: var(--c);
+  }
+  .step .t { font-family: var(--sans); font-size: 0.94cqh; font-weight: 800; line-height: 1.14; }
+  .step .d { font-family: var(--sans); font-size: 0.79cqh; line-height: 1.26; color: var(--ink-soft); }
+  .arrow {
+    align-self: center;
+    color: var(--c);
+    font-size: 1.5cqh;
+    font-weight: 700;
+    line-height: 1;
+    flex: 0 0 auto;
+  }
+  .flows2 { display: grid; grid-template-columns: 1fr 1fr; gap: 0.4cqh 1.6cqh; align-items: start; }
+
+  /* ---- results row -------------------------------------------------- */
+  .results-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 1cqh;
+  }
+
+  /* ---- spec table --------------------------------------------------- */
+  table.specs {
+    width: 100%;
+    border-collapse: collapse;
+    font-family: var(--sans);
+    font-size: 0.92cqh;
+    font-variant-numeric: tabular-nums;
+  }
+  table.specs th, table.specs td {
+    text-align: left;
+    padding: 0.35cqh 0.35cqh;
+    border-bottom: 0.09cqh solid var(--rule);
+    vertical-align: top;
+    line-height: 1.24;
+  }
+  table.specs th {
+    width: 34%;
+    color: var(--accent-deep);
+    font-weight: 700;
+  }
+  table.specs tr:last-child td, table.specs tr:last-child th { border-bottom: none; }
+
+  /* ---- footer ------------------------------------------------------- */
+  .footer {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 2cqh;
+    align-items: center;
+    background: var(--ink);
+    color: var(--paper);
+    padding: 0.9cqh 2.4cqh;
+  }
+  .footer h3 {
+    font-family: var(--serif);
+    font-size: 1.5cqh;
+    margin: 0 0 0.3cqh;
+    color: #fff;
+  }
+  .footer p { font-family: var(--sans); font-size: 0.96cqh; line-height: 1.4; margin: 0; color: #e4ddd0; }
+  .footer .mono { color: var(--accent); font-weight: 600; }
+  .qr {
+    width: 7.5cqh;
+    height: 7.5cqh;
+    background: var(--paper-card);
+    border: 0.2cqh dashed var(--accent);
+    border-radius: 0.45cqh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 0.3cqh;
+    color: var(--accent-deep);
+    text-align: center;
+    padding: 0.55cqh;
+  }
+  .qr svg { width: 3cqh; height: 3cqh; }
+  .qr .qr-t { font-size: 0.78cqh; font-weight: 800; letter-spacing: .05em; line-height: 1.2; }
+
+  /* ---- print: true 48 x 36 in ------------------------------------- */
+  @media print {
+    @page { size: 48in 36in; margin: 0; }
+    body { background: #fff; padding: 0; gap: 0; }
+    .hint { display: none; }
+    .poster {
+      width: 48in;
+      height: 36in;
+      box-shadow: none;
+      break-inside: avoid;
+    }
+  }
+</style>
+
+<p class="hint">Screen preview (landscape). To produce the print file: <b>Print &rarr; Save as PDF</b>, paper size <b>48 &times; 36 in</b>, margins <b>None</b>, scale <b>100%</b>.</p>
+
+<div class="poster">
+
+  <!-- ============================= BANNER ============================= -->
+  <header class="banner">
+    <!-- PLACEHOLDER: replace this box with the RIT logo, e.g. <img class="logo" src="rit-logo.png" alt="RIT"> -->
+    <div class="logo">RIT logo<br>(place here)</div>
+
+    <div class="titlewrap">
+      <p class="kicker">Rochester Institute of Technology &middot; Extended Freshman Imaging Project</p>
+      <h1>Digital Twins of Artifacts</h1>
+      <!-- PLACEHOLDER: replace with the real author names (and faculty advisor if any) -->
+      <p class="authors">Author Names Here &nbsp;&middot;&nbsp; Faculty Advisor</p>
+      <p class="affil">In collaboration with the RIT Cary Graphic Arts Collection</p>
+    </div>
+
+    <!-- PLACEHOLDER: replace this box with the RIT Cary Graphic Arts Collection logo -->
+    <div class="logo">Cary Collection logo<br>(place here)</div>
+  </header>
+
+  <!-- ============================= CONTENT ============================= -->
+  <main class="content">
+
+    <!-- Row 1: three text cards -->
+    <section class="card">
+      <p class="eyebrow">Introduction</p>
+      <h2>Preserving fragile history as interactive replicas</h2>
+      <p class="lead">Historical artifacts &mdash; papyrus manuscripts, cuneiform tablets &mdash; are fragile, rare, and often kept out of reach of the people who want to study them.</p>
+      <p><b>Digital Twins of Artifacts</b> builds accurate, interactive, web-viewable 3D replicas so these objects can be examined, taught, and displayed without handling the original. It began as RIT&rsquo;s <b>Freshman Imaging Project</b>, grew into <b>Extended-FIP (EFIP)</b>, and runs with the <b>RIT Cary Graphic Arts Collection</b>, which provides the artifacts.</p>
+    </section>
+
+    <section class="card teal">
+      <p class="eyebrow">Approach</p>
+      <h2>Two purpose-built imaging systems</h2>
+      <p>Each class of artifact is paired with a rig designed for it. Which one an object uses depends on a single question: <b>does its shape carry meaning in three dimensions?</b></p>
+      <ul class="tight">
+        <li><b>Flat, detail-rich</b> objects (papyrus, parchment) &rarr; a 2D photometric-stereo rig that recovers how the surface responds to light.</li>
+        <li><b>Truly three-dimensional</b> objects (cuneiform tablets, seals) &rarr; a 3D photogrammetry rig that reconstructs real geometry.</li>
+      </ul>
+    </section>
+
+    <section class="card teal">
+      <p class="eyebrow">Access</p>
+      <h2>An interactive web viewer</h2>
+      <p>Every finished twin lives in a static three.js gallery that runs in any browser &mdash; rotate each artifact, adjust the lighting, and swap the backdrop to study the surface.</p>
+      <ul class="tight">
+        <li><b>Hand-tracked magnifier</b> &mdash; a webcam tracks the visitor&rsquo;s fingertip and a magnifying lens follows it across the artifact, like a museum exhibit.</li>
+        <li><b>Adjustable relighting</b> reveals ink and relief a fixed view would hide.</li>
+        <li><b>Runs anywhere</b> &mdash; a static site, shared with a single link.</li>
+      </ul>
+    </section>
+
+    <!-- Row 2: two system cards + stacked (specs / conclusion) -->
+    <section class="card">
+      <p class="eyebrow">System A &middot; Papyrus &amp; flat manuscripts</p>
+      <h2>2D Photometric-Stereo Rig</h2>
+      <p>A Canon DSLR paired with an Arduino-driven directional lighting array photographs the manuscript once per light direction. Instead of reconstructing geometry, it recovers how the surface <i>responds to light</i> &mdash; revealing texture, ink, and fine relief.</p>
+      <div class="sysrow">
+        <!-- PLACEHOLDER: replace this box with a photo of the 2D capture rig -->
+        <figure>
+          <div class="ph h-rig" role="img" aria-label="Photo placeholder for the 2D capture rig">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="2.5" y="4.5" width="19" height="15" rx="1.5"/><circle cx="12" cy="12" r="3.6"/><path d="M7 4.5l1.4-2h7.2L17 4.5"/></svg>
+            <span class="ph-label">Photo &mdash; 2D papyrus capture rig</span>
+            <span class="ph-note">DSLR + directional lighting array</span>
+          </div>
+        </figure>
+        <div class="diagram">
+          <svg viewBox="0 0 200 150" aria-hidden="true">
+            <rect x="68" y="52" width="64" height="46" rx="2" fill="#e4d6b8" stroke="#b7a271" stroke-width="1.5"/>
+            <text x="100" y="79" text-anchor="middle" font-family="Georgia, serif" font-size="9" fill="#7a6a44">papyrus</text>
+            <g stroke="#f76902" stroke-width="1.4" stroke-dasharray="3 3">
+              <line x1="100" y1="26" x2="100" y2="50"/><line x1="174" y1="75" x2="134" y2="75"/>
+              <line x1="100" y1="124" x2="100" y2="100"/><line x1="26" y1="75" x2="66" y2="75"/>
+            </g>
+            <g fill="#f76902">
+              <circle cx="100" cy="22" r="6"/><circle cx="178" cy="75" r="6"/><circle cx="100" cy="128" r="6"/><circle cx="22" cy="75" r="6"/>
+            </g>
+            <g font-family="Arial, sans-serif" font-size="9" font-weight="700" fill="#241e19">
+              <text x="100" y="12" text-anchor="middle">N</text><text x="192" y="79" text-anchor="middle">E</text>
+              <text x="100" y="146" text-anchor="middle">S</text><text x="8" y="79" text-anchor="middle">W</text>
+            </g>
+          </svg>
+          <div class="cap"><b>Four directional lights</b> (N/E/S/W) at ~37&deg;. A rotating polarizer captures <b>cross-polarized</b> (clean geometry) and <b>co-polarized</b> (reveals ink) pairs.</div>
+        </div>
+      </div>
+    </section>
+
+    <section class="card teal">
+      <p class="eyebrow">System B &middot; Cuneiform tablets &amp; objects</p>
+      <h2>3D Photogrammetry Rig</h2>
+      <p>A multi-camera rig on an Arduino-driven turntable photographs the artifact from many angles. GPU-accelerated structure-from-motion and dense stereo build a point cloud and, ultimately, a watertight 3D mesh &mdash; a true replica of the object&rsquo;s form.</p>
+      <div class="sysrow">
+        <!-- PLACEHOLDER: replace this box with a photo of the 3D capture rig -->
+        <figure>
+          <div class="ph h-rig" role="img" aria-label="Photo placeholder for the 3D capture rig">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="2.5" y="4.5" width="19" height="15" rx="1.5"/><circle cx="12" cy="12" r="3.6"/><path d="M7 4.5l1.4-2h7.2L17 4.5"/></svg>
+            <span class="ph-label">Photo &mdash; 3D tablet capture rig</span>
+            <span class="ph-note">Multi-camera + turntable</span>
+          </div>
+        </figure>
+        <div class="diagram">
+          <svg viewBox="0 0 200 150" aria-hidden="true">
+            <ellipse cx="100" cy="118" rx="58" ry="16" fill="#cfe0e6" stroke="#1e5f74" stroke-width="1.5"/>
+            <rect x="86" y="92" width="28" height="22" rx="2" fill="#b98d5a" stroke="#7a5a34" stroke-width="1.5"/>
+            <path d="M60 120 A 40 12 0 0 0 140 120" fill="none" stroke="#1e5f74" stroke-width="1.4" stroke-dasharray="3 3" marker-end="url(#ar)"/>
+            <defs><marker id="ar" markerWidth="7" markerHeight="7" refX="5" refY="3" orient="auto"><path d="M0 0l6 3-6 3z" fill="#1e5f74"/></marker></defs>
+            <g fill="#1e5f74"><rect x="24" y="40" width="20" height="14" rx="2"/><rect x="90" y="20" width="20" height="14" rx="2"/><rect x="156" y="40" width="20" height="14" rx="2"/></g>
+            <g stroke="#1e5f74" stroke-width="1.1" stroke-dasharray="2 3"><line x1="34" y1="54" x2="92" y2="98"/><line x1="100" y1="34" x2="100" y2="90"/><line x1="166" y1="54" x2="108" y2="98"/></g>
+          </svg>
+          <div class="cap"><b>Multiple cameras</b> shoot the object as the <b>turntable rotates</b>. Both sides are captured, then merged into one model.</div>
+        </div>
+      </div>
+    </section>
+
+    <div class="stack">
+      <section class="card">
+        <p class="eyebrow">Reference</p>
+        <h2>Technical specifications</h2>
+        <table class="specs">
+          <tr><th>Camera</th><td>Canon DSLR, tethered; RAW &rarr; 16-bit TIFF (~5208 &times; 3476 px)</td></tr>
+          <tr><th>Lighting</th><td>4 directional lights (N/E/S/W) at &theta; &asymp; 37&deg;; rotating polarizer</td></tr>
+          <tr><th>Polarization</th><td>cross-pol (geometry) + co-pol (ink) capture pairs</td></tr>
+          <tr><th>Height</th><td>weighted Frankot&ndash;Chellappa integration of normals</td></tr>
+          <tr><th>3D reconstruction</th><td>CUDA COLMAP (SfM + MVS) &rarr; FPFH/RANSAC + ICP &rarr; Open3D Poisson mesh</td></tr>
+          <tr><th>Rendering</th><td>three.js material baked to GLB; viewer w/ MediaPipe hand tracking</td></tr>
+        </table>
+      </section>
+      <section class="card">
+        <p class="eyebrow">Conclusion &amp; future work</p>
+        <h2>A repeatable path to digital preservation</h2>
+        <p>Two complementary rigs and their automated pipelines turn fragile originals into faithful, shareable digital twins &mdash; a workflow that repeats across artifact types.</p>
+        <ul class="tight">
+          <li>Expand the collection of scanned artifacts with the Cary Collection.</li>
+          <li>Refine capture speed and automation for both rigs.</li>
+        </ul>
+      </section>
+    </div>
+
+    <!-- Row 3: methods, full width -->
+    <section class="card span-3">
+      <p class="eyebrow">Methods</p>
+      <h2>From raw captures to a digital twin</h2>
+      <div class="flows2">
+        <div>
+          <p class="flow-title" style="--c:var(--accent-deep)"><span class="tag" style="--c:var(--accent-deep)">Papyrus</span> Photometric-stereo pipeline &nbsp;<span class="muted" style="font-weight:600">(Python)</span></p>
+          <div class="flow" style="--c:var(--accent-deep)">
+            <div class="step"><span class="n">0</span><span class="t">Segment</span><span class="d">ML segmentation isolates the fragment.</span></div>
+            <span class="arrow">&rarr;</span>
+            <div class="step"><span class="n">1</span><span class="t">Calibrate</span><span class="d">Copy-paper shots remove light falloff.</span></div>
+            <span class="arrow">&rarr;</span>
+            <div class="step"><span class="n">2</span><span class="t">Core maps</span><span class="d">Normal, albedo, specular, roughness.</span></div>
+            <span class="arrow">&rarr;</span>
+            <div class="step"><span class="n">3</span><span class="t">Height</span><span class="d">Frankot&ndash;Chellappa integration.</span></div>
+            <span class="arrow">&rarr;</span>
+            <div class="step"><span class="n">4</span><span class="t">Bake</span><span class="d">Maps baked into a three.js GLB.</span></div>
+          </div>
+        </div>
+        <div>
+          <p class="flow-title" style="--c:var(--teal)"><span class="tag" style="--c:var(--teal)">Tablets</span> Photogrammetry pipeline &nbsp;<span class="muted" style="font-weight:600">(COLMAP / Open3D)</span></p>
+          <div class="flow" style="--c:var(--teal)">
+            <div class="step"><span class="n">1</span><span class="t">Clean</span><span class="d">Background removed from every photo.</span></div>
+            <span class="arrow">&rarr;</span>
+            <div class="step"><span class="n">2</span><span class="t">Reconstruct</span><span class="d">CUDA COLMAP SfM + dense stereo.</span></div>
+            <span class="arrow">&rarr;</span>
+            <div class="step"><span class="n">3</span><span class="t">Align</span><span class="d">FPFH + RANSAC + ICP merge both sides.</span></div>
+            <span class="arrow">&rarr;</span>
+            <div class="step"><span class="n">4</span><span class="t">Mesh</span><span class="d">Open3D Poisson &rarr; watertight model.</span></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Row 4: results (span 2) + acknowledgements (span 1) -->
+    <section class="card span-2">
+      <p class="eyebrow">Results</p>
+      <h2>Outputs</h2>
+      <div class="results-grid">
+        <!-- PLACEHOLDER: replace with a screenshot of the papyrus texture maps -->
+        <figure>
+          <div class="ph h-out" role="img" aria-label="Screenshot placeholder for papyrus texture maps">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 15l5-5 4 4 3-3 6 6"/><circle cx="8.5" cy="8.5" r="1.6"/></svg>
+            <span class="ph-label">Papyrus texture maps</span>
+            <span class="ph-note">normal / albedo / specular / height</span>
+          </div>
+          <figcaption><b>Calibrated surface maps.</b> Building blocks of the papyrus twin, from the polarized-light captures.</figcaption>
+        </figure>
+        <!-- PLACEHOLDER: replace with a screenshot of a finished 3D tablet twin -->
+        <figure>
+          <div class="ph h-out" role="img" aria-label="Screenshot placeholder for a finished 3D tablet model">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M12 2l9 5v10l-9 5-9-5V7z"/><path d="M12 12l9-5M12 12v10M12 12L3 7"/></svg>
+            <span class="ph-label">Cuneiform-tablet twin</span>
+            <span class="ph-note">reconstructed 3D mesh</span>
+          </div>
+          <figcaption><b>Watertight 3D replica.</b> Both faces reconstructed and merged into one model.</figcaption>
+        </figure>
+        <!-- PLACEHOLDER: replace with a screenshot of the interactive web viewer -->
+        <figure>
+          <div class="ph h-out" role="img" aria-label="Screenshot placeholder for the interactive web viewer">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="2.5" y="4" width="19" height="13" rx="1.5"/><path d="M8 20h8M12 17v3"/><circle cx="12" cy="10.5" r="3"/></svg>
+            <span class="ph-label">Interactive web viewer</span>
+            <span class="ph-note">in-browser inspection</span>
+          </div>
+          <figcaption><b>Explore in the browser.</b> Rotate, relight, and inspect each twin &mdash; no special software.</figcaption>
+        </figure>
+      </div>
+    </section>
+
+    <section class="card">
+      <p class="eyebrow">Acknowledgements</p>
+      <h2>Thanks</h2>
+      <p>This work was carried out at the <b>Rochester Institute of Technology</b> through the Freshman Imaging Project and Extended-FIP, in collaboration with the <b>RIT Cary Graphic Arts Collection</b>, which generously provided the artifacts imaged in this project.</p>
+    </section>
+
+  </main>
+
+  <!-- ============================= FOOTER ============================= -->
+  <footer class="footer">
+    <div>
+      <h3>Explore the digital twins</h3>
+      <p>Contact: <span class="mono">cjl6825@rit.edu</span> &nbsp;&middot;&nbsp; <span class="mono">isa4049@rit.edu</span> &nbsp;&middot;&nbsp; Artifact questions: RIT Cary Graphic Arts Collection &middot; Rochester Institute of Technology</p>
+    </div>
+    <!-- PLACEHOLDER: once the live website URL is provided, a QR code will be generated into this box -->
+    <div class="qr" role="img" aria-label="QR code placeholder linking to the project website">
+      <svg viewBox="0 0 24 24" fill="currentColor"><path d="M3 3h8v8H3V3zm2 2v4h4V5H5zm8-2h8v8h-8V3zm2 2v4h4V5h-4zM3 13h8v8H3v-8zm2 2v4h4v-4H5zm10-2h2v2h-2v-2zm4 0h2v2h-2v-2zm-4 4h2v2h-2v-2zm2 2h2v2h-2v-2zm2-2h2v2h-2v-2zm0 4h2v2h-2v-2z"/></svg>
+      <span class="qr-t">Scan for our website</span>
+    </div>
+  </footer>
+
+</div>

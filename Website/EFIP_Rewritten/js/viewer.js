@@ -37,6 +37,65 @@ function loadModel(modelPath, mtlPath, onLoad, onError) {
   new GLTFLoader().load(modelPath, (gltf) => onLoad(gltf.scene), undefined, onError);
 }
 
+// Some papyrus exports carry a baked negative-determinant node transform —
+// a mirror, not a rotation (our sample/demo GLBs decompose to mirror-X ∘
+// rotX(180), det = -1). For freely-rotatable artifacts that's invisible
+// because you can spin them around, but rotation-locked types are pinned to
+// the +Z side, so the mirror shows up as horizontally-flipped text you can't
+// turn away from. A rotation can't undo a reflection, so detect the mirrored
+// world matrix and cancel it with a compensating horizontal (world-X) flip.
+// Do this before any bounding-box/centering math so that's computed in the
+// fixed space. Each side of a two-sided artifact needs this independently.
+function cancelBakedMirror(model) {
+  model.updateMatrixWorld(true);
+  let mirrored = false;
+  model.traverse((obj) => {
+    if (obj.isMesh && obj.matrixWorld.determinant() < 0) mirrored = true;
+  });
+  if (mirrored) {
+    model.scale.x *= -1;
+    model.updateMatrixWorld(true);
+  }
+}
+
+// Some scans/exports are thin shells or single-sided planes whose winding
+// doesn't reliably face the camera. Force double-sided rendering so
+// artifacts never disappear depending on view angle.
+function forceDoubleSided(model) {
+  model.traverse((obj) => {
+    if (!obj.isMesh || !obj.material) return;
+    const materials = Array.isArray(obj.material) ? obj.material : [obj.material];
+    materials.forEach((m) => { m.side = THREE.DoubleSide; });
+  });
+}
+
+// The meshes the hand-tracking raycaster tests against (see updateHandPoint).
+// Re-collected per visible side so a flip never leaves it aiming at the face
+// that's now turned away.
+function collectHitMeshes(root) {
+  const meshes = [];
+  root.traverse((obj) => {
+    if (obj.isMesh) meshes.push(obj);
+  });
+  return meshes;
+}
+
+// Wrap a loaded model in a holder Group, centered on its own geometry so the
+// holder can be rotated about the model's true center. An Object3D's
+// transform is T * R * S, so rotating the model directly — it carries the
+// centering offset in .position — would swing it around the wrong origin.
+function makeSideHolder(model, artifactType) {
+  if (isRotationLocked(artifactType)) cancelBakedMirror(model);
+  forceDoubleSided(model);
+
+  const box = new THREE.Box3().setFromObject(model);
+  model.position.sub(box.getCenter(new THREE.Vector3()));
+
+  const holder = new THREE.Group();
+  holder.add(model);
+  return { holder, size: box.getSize(new THREE.Vector3()) };
+}
+
 const params = new URLSearchParams(window.location.search);
 const artifactId = params.get("id");
 
@@ -71,6 +130,9 @@ const handTrackingStop = document.getElementById("handTrackingStop");
 const gestureLabelEl = document.getElementById("gestureLabel");
 const cameraPreviewEl = document.getElementById("cameraPreview");
 
+const flipWrapper = document.getElementById("flipWrapper");
+const flipButton = document.getElementById("flipButton");
+
 infoToggle.addEventListener("click", () => {
   const open = infoPanel.classList.toggle("open");
   infoToggle.innerHTML = open ? "Artifact Info &#x25B2;" : "Artifact Info &#x25BC;";
@@ -86,12 +148,16 @@ const stackedPanels = [
   { wrapper: document.getElementById("handTrackingPanelWrapper"), toggle: handTrackingToggle, panel: handTrackingPanel, label: "Hand Tracking" }
 ];
 
+// The flip button shares that corner but has no panel of its own, so it
+// only ever gets hidden, never opened.
+const stackedWrappers = stackedPanels.map((p) => p.wrapper).concat(flipWrapper);
+
 stackedPanels.forEach(({ wrapper, toggle, panel, label }) => {
   toggle.addEventListener("click", () => {
     const open = panel.classList.toggle("open");
     toggle.innerHTML = open ? `${label} &#x25B2;` : `${label} &#x25BC;`;
-    stackedPanels.forEach((other) => {
-      if (other.wrapper !== wrapper) other.wrapper.classList.toggle("panel-hidden", open);
+    stackedWrappers.forEach((other) => {
+      if (other !== wrapper) other.classList.toggle("panel-hidden", open);
     });
   });
 });
@@ -101,6 +167,82 @@ stackedPanels.forEach(({ wrapper, toggle, panel, label }) => {
 const ROTATION_LOCKED_TYPES = ["papyrus"];
 function isRotationLocked(type) {
   return ROTATION_LOCKED_TYPES.includes((type || "").trim().toLowerCase());
+}
+
+// Two-sided artifacts (a folder with a second .glb — see build_manifest.py)
+// hang both sides off one pivot that spins 180° to turn the sheet over.
+// Only the side facing the camera is ever visible: the two scans are of the
+// same physical object, so their geometry is coincident and rendering both
+// at once would z-fight.
+const FLIP_DURATION_MS = 600;
+let flipPivot = null;
+let frontHolder = null;
+let backHolder = null;
+let showingBack = false;
+let flipAnim = null;
+
+function easeInOutCubic(t) {
+  return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+}
+
+flipButton.addEventListener("click", () => {
+  if (flipAnim || !backHolder) return;
+  const from = flipPivot.rotation.y;
+  flipAnim = { from, to: from + Math.PI, start: performance.now(), swapped: false };
+  flipButton.disabled = true;
+});
+
+function updateFlip() {
+  if (!flipAnim) return;
+
+  const t = Math.min((performance.now() - flipAnim.start) / FLIP_DURATION_MS, 1);
+  flipPivot.rotation.y = flipAnim.from + (flipAnim.to - flipAnim.from) * easeInOutCubic(t);
+
+  // Swap sides at the halfway point, where the sheet is edge-on and
+  // effectively invisible, so the cut never reads as a pop.
+  if (!flipAnim.swapped && t >= 0.5) {
+    flipAnim.swapped = true;
+    showingBack = !showingBack;
+    frontHolder.visible = !showingBack;
+    backHolder.visible = showingBack;
+    modelHitMeshes = collectHitMeshes(showingBack ? backHolder : frontHolder);
+    flipButton.textContent = showingBack ? "Flip back" : "Flip to other side";
+  }
+
+  if (t >= 1) {
+    // Snap to the exact resting angle rather than letting += PI accumulate
+    // float error across repeated flips.
+    flipPivot.rotation.y = showingBack ? Math.PI : 0;
+    flipAnim = null;
+    flipButton.disabled = false;
+  }
+}
+
+// Loads the second side in the background once the front is up, so the
+// first paint isn't held behind a second multi-megabyte GLB. The button is
+// revealed right away but stays disabled until this lands.
+function loadBackSide(backPath, artifactType) {
+  flipWrapper.classList.remove("unavailable");
+  loadModel(
+    backPath,
+    null,
+    (model) => {
+      const { holder } = makeSideHolder(model, artifactType);
+      // Pre-turned to face away, so the pivot's 180° brings it to camera
+      // reading the right way round.
+      holder.rotation.y = Math.PI;
+      holder.visible = false;
+      flipPivot.add(holder);
+      backHolder = holder;
+      flipButton.disabled = false;
+    },
+    (err) => {
+      // The front side is already usable — don't degrade it over a
+      // second-side failure, just don't offer the flip.
+      console.error("second side failed to load:", err);
+      flipWrapper.classList.add("unavailable");
+    }
+  );
 }
 
 const LIGHT_RADIUS = 5;
@@ -547,11 +689,12 @@ async function init() {
   loadScene(
     `artifacts/${artifact.model}`,
     artifact.mtl ? `artifacts/${artifact.mtl}` : null,
-    artifact.type
+    artifact.type,
+    artifact.back ? `artifacts/${artifact.back}` : null
   );
 }
 
-function loadScene(modelPath, mtlPath, artifactType) {
+function loadScene(modelPath, mtlPath, artifactType, backPath) {
   const scene = new THREE.Scene();
   scene.background = new THREE.Color(DEFAULT_BACKGROUND_COLOR);
   activeScene = scene;
@@ -619,45 +762,12 @@ function loadScene(modelPath, mtlPath, artifactType) {
     modelPath,
     mtlPath,
     (model) => {
-      // Some papyrus exports carry a baked negative-determinant node
-      // transform — a mirror, not a rotation (our sample/demo GLBs decompose
-      // to mirror-X ∘ rotX(180), det = -1). For freely-rotatable artifacts
-      // that's invisible because you can spin them around, but rotation-locked
-      // types are pinned to the +Z side, so the mirror shows up as
-      // horizontally-flipped text you can't turn away from. A rotation can't
-      // undo a reflection, so detect the mirrored world matrix and cancel it
-      // with a compensating horizontal (world-X) flip. Do this before the
-      // bounding-box/centering math below so it's computed in the fixed space.
-      if (isRotationLocked(artifactType)) {
-        model.updateMatrixWorld(true);
-        let mirrored = false;
-        model.traverse((obj) => {
-          if (obj.isMesh && obj.matrixWorld.determinant() < 0) mirrored = true;
-        });
-        if (mirrored) {
-          model.scale.x *= -1;
-          model.updateMatrixWorld(true);
-        }
-      }
+      const { holder, size } = makeSideHolder(model, artifactType);
+      frontHolder = holder;
+      modelHitMeshes = collectHitMeshes(frontHolder);
 
-      // Some scans/exports are thin shells or single-sided planes whose
-      // winding doesn't reliably face the camera. Force double-sided
-      // rendering so artifacts never disappear depending on view angle.
-      // Also collect meshes here for the hand-tracking raycaster below.
-      modelHitMeshes = [];
-      model.traverse((obj) => {
-        if (!obj.isMesh) return;
-        modelHitMeshes.push(obj);
-        if (obj.material) {
-          const materials = Array.isArray(obj.material) ? obj.material : [obj.material];
-          materials.forEach((m) => { m.side = THREE.DoubleSide; });
-        }
-      });
-
-      const box = new THREE.Box3().setFromObject(model);
-      const size = box.getSize(new THREE.Vector3());
-      const center = box.getCenter(new THREE.Vector3());
-      model.position.sub(center);
+      flipPivot = new THREE.Group();
+      flipPivot.add(frontHolder);
 
       const maxDim = Math.max(size.x, size.y, size.z) || 1;
       const fitDistance =
@@ -669,9 +779,11 @@ function loadScene(modelPath, mtlPath, artifactType) {
       controls.target.set(0, 0, 0);
       controls.update();
 
-      scene.add(model);
+      scene.add(flipPivot);
       setStatus("Model loaded");
       fadeStatus();
+
+      if (backPath) loadBackSide(backPath, artifactType);
     },
     (err) => {
       console.error(err);
@@ -693,6 +805,7 @@ function loadScene(modelPath, mtlPath, artifactType) {
     requestAnimationFrame(animate);
     controls.update();
 
+    updateFlip();
     updateHandPoint();
     updateLensUniforms();
     updateRevealLight();

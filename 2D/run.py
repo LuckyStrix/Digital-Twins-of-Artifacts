@@ -93,7 +93,6 @@ BACKEND       = ROOT / "backend"
 CAPTURE_DIR   = BACKEND / "capture"
 MODELING_DIR  = BACKEND / "modeling"
 RENDERING_DIR = BACKEND / "rendering"
-#WEBSITE_DIR   = BACKEND / "website"
 
 CAPTURE_SCRIPT     = CAPTURE_DIR / "arduinoIntegration.py"
 FOCUS_SCRIPT       = CAPTURE_DIR / "focusViewer.py"
@@ -848,13 +847,11 @@ class PipelineApp:
 
         glb = RENDERING_DIR / "render.glb"
         if glb.exists():
-            dest = self._glb_path(side)
+            glb_new =f"{side}.glb"
+            dest = side / MODEL_SUBDIR / glb_new
             dest.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(glb, dest)
-            #shutil.copy2(glb, WEBSITE_DIR / "render.glb")
             self.log(f"Saved model -> {dest}.")
-            #self.log(f"Saved model -> {dest} and copied it into the viewer.")
-            #self.log("Click 'Step 4 — Open 3D Viewer' to see the result.")
         else:
             self.log("render.glb was not created — see log above for details.")
     def _smart_run(self):

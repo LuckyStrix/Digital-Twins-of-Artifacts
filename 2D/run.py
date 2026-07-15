@@ -156,6 +156,8 @@ PYTHON_DEPS = [
     ("onnxruntime",             "onnxruntime",  "modeling (alpha mask)"),
 ]
 
+CLEANUP_SCRIPT = BACKEND / "delete-cr2-tiff.ps1"
+
 
 class PipelineApp:
     def __init__(self, root: tk.Tk):
@@ -788,6 +790,7 @@ class PipelineApp:
                 self.log(f"BUILD 3D MODEL — {label}")
                 self.log("=" * 64)
             self._build_model_for(side)
+        subprocess.run(["powershell", "-ExecutionPolicy", "Bypass", "-File", r".\delete-cr2-tiff.ps1"], cwd=BACKEND)
 
     def _build_model_for(self, side: Path):
         maps_dir = self._maps_dir(side)

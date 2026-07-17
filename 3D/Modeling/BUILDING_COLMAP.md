@@ -22,10 +22,21 @@ builds it for their own GPU.
   sudo apt update && sudo apt install -y \
     git cmake ninja-build build-essential \
     libboost-program-options-dev libboost-graph-dev libboost-system-dev \
-    libeigen3-dev libflann-dev libfreeimage-dev libmetis-dev \
-    libgoogle-glog-dev libgtest-dev libsqlite3-dev libglew-dev \
-    qtbase5-dev libqt5opengl5-dev libcgal-dev libceres-dev
+    libeigen3-dev libopenimageio-dev openimageio-tools libmetis-dev \
+    libgoogle-glog-dev libgtest-dev libgmock-dev libsqlite3-dev libglew-dev \
+    qt6-base-dev libqt6opengl6-dev libqt6openglwidgets6 qt6-svg-dev \
+    libcgal-dev libceres-dev libsuitesparse-dev libcurl4-openssl-dev libssl-dev
   ```
+
+  This list tracks COLMAP `main` (version `4.1.0.dev0`), which is what
+  `build_colmap.sh` clones by default. Note `main` moved off FreeImage to
+  **OpenImageIO** and now defaults to **Qt6** — the older FreeImage/Qt5 lists
+  will not build current COLMAP. Because `main` is a moving target, its
+  dependencies can drift; if a build breaks on a missing package, cross-check
+  the official guide below for the commit you're building.
+
+  Optional: `libmkl-full-dev` (Intel MKL) accelerates BLAS/LAPACK but is a
+  multi-GB install and not required.
 
 Official COLMAP build guide: https://colmap.github.io/install.html
 

@@ -39,12 +39,15 @@ fi
 # -------------------------------
 print_green "Installing COLMAP build dependencies via apt..."
 sudo apt-get update
+# Tracks COLMAP main (4.1.0.dev0): OpenImageIO (not FreeImage) + Qt6.
+# libmkl-full-dev (Intel MKL) is an optional multi-GB BLAS accelerator, omitted.
 sudo apt-get install -y \
     git cmake ninja-build build-essential \
     libboost-program-options-dev libboost-graph-dev libboost-system-dev \
-    libeigen3-dev libflann-dev libfreeimage-dev libmetis-dev \
-    libgoogle-glog-dev libgtest-dev libsqlite3-dev libglew-dev \
-    qtbase5-dev libqt5opengl5-dev libcgal-dev libceres-dev
+    libeigen3-dev libopenimageio-dev openimageio-tools libmetis-dev \
+    libgoogle-glog-dev libgtest-dev libgmock-dev libsqlite3-dev libglew-dev \
+    qt6-base-dev libqt6opengl6-dev libqt6openglwidgets6 qt6-svg-dev \
+    libcgal-dev libceres-dev libsuitesparse-dev libcurl4-openssl-dev libssl-dev
 
 # -------------------------------
 # 2. clone

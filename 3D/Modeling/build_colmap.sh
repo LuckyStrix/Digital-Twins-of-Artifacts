@@ -44,7 +44,7 @@ sudo apt-get update
 sudo apt-get install -y \
     git cmake ninja-build build-essential \
     libboost-program-options-dev libboost-graph-dev libboost-system-dev \
-    libeigen3-dev libopenimageio-dev openimageio-tools libmetis-dev \
+    libeigen3-dev libopenimageio-dev openimageio-tools libopencv-dev libmetis-dev \
     libgoogle-glog-dev libgtest-dev libgmock-dev libsqlite3-dev libglew-dev \
     qt6-base-dev libqt6opengl6-dev libqt6openglwidgets6 qt6-svg-dev \
     libcgal-dev libceres-dev libsuitesparse-dev libcurl4-openssl-dev libssl-dev
@@ -62,7 +62,38 @@ fi
 git -C "$COLMAP_SRC_DIR" checkout "$COLMAP_VERSION"
 
 # -------------------------------
-# 3. configure + build (CUDA)
+# 3. toolchain compatibility preflight
+# -------------------------------
+# CUDA's nvcc only supports a bounded range of host GCC versions (CUDA 12.4 tops
+# out at GCC 13). On a distro whose default compiler is newer than that (e.g.
+# Ubuntu 26.04 ships GCC 15), you are wedged: nvcc rejects the new GCC, but the
+# distro's system libraries (libceres, Qt, ...) are built with it and require its
+# libstdc++ at link time — so you cannot downgrade the compiler either. The build
+# then fails at the final link with
+# "undefined reference to __cxa_call_terminate@CXXABI_1.3.15".
+#
+# There is no build-flag workaround for that mismatch; the fix is to build on a
+# distro whose default GCC is within CUDA's supported range. Ubuntu 24.04 LTS
+# (default GCC 13, CUDA 12.x) is the supported combination — see BUILDING_COLMAP.md.
+# Catch it here rather than after a 20-minute build. Override at your own risk with
+# ALLOW_UNSUPPORTED_GCC=1.
+GXX_MAJOR="$(g++ -dumpversion 2>/dev/null | cut -d. -f1)"
+if [ "${ALLOW_UNSUPPORTED_GCC:-0}" != "1" ] && [ "${GXX_MAJOR:-0}" -gt 13 ]; then
+    print_red "Default compiler is GCC $GXX_MAJOR, but CUDA 12.x supports GCC <= 13."
+    print_red "This distro's compiler is too new for CUDA, and its system libraries are"
+    print_red "built with GCC $GXX_MAJOR, so the build cannot link (undefined reference to"
+    print_red "__cxa_call_terminate@CXXABI_1.3.15)."
+    print_red ""
+    print_red "Use an Ubuntu 24.04 LTS WSL instance (default GCC 13), which matches the CUDA"
+    print_red "toolchain. From Windows PowerShell: wsl --install Ubuntu-24.04"
+    print_red "See BUILDING_COLMAP.md for the full setup."
+    print_red ""
+    print_red "To attempt the build anyway, re-run with ALLOW_UNSUPPORTED_GCC=1."
+    exit 1
+fi
+
+# -------------------------------
+# 4. configure + build (CUDA)
 # -------------------------------
 print_green "Configuring CUDA build (CMAKE_CUDA_ARCHITECTURES=$CUDA_ARCH)..."
 cmake -S "$COLMAP_SRC_DIR" -B "$COLMAP_SRC_DIR/build" -GNinja \
@@ -73,7 +104,7 @@ print_green "Building (this takes a while)..."
 ninja -C "$COLMAP_SRC_DIR/build"
 
 # -------------------------------
-# 4. link binary to ./colmap_local
+# 5. link binary to ./colmap_local
 # -------------------------------
 BUILT_BIN="$(find "$COLMAP_SRC_DIR/build" -type f -name colmap -perm -u+x | head -n1)"
 if [ -z "$BUILT_BIN" ]; then

@@ -14,7 +14,8 @@ the rig): multi-camera capture → COLMAP reconstruction → meshed model. See t
   [`Modeling/BUILDING_COLMAP.md`](Modeling/BUILDING_COLMAP.md).
 - **exiftool** (`sudo apt install exiftool`) — COLMAP is fed metadata-stripped
   images.
-- Python 3.9+ and the deps in `Modeling/requirements.txt`.
+- Python 3.9–3.12 and the deps in `Modeling/requirements.txt` (open3d has no
+  prebuilt wheels for 3.13/3.14 yet).
 
 ## Setup
 

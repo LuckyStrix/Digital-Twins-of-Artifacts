@@ -1,0 +1,5 @@
+Name: Third Sample Cuneiform Tablet Replica
+Type: tablet
+Description: This is a placeholder artifact lent to us by the RIT Cary
+Graphic Arts Collection to test our systems with, and is a sample of
+what a real cuneiform tablet may look like.

@@ -6,7 +6,8 @@ model, driven by a Tkinter GUI (`app.py`, run under WSL with WSLg). See the
 
 ## Prerequisites
 
-- **OS: WSL2 (Ubuntu)**, Python 3.9+.
+- **OS: WSL2 (Ubuntu)**, Python 3.9–3.12 (not 3.13/3.14 — open3d has no
+  prebuilt wheels there yet).
 - **CUDA-enabled COLMAP** — see the dependency notes below and
   [`BUILDING_COLMAP.md`](BUILDING_COLMAP.md).
 - **exiftool**: `sudo apt install exiftool`.

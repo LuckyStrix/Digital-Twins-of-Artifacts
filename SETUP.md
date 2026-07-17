@@ -8,9 +8,16 @@ the linked per-pillar README for the detailed steps.
 
 | Pillar       | OS target          | Key system tools                          | Python |
 |--------------|--------------------|-------------------------------------------|--------|
-| `2D/`        | **Windows / Linux**| Node.js (LTS), gphoto2, dcraw             | 3.9+   |
-| `3D/`        | **WSL2 (Ubuntu)**  | CUDA-enabled COLMAP, exiftool, NVIDIA GPU | 3.9+   |
-| `Website/`   | any                | none (static site)                        | 3.x    |
+| `2D/`        | **Windows / Linux**| Node.js (LTS), gphoto2, dcraw             | 3.9–3.12 |
+| `3D/`        | **WSL2 (Ubuntu)**  | CUDA-enabled COLMAP, exiftool, NVIDIA GPU | 3.9–3.12 |
+| `Website/`   | any                | none (static site)                        | 3.x      |
+
+> **Use Python 3.9–3.12, not 3.13/3.14.** The pipelines pin `numpy<2.0`, and
+> numpy 1.26.x (plus scipy, opencv, rembg) only ship prebuilt wheels up to
+> Python 3.12. On 3.13+ pip falls back to building numpy from C source and fails
+> with `ERROR: Unknown compiler(s)` unless you have a full MSVC/GCC toolchain.
+> If you hit that, install Python 3.12 and launch with it (e.g. `py -3.12 run.py`
+> on Windows). The `Website/` static server works on any Python 3.
 
 The `2D/` and `3D/` pipelines run on **different operating systems** and keep
 their Python dependencies in separate `requirements.txt` files — do not try to

@@ -142,6 +142,11 @@ HTTP_PORT = 8000
 # arduinoIntegration.py / focusViewer.py).
 MSYS2_SHELL = r"C:\msys64\msys2_shell.cmd"
 
+# On Windows npm ships as npm.cmd (a batch script). subprocess.Popen without
+# shell=True can't launch a bare "npm" (CreateProcess doesn't resolve .cmd),
+# which fails with [WinError 2]. Use the .cmd name explicitly there.
+NPM = "npm.cmd" if os.name == "nt" else "npm"
+
 # Python packages the pipeline needs, as (pip name, import name, used by).
 # pillow is also listed in modeling/requirements.txt; pyserial is capture-only
 # and is installed alongside the requirements file.
@@ -441,6 +446,12 @@ class PipelineApp:
         self.log(f"Python {ver.major}.{ver.minor}.{ver.micro}  ({sys.executable})")
         if (ver.major, ver.minor) < (3, 9):
             self.log("  WARNING: Python 3.9+ is recommended for this pipeline.")
+        elif (ver.major, ver.minor) > (3, 12):
+            self.log(f"  WARNING: Python {ver.major}.{ver.minor} is newer than this "
+                     "pipeline supports. The pinned numpy<2.0 (and scipy/opencv/"
+                     "rembg) have no prebuilt wheels past 3.12, so pip will try to "
+                     "compile numpy from source and fail with 'Unknown compiler(s)'. "
+                     "Install Python 3.9-3.12 and launch with it (e.g. py -3.12 run.py).")
         try:
             import tkinter  # noqa: F401  (already running, but confirm explicitly)
             self.log(f"{ok} tkinter (GUI) available")
@@ -475,7 +486,7 @@ class PipelineApp:
         # 3. Node.js + renderer packages (Build 3D Model step) ----------------
         self.log("\nNode.js (needed for 'Build 3D Model'):")
         node = shutil.which("node")
-        npm = shutil.which("npm")
+        npm = shutil.which(NPM)
         if node and npm:
             self.log(f"  {ok} node ({node})")
             if (RENDERING_DIR / "node_modules").exists():
@@ -483,7 +494,7 @@ class PipelineApp:
             else:
                 self.log("  node_modules missing — running 'npm install' "
                           "(downloads three.js + a headless Chromium; may take a while)...")
-                rc = self.run_command(["npm", "install"], cwd=RENDERING_DIR)
+                rc = self.run_command([NPM, "install"], cwd=RENDERING_DIR)
                 self.log("  npm install complete." if rc == 0
                           else f"  npm install exited with code {rc}.")
         else:
@@ -806,7 +817,7 @@ class PipelineApp:
         if not (RENDERING_DIR / "node_modules").exists():
             self.log("node_modules missing — running npm install "
                       "(this may take a while)...")
-            rc = self.run_command(["npm", "install"], cwd=RENDERING_DIR)
+            rc = self.run_command([NPM, "install"], cwd=RENDERING_DIR)
             if rc != 0:
                 self.log("npm install failed; aborting.")
                 return

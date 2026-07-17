@@ -78,10 +78,12 @@ class CaptureApp:
         self.start_btn.grid(row=0, column=0, padx=(0, 6))
         self.stop_btn = ttk.Button(ctrl, text="■  Stop", command=self._stop_capture, state="disabled", width=12)
         self.stop_btn.grid(row=0, column=1)
+        self.test_btn = ttk.Button(ctrl, text="📷  Test Shot", command=self._test_shot, width=14)
+        self.test_btn.grid(row=0, column=2, padx=(6, 0))
 
         self.status_var = tk.StringVar(value="Ready")
         ttk.Label(ctrl, textvariable=self.status_var, font=("", 10, "bold"), foreground="#1a6ea8").grid(
-            row=0, column=2, padx=20)
+            row=0, column=3, padx=20)
 
         # --- Progress ---
         prog = ttk.Frame(self.root, padding=(10, 0))
@@ -268,6 +270,7 @@ class CaptureApp:
 
         self.stop_event.clear()
         self.start_btn.configure(state="disabled")
+        self.test_btn.configure(state="disabled")
         self.stop_btn.configure(state="normal")
         self._set_progress(0)
         self._set_status("Starting…")
@@ -282,11 +285,95 @@ class CaptureApp:
     def _finish(self, success=True):
         def _do():
             self.start_btn.configure(state="normal")
+            self.test_btn.configure(state="normal")
             self.stop_btn.configure(state="disabled")
             if success:
                 self.status_var.set("Complete!")
                 self._set_progress(100)
         self.root.after(0, _do)
+
+    # ------------------------------------------------------------------ test shot
+
+    def _test_shot(self):
+        """Capture and preview a single frame from every camera for color/brightness checks.
+
+        Independent of the turntable/serial flow: it fires each detected camera
+        once, downloads the frame straight to disk, and shows it in the preview
+        slots. Runs on a background thread so the UI stays responsive.
+        """
+        if self.capture_thread and self.capture_thread.is_alive():
+            messagebox.showinfo("Busy", "A scan is currently running. Stop it before taking a test shot.")
+            return
+        self.test_btn.configure(state="disabled")
+        self.start_btn.configure(state="disabled")
+        self._set_status("Taking test shot…")
+        threading.Thread(target=self._run_test_shot, daemon=True).start()
+
+    def _run_test_shot(self):
+        try:
+            self._log("Test shot: detecting cameras…")
+            cam_ports = self._detect_camera_ports_safe()
+            if not cam_ports:
+                self._log("Test shot: no cameras detected.")
+                self._set_status("No cameras")
+                return
+
+            n_cams = len(cam_ports)
+            cam_names = [f"cam{i + 1}" for i in range(n_cams)]
+            self._build_preview_slots(n_cams)
+
+            # Dedicated folder that is overwritten on each test shot.
+            dest = os.path.join(self.folder_var.get(), "_test_shots")
+            os.makedirs(dest, exist_ok=True)
+
+            results = {}
+            lock = threading.Lock()
+
+            def worker(name, port):
+                out_path = os.path.join(dest, f"{name}.jpg")
+                try:
+                    os.remove(out_path)
+                except OSError:
+                    pass
+                # Capture to the camera's internal RAM (capturetarget=0), NOT the
+                # memory card, so test shots never land on the card and skew the
+                # file counts the main scan relies on. The scan resets this to 1.
+                subprocess.run(
+                    ["gphoto2", "--port", port, "--set-config", "capturetarget=0"],
+                    capture_output=True)
+                proc = subprocess.run(
+                    ["gphoto2", "--port", port, "--capture-image-and-download",
+                     "--force-overwrite", "--filename", out_path],
+                    capture_output=True, text=True)
+                ok = proc.returncode == 0 and os.path.isfile(out_path)
+                lines = (proc.stdout + proc.stderr).strip().splitlines()
+                with lock:
+                    results[port] = (out_path if ok else None,
+                                     lines[-1] if lines else "")
+
+            threads = [threading.Thread(target=worker, args=(nm, p), daemon=True)
+                       for nm, p in zip(cam_names, cam_ports)]
+            for t in threads:
+                t.start()
+            for t in threads:
+                t.join()
+
+            preview_paths = []
+            n_ok = 0
+            for name, port in zip(cam_names, cam_ports):
+                path, msg = results.get(port, (None, ""))
+                preview_paths.append(path)
+                if path:
+                    n_ok += 1
+                    self._log(f"Test shot: {name} captured.")
+                else:
+                    self._log(f"⚠ Test shot: {name} FAILED: {msg or 'unknown error'}")
+
+            self._update_preview(preview_paths)
+            self._set_status(f"Test shot: {n_ok}/{n_cams} cameras")
+        finally:
+            self.root.after(0, lambda: (self.test_btn.configure(state="normal"),
+                                        self.start_btn.configure(state="normal")))
 
     # ------------------------------------------------------------------ capture loop (background thread)
 

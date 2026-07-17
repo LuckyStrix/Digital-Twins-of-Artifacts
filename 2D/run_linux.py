@@ -450,6 +450,12 @@ class PipelineApp:
         self.log(f"Python {ver.major}.{ver.minor}.{ver.micro}  ({sys.executable})")
         if (ver.major, ver.minor) < (3, 9):
             self.log("  WARNING: Python 3.9+ is recommended for this pipeline.")
+        elif (ver.major, ver.minor) > (3, 12):
+            self.log(f"  WARNING: Python {ver.major}.{ver.minor} is newer than this "
+                     "pipeline supports. The pinned numpy<2.0 (and scipy/opencv/"
+                     "rembg) have no prebuilt wheels past 3.12, so pip will try to "
+                     "compile numpy from source and fail. Install Python 3.9-3.12 "
+                     "and launch with it (e.g. python3.12 run_linux.py).")
         try:
             import tkinter  # noqa: F401  (already running, but confirm explicitly)
             self.log(f"{ok} tkinter (GUI) available")

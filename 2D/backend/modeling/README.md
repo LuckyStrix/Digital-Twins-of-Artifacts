@@ -7,7 +7,8 @@ run from `2D/run.py`, but can be installed and run standalone.
 
 ## Prerequisites
 
-- **OS: Windows**, Python 3.9+.
+- **OS: Windows**, Python 3.9–3.12 (not 3.13/3.14 — the pinned `numpy<2.0`
+  and the other pins only ship prebuilt wheels through 3.12).
 - The Python packages in `requirements.txt`.
 
 ## Setup

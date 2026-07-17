@@ -17,7 +17,9 @@ code and differ only in how they drive the capture rig:
 ### Windows
 
 - **OS: Windows** (the capture rig and launcher assume Windows paths/tools).
-- **Python 3.9+** with tkinter (install Python with the Tcl/Tk option).
+- **Python 3.9–3.12** with tkinter (install Python with the Tcl/Tk option).
+  Do **not** use 3.13/3.14 — the pinned `numpy<2.0` (and scipy/opencv/rembg)
+  have no prebuilt wheels there and pip will try to compile numpy and fail.
 - **Node.js LTS** on PATH — needed for the "Build 3D Model" (rendering) step.
   Get it from https://nodejs.org/ (tick "Add to PATH").
 - **Capture-rig tools** (only if you run the hardware capture / focus viewer):
@@ -27,7 +29,9 @@ code and differ only in how they drive the capture rig:
 
 ### Linux
 
-- **Python 3.9+** with tkinter — on Debian/Ubuntu: `sudo apt install python3-tk`.
+- **Python 3.9–3.12** with tkinter — on Debian/Ubuntu:
+  `sudo apt install python3-tk`. Do **not** use 3.13/3.14 (no prebuilt wheels
+  for the pinned `numpy<2.0` and friends).
 - **Node.js LTS** on PATH — needed for the "Build 3D Model" (rendering) step.
 - **Capture-rig tools** (only if you run the hardware capture / focus viewer):
   - **gphoto2** and **dcraw** on PATH — `sudo apt install gphoto2 dcraw`

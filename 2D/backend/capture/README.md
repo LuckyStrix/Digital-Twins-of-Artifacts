@@ -21,7 +21,18 @@ Capture only runs on the machine wired to the rig:
 - Arduino on a serial port (the script opens `COM3` — change this for your OS;
   e.g. `/dev/ttyUSB0` or `/dev/ttyACM0` on Linux)
 - `pyserial`  → `pip install pyserial`
-- `gphoto2` and `dcraw` available on PATH (the script shells out to them)
+- `gphoto2` and `dcraw` available on PATH (the script shells out to them).
+  gphoto2 on Windows comes from [msys2](https://www.msys2.org/)
+  (`pacman -S mingw-w64-x86_64-gphoto2`); the dcraw Windows binary is at
+  https://sourceforge.net/app/dcraw/. Not sure how to put a tool on PATH? See
+  [this guide](https://www.howtogeek.com/787217/how-to-edit-environment-variables-on-windows-10-or-11/).
+
+> **Windows camera driver (Zadig):** on Windows, `gphoto2`/libusb cannot see the
+> DSLR until you replace its USB driver with **WinUSB** using
+> [Zadig](https://zadig.akeo.ie/) — Options → List All Devices → select the
+> camera → set **WinUSB** → **Replace Driver**. Full walkthrough in the
+> [2D README](../../README.md#camera-driver-setup-zadig-windows-only). (Not
+> needed on Linux, where gphoto2 uses the kernel USB driver directly.)
 
 ## Output
 

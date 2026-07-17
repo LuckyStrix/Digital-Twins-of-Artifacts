@@ -17,15 +17,45 @@ code and differ only in how they drive the capture rig:
 ### Windows
 
 - **OS: Windows** (the capture rig and launcher assume Windows paths/tools).
-- **Python 3.9–3.12** with tkinter (install Python with the Tcl/Tk option).
-  Do **not** use 3.13/3.14 — the pinned `numpy<2.0` (and scipy/opencv/rembg)
-  have no prebuilt wheels there and pip will try to compile numpy and fail.
+- **Python 3.9–3.12** with tkinter (install Python with the Tcl/Tk option, and
+  tick "Add python.exe to PATH" in the installer). Get it from
+  https://www.python.org/downloads/. Do **not** use 3.13/3.14 — the pinned
+  `numpy<2.0` (and scipy/opencv/rembg) have no prebuilt wheels there and pip will
+  try to compile numpy and fail.
 - **Node.js LTS** on PATH — needed for the "Build 3D Model" (rendering) step.
   Get it from https://nodejs.org/ (tick "Add to PATH").
 - **Capture-rig tools** (only if you run the hardware capture / focus viewer):
   - **msys2** with gphoto2 — https://www.msys2.org/ , then in the MSYS2 MINGW64
-    shell: `pacman -S mingw-w64-x86_64-gphoto2`
-  - **dcraw** on PATH (converts `.cr2` → `.tiff`).
+    shell: `pacman -S mingw-w64-x86_64-gphoto2`. Add the MSYS2 `mingw64\bin`
+    folder to your PATH so `gphoto2` is callable from the launcher.
+  - **dcraw** on PATH (converts `.cr2` → `.tiff`). Windows binary:
+    https://sourceforge.net/app/dcraw/ (download `DCRaw_V9.28.exe` and put it on
+    your PATH).
+  - **Zadig** — camera USB driver swap, **required on Windows for gphoto2 to see
+    the DSLR**. See [Camera driver setup (Zadig)](#camera-driver-setup-zadig-windows-only)
+    below.
+
+> **Putting tools on PATH:** several tools above must be on your PATH so the
+> launcher (and MSYS2) can find them. If you're not sure how, follow this guide:
+> https://www.howtogeek.com/787217/how-to-edit-environment-variables-on-windows-10-or-11/
+
+#### Camera driver setup (Zadig, Windows only)
+
+On Windows, `gphoto2`/libusb can't talk to the DSLR until the camera's USB
+driver is replaced with **WinUSB** using [Zadig](https://zadig.akeo.ie/)
+(download the standalone `.exe` — no install needed):
+
+1. Connect the camera over USB and switch it **on** (put it in PC/PTP mode if it
+   has one). Close any Canon/vendor software (e.g. EOS Utility) that may grab it.
+2. Run Zadig, then **Options → List All Devices**.
+3. In the dropdown, select your camera (e.g. "Canon Digital Camera").
+4. Set the target driver to **WinUSB** and click **Replace Driver**
+   (or **Install Driver**).
+5. Confirm with `gphoto2 --auto-detect` in the MSYS2 MINGW64 shell — the camera
+   should now be listed.
+
+> To go back to using the camera with its normal vendor software, uninstall the
+> WinUSB driver from Windows Device Manager (or reinstall the vendor driver).
 
 ### Linux
 

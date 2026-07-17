@@ -36,8 +36,28 @@ launcher:
 
 Both builds share the same OS-independent modeling and rendering stages. The
 launcher self-installs the Python and Node packages; you only need to provide the
-tools it can't install for you (Python, Node.js, gphoto2, dcraw). See
-[`2D/README.md`](2D/README.md) for the full list and the one command to start it.
+tools it can't install for you:
+
+- **Python 3.9–3.12** — https://www.python.org/downloads/ (tick "Add python.exe
+  to PATH" on Windows).
+- **Node.js LTS** — https://nodejs.org/ (tick "Add to PATH").
+- **gphoto2** — on Windows via [msys2](https://www.msys2.org/)
+  (`pacman -S mingw-w64-x86_64-gphoto2`); on Linux `sudo apt install gphoto2`.
+- **dcraw** — Windows binary at https://sourceforge.net/app/dcraw/
+  (`DCRaw_V9.28.exe`); on Linux `sudo apt install dcraw`.
+
+> **Windows capture only — camera driver (Zadig):** on Windows, gphoto2 cannot
+> see the DSLR until its USB driver is replaced with **WinUSB** using
+> [Zadig](https://zadig.akeo.ie/). Step-by-step:
+> [2D README → Camera driver setup](2D/README.md#camera-driver-setup-zadig-windows-only).
+> (Not needed on Linux.)
+
+> **Adding tools to PATH on Windows:** several of the tools above must be on your
+> PATH. If you're unsure how, follow
+> [this guide](https://www.howtogeek.com/787217/how-to-edit-environment-variables-on-windows-10-or-11/).
+
+See [`2D/README.md`](2D/README.md) for the full list and the one command to start
+it.
 
 ## WSL2 (for `3D/`)
 

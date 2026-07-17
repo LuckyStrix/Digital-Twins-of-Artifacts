@@ -48,9 +48,10 @@ if __name__ == "__main__":
     # the app's top-level data/ folder so the launcher (run.py) can find it.
     capture_dir = os.environ.get("PAPYRUS_CAPTURE_DIR")
     if capture_dir:
-        img_dir = os.path.join(capture_dir)
-        print("Capture folder = " + img_dir)
+        folder_name = now.strftime("%d-%m-%y_%H-%M-%S")
+        print("Folder name = " + folder_name)
         print(" ")
+        img_dir = os.path.join(capture_dir, folder_name)
 
 
     else:

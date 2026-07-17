@@ -52,6 +52,7 @@ nvcc --version | tail -2     # CUDA 12.x
   `nvidia-smi` works inside Ubuntu. See [`../../SETUP.md`](../../SETUP.md).
 - The **CUDA toolkit** installed in WSL (provides `nvcc`). Follow NVIDIA's
   CUDA-on-WSL guide: https://docs.nvidia.com/cuda/wsl-user-guide/
+  https://developer.nvidia.com/cuda-downloads?target_os=Linux&target_arch=x86_64&Distribution=WSL-Ubuntu&target_version=2.0&target_type=deb_local
 - Build tools and COLMAP's library dependencies (installed by the helper script
   below, or manually):
 

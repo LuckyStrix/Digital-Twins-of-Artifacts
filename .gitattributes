@@ -1,3 +1,8 @@
+# Always check out shell scripts with LF line endings, even on Windows/OneDrive,
+# so they run under WSL and Linux (CRLF breaks the #!/bin/bash shebang).
+*.sh text eol=lf
+*.bash text eol=lf
+
 *.glb filter=lfs diff=lfs merge=lfs -text
 *.tif filter=lfs diff=lfs merge=lfs -text
 *.tiff filter=lfs diff=lfs merge=lfs -text

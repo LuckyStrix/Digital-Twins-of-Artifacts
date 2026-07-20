@@ -136,11 +136,11 @@ class ColmapParser:
          0.20, 'match', "Feature matching"),
         (r'\[step\] colmap mapper',
          0.40, 'map', "Sparse mapping"),
-        (r'\[model_label\] colmap image_undistorter',
+        (r'\[.*?\] colmap image_undistorter',
          0.55, 'undistort', "Image undistortion"),
-        (r'\[model_label\] colmap patch_match_stereo',
+        (r'\[.*?\] colmap patch_match_stereo',
          0.62, 'pms', "Patch match stereo"),
-        (r'\[model_label\] colmap stereo_fusion',
+        (r'\[.*?\] colmap stereo_fusion',
          0.82, 'fusion', "Stereo fusion"),
         (r'dense cloud output:',
          1.00, 'done', "Dense cloud complete"),
@@ -268,7 +268,7 @@ class ReconParser:
 # ══════════════════════════════════════════════════════════════════════════════
 
 def _find_python(path: Path) -> str:
-    return str(path) if path.exists() else "python3"
+    return str(path) if path.exists() else sys.executable
 
 
 def _has_images(d: Path) -> bool:
@@ -364,6 +364,10 @@ class StageWidget(ttk.LabelFrame):
             if state == "done":
                 self._view_btn.config(state=tk.NORMAL)
 
+    @property
+    def state(self) -> str:
+        return self._state
+
     def set_progress(self, pct: int, text: str = ""):
         """Switch bar to determinate mode and update value + label."""
         if self._state != "running":
@@ -428,6 +432,7 @@ class ConfigPanel(ttk.Frame):
         path_row(f, "Input dir:", self.input_var, "Select input image directory")
         path_row(f, "Output dir:", self.output_var, "Select output directory")
         self.input_var.trace_add("write", self._on_input_changed)
+        self.output_var.trace_add("write", self._on_output_changed)
 
         self._struct_var = tk.StringVar(value="")
         ttk.Label(f, textvariable=self._struct_var, foreground=PAL["subtext"],
@@ -466,6 +471,58 @@ class ConfigPanel(ttk.Frame):
                     width=6).pack(side=tk.LEFT)
         ttk.Label(rr2, text="(0=off)", foreground=PAL["subtext"]).pack(
             side=tk.LEFT, padx=4)
+
+        rr2b = ttk.Frame(f); rr2b.pack(fill=tk.X, pady=2)
+        ttk.Label(rr2b, text="White threshold:", width=14).pack(side=tk.LEFT)
+        self.white_thresh_var = tk.IntVar(value=0)
+        ttk.Spinbox(rr2b, from_=0, to=255, textvariable=self.white_thresh_var,
+                    width=6).pack(side=tk.LEFT)
+        ttk.Label(rr2b, text="(0=off)", foreground=PAL["subtext"]).pack(
+            side=tk.LEFT, padx=4)
+
+        rr2c = ttk.Frame(f); rr2c.pack(fill=tk.X, pady=2)
+        ttk.Label(rr2c, text="Value threshold:", width=14).pack(side=tk.LEFT)
+        self.value_thresh_var = tk.IntVar(value=0)
+        ttk.Spinbox(rr2c, from_=0, to=255, textvariable=self.value_thresh_var,
+                    width=6).pack(side=tk.LEFT)
+        ttk.Label(rr2c, text="(0=off)", foreground=PAL["subtext"]).pack(
+            side=tk.LEFT, padx=4)
+
+        rr2d = ttk.Frame(f); rr2d.pack(fill=tk.X, pady=2)
+        ttk.Label(rr2d, text="Edge band (px):", width=14).pack(side=tk.LEFT)
+        self.edge_band_var = tk.IntVar(value=0)
+        ttk.Spinbox(rr2d, from_=0, to=100, textvariable=self.edge_band_var,
+                    width=6).pack(side=tk.LEFT)
+        ttk.Label(rr2d, text="(0=whole mask)", foreground=PAL["subtext"]).pack(
+            side=tk.LEFT, padx=4)
+
+        rr2e = ttk.Frame(f); rr2e.pack(fill=tk.X, pady=2)
+        ttk.Label(rr2e, text="Passes:", width=14).pack(side=tk.LEFT)
+        self.passes_var = tk.IntVar(value=1)
+        ttk.Spinbox(rr2e, from_=1, to=5, textvariable=self.passes_var,
+                    width=6).pack(side=tk.LEFT)
+        ttk.Label(rr2e, text="(1=off, slower per extra pass)",
+                  foreground=PAL["subtext"]).pack(side=tk.LEFT, padx=4)
+
+        rr2f = ttk.Frame(f); rr2f.pack(fill=tk.X, pady=2)
+        ttk.Label(rr2f, text="Seg. quality:", width=14).pack(side=tk.LEFT)
+        self.seg_scale_var = tk.IntVar(value=100)
+        seg_scale_lbl = ttk.Label(rr2f, text="100%", width=5)
+        def _on_seg_scale(val):
+            pct = int(round(float(val)))
+            self.seg_scale_var.set(pct)
+            seg_scale_lbl.config(text=f"{pct}%")
+        ttk.Scale(rr2f, from_=10, to=100, orient=tk.HORIZONTAL, length=140,
+                  command=_on_seg_scale, value=100).pack(side=tk.LEFT, padx=(0, 6))
+        seg_scale_lbl.pack(side=tk.LEFT)
+        ttk.Label(
+            f,
+            text=("Downscales the image fed to the bg-removal model to save memory/time; "
+                  "saved output stays full resolution either way. Note: rembg resizes "
+                  "every model's input to a fixed working size before running on the GPU, "
+                  "so this mainly saves CPU/RAM time, not GPU VRAM."),
+            foreground=PAL["subtext"], wraplength=360,
+        ).pack(anchor=tk.W, pady=(0, 4))
 
         rr3 = ttk.Frame(f); rr3.pack(fill=tk.X, pady=2)
         ttk.Label(rr3, text="rembg model:", width=14).pack(side=tk.LEFT)
@@ -514,6 +571,10 @@ class ConfigPanel(ttk.Frame):
             self.side1_var.set("")
             self.side2_var.set("")
             self._struct_var.set("Flat structure — images at root, no alignment stage")
+        self.app._reconcile_stage_states()
+
+    def _on_output_changed(self, *_):
+        self.app._reconcile_stage_states()
 
     # ── COLMAP tab ────────────────────────────────────────────────────────────
     def _build_colmap(self, f):
@@ -1015,6 +1076,7 @@ class App(tk.Tk):
         self._build_menu()
         self._build_layout()
         self.after(80, self._poll_log)
+        self._reconcile_stage_states()
 
     # ── menu ──────────────────────────────────────────────────────────────────
     def _build_menu(self):
@@ -1091,6 +1153,32 @@ class App(tk.Tk):
 
     def _stage_status(self, idx: int, text: str):
         self.after(0, lambda: self._pipe.stage(idx).set_status_text(text))
+
+    def _expected_output_for_stage(self, idx: int) -> Path:
+        s1, _ = self._active_sides()
+        if idx == 0:
+            return self._processed_dir()
+        if idx == 1:
+            return (self._colmap_dir(s1) if s1 else self._colmap_dir()) / "fused.ply"
+        if idx == 2:
+            return self._merged_ply()
+        return self._recon_dir() / "recon_mesh_recon.obj"
+
+    def _stage_output_ready(self, idx: int) -> bool:
+        p = self._expected_output_for_stage(idx)
+        try:
+            if idx == 0:
+                return p.is_dir() and _has_images(p)
+            return p.is_file() and p.stat().st_size > 0
+        except OSError:
+            return False
+
+    def _reconcile_stage_states(self):
+        for idx in range(4):
+            if self._pipe.stage(idx).state == "running":
+                continue
+            if self._stage_output_ready(idx):
+                self._set_stage(idx, "done")
 
     # ── path helpers ──────────────────────────────────────────────────────────
     def _session_dir(self) -> Path:
@@ -1170,21 +1258,10 @@ class App(tk.Tk):
 
     # ── View ──────────────────────────────────────────────────────────────────
     def view_stage(self, idx: int):
-        s1, _ = self._active_sides()
-
         if idx == 0:
             PhotoGallery(self, self._processed_dir())
-
-        elif idx == 1:
-            ply = (self._colmap_dir(s1) / "fused.ply") if s1 \
-                else (self._colmap_dir() / "fused.ply")
-            self._spawn_viewer(ply)
-
-        elif idx == 2:
-            self._spawn_viewer(self._merged_ply())
-
-        elif idx == 3:
-            self._spawn_viewer(self._recon_dir() / "recon_mesh_recon.obj")
+        else:
+            self._spawn_viewer(self._expected_output_for_stage(idx))
 
     def _spawn_viewer(self, path: Path):
         if not path.exists():
@@ -1199,6 +1276,8 @@ class App(tk.Tk):
             )
         except FileNotFoundError:
             self.log(f"[viewer] interpreter not found: {viewer_py!r}")
+            messagebox.showerror("Viewer failed",
+                                  f"Could not launch viewer: interpreter not found:\n{viewer_py}")
             return
 
         def _watch():
@@ -1206,6 +1285,8 @@ class App(tk.Tk):
             proc.wait()
             if proc.returncode != 0 and err.strip():
                 self.log(f"[viewer] {err.strip()}")
+                self.after(0, lambda: messagebox.showerror(
+                    "Viewer failed", f"Viewer exited with an error:\n{err.strip()}"))
 
         threading.Thread(target=_watch, daemon=True).start()
 
@@ -1286,9 +1367,24 @@ class App(tk.Tk):
         thresh = self._cfg.black_thresh_var.get()
         if thresh > 0:
             cmd += ["--black-threshold", str(thresh)]
+        white_thresh = self._cfg.white_thresh_var.get()
+        if white_thresh > 0:
+            cmd += ["--white-threshold", str(white_thresh)]
+        value_thresh = self._cfg.value_thresh_var.get()
+        if value_thresh > 0:
+            cmd += ["--value-threshold", str(value_thresh)]
+        edge_band = self._cfg.edge_band_var.get()
+        if edge_band > 0:
+            cmd += ["--edge-band", str(edge_band)]
+        passes = self._cfg.passes_var.get()
+        if passes > 1:
+            cmd += ["--passes", str(passes)]
         stride = self._cfg.img_stride_var.get()
         if stride > 1:
             cmd += ["--stride", str(stride)]
+        seg_scale_pct = self._cfg.seg_scale_var.get()
+        if seg_scale_pct < 100:
+            cmd += ["--seg-scale-pct", str(seg_scale_pct)]
 
         self.log(f"[stage 1] Background removal: {inp} → {out}")
         parser = PhotosParser()

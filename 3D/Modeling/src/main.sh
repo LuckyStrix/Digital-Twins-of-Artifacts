@@ -57,7 +57,6 @@ cv_run_colmap_mvs_pipeline() {
         return 4
     fi
 
-    # only stderr so colmap shuts up
     status "running COLMAP MVS pipeline to densify cloud"
     python3 "$script" \
         --images "$p_imgdir" \
@@ -65,7 +64,7 @@ cv_run_colmap_mvs_pipeline() {
         --workspace "$workspace_dir" \
         --dense-cloud-out "$dense_cloud_out" \
         --single-camera-per-folder 1 \
-        --clean-workspace >/dev/null || {
+        --clean-workspace || {
         warn "COLMAP MVS pipeline failed"
         return 6
     }

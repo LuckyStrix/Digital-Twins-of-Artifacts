@@ -5,8 +5,19 @@ PROGRAM=$0
 
 echo "1"
 
+# Prefer the repo-local CUDA-enabled COLMAP build unless overridden.
+if [ -z "${FIPMESH_COLMAP_BIN:-}" ]; then
+    LOCAL_COLMAP_BIN="$SCRIPT_DIR/colmap_local"
+    if [ -x "$LOCAL_COLMAP_BIN" ]; then
+        export FIPMESH_COLMAP_BIN="$LOCAL_COLMAP_BIN"
+    fi
+fi
+
 # dependency lists
-SYSTEM_DEPS=(python3 colmap)
+SYSTEM_DEPS=(python3)
+if [ -z "${FIPMESH_COLMAP_BIN:-}" ]; then
+    SYSTEM_DEPS+=(colmap)
+fi
 # python dependencies
 PYTHON_DEPS=(numpy open3d)
 src/check_config.sh \
@@ -132,14 +143,6 @@ if [ -n "$SDIR_IS_NEEDED" ]; then
 fi
 
 echo "4"
-
-# Prefer the repo-local CUDA-enabled COLMAP build unless overridden.
-if [ -z "${FIPMESH_COLMAP_BIN:-}" ]; then
-    LOCAL_COLMAP_BIN="$SCRIPT_DIR/colmap_local"
-    if [ -x "$LOCAL_COLMAP_BIN" ]; then
-        export FIPMESH_COLMAP_BIN="$LOCAL_COLMAP_BIN"
-    fi
-fi
 
 # -------------------------------
 # COLMAP variables

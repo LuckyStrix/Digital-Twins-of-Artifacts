@@ -64,11 +64,17 @@ it.
 The `3D/` tablet pipeline runs under **WSL2 with an Ubuntu distro** (it uses
 WSLg for the GUI and CUDA-on-WSL for GPU-accelerated COLMAP).
 
-1. Install WSL2 + Ubuntu from an **elevated PowerShell** on Windows:
+1. Install WSL2 + **Ubuntu 24.04 LTS** from an **elevated PowerShell** on Windows:
 
    ```powershell
-   wsl --install -d Ubuntu
+   wsl --install -d Ubuntu-24.04
    ```
+
+   Use **24.04 specifically** — do not install the default/latest `Ubuntu`
+   (currently 26.04). CUDA's `nvcc` only supports GCC ≤ 13, but Ubuntu 26.04
+   defaults to GCC 15, which leaves the COLMAP build unable to link (see
+   [`3D/Modeling/BUILDING_COLMAP.md`](3D/Modeling/BUILDING_COLMAP.md)). 24.04 ships
+   GCC 13 and is the supported toolchain.
 
    Official guide: https://learn.microsoft.com/windows/wsl/install
 
@@ -83,7 +89,19 @@ WSLg for the GUI and CUDA-on-WSL for GPU-accelerated COLMAP).
    https://learn.microsoft.com/windows/wsl/tutorials/gpu-compute and
    https://docs.nvidia.com/cuda/wsl-user-guide/
 
-3. Continue with [`3D/README.md`](3D/README.md), which covers `exiftool`, the
+3. Install the system packages the pipeline needs beyond CUDA:
+
+   ```bash
+   sudo apt install exiftool python3-tk libcudnn9-cuda-12
+   ```
+
+   - **python3-tk** — the capture and reconstruction GUIs use tkinter, which
+     Ubuntu's stock `python3` does not include.
+   - **libcudnn9-cuda-12** — `rembg[gpu]` (background removal) pulls
+     `onnxruntime-gpu`, which needs the cuDNN runtime alongside CUDA. On a
+     CPU-only machine, use `rembg` (no `[gpu]`) instead and skip cuDNN.
+
+4. Continue with [`3D/README.md`](3D/README.md), which covers `exiftool`, the
    Python deps, and building CUDA COLMAP.
 
 ## Website

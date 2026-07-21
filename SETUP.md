@@ -82,7 +82,27 @@ WSLg for the GUI and CUDA-on-WSL for GPU-accelerated COLMAP).
 
    Official guide: https://learn.microsoft.com/windows/wsl/install
 
-2. Install the **NVIDIA driver on Windows** (the *host*), not inside WSL. WSL
+2. **Update the fresh Ubuntu install** the first time you open its terminal.
+   A new WSL distro ships with a stale package index, so refresh it and pull the
+   latest security/bugfix updates before installing anything, then install the
+   common build tools the later steps (and the COLMAP build) assume:
+
+   ```bash
+   sudo apt update && sudo apt upgrade -y
+   sudo apt install -y build-essential git wget curl python3-pip python3-venv
+   ```
+
+   - **build-essential** — GCC/make toolchain needed to compile COLMAP and any
+     Python packages that fall back to building from source.
+   - **git / wget / curl** — used to clone COLMAP and fetch the NVIDIA keyring
+     below.
+   - **python3-pip / python3-venv** — pip and virtual-env support; Ubuntu's stock
+     `python3` does not bundle them.
+
+   Re-run `sudo apt update && sudo apt upgrade -y` periodically to keep the distro
+   patched.
+
+3. Install the **NVIDIA driver on Windows** (the *host*), not inside WSL. WSL
    picks up the GPU through it. Verify from inside Ubuntu:
 
    ```bash
@@ -93,7 +113,7 @@ WSLg for the GUI and CUDA-on-WSL for GPU-accelerated COLMAP).
    https://learn.microsoft.com/windows/wsl/tutorials/gpu-compute and
    https://docs.nvidia.com/cuda/wsl-user-guide/
 
-3. Install `exiftool` and `python3-tk` from Ubuntu's repos:
+4. Install `exiftool` and `python3-tk` from Ubuntu's repos:
 
    ```bash
    sudo apt install exiftool python3-tk
@@ -103,7 +123,7 @@ WSLg for the GUI and CUDA-on-WSL for GPU-accelerated COLMAP).
      Ubuntu's stock `python3` does not include.
    - **exiftool** — COLMAP is fed metadata-stripped images.
 
-4. Install **cuDNN 9 for CUDA 12** (`cudnn9-cuda-12`). `rembg[gpu]` (background
+5. Install **cuDNN 9 for CUDA 12** (`cudnn9-cuda-12`). `rembg[gpu]` (background
    removal) pulls `onnxruntime-gpu`, which needs the cuDNN runtime alongside
    CUDA; without it, background removal fails at model load with
    `libcudnn.so.9: cannot open shared object file`.
@@ -131,7 +151,7 @@ WSLg for the GUI and CUDA-on-WSL for GPU-accelerated COLMAP).
    On a **CPU-only** machine, use `rembg` (no `[gpu]`) instead and skip cuDNN
    entirely.
 
-5. Continue with [`3D/README.md`](3D/README.md), which covers the Python deps
+6. Continue with [`3D/README.md`](3D/README.md), which covers the Python deps
    and building CUDA COLMAP.
 
 ## Giving WSL more RAM / a bigger swap (pagefile)

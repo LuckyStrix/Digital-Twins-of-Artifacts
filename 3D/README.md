@@ -30,27 +30,30 @@ the rig): multi-camera capture → COLMAP reconstruction → meshed model. See t
 
 ## Setup
 
-Base tools from Ubuntu's repos:
+> **First time on a fresh WSL/Ubuntu box?** Do the system-level steps in
+> [`../SETUP.md`](../SETUP.md#wsl2-for-3d) first — installing Ubuntu 24.04, the
+> Windows-host NVIDIA driver, `apt update && upgrade` + build tools, and the
+> cuDNN 9 / CUDA repo. This section is the quick command summary plus the two
+> steps that live here: the Python deps and the COLMAP build.
+
+Refresh the package index and install the base tools (build toolchain,
+`exiftool`, and `python3-tk`):
 
 ```bash
-sudo apt install exiftool python3-tk
+sudo apt update && sudo apt upgrade -y
+sudo apt install -y build-essential git wget curl python3-pip python3-venv
+sudo apt install -y exiftool python3-tk
 ```
 
-Install **cuDNN 9 for CUDA 12**. It lives in NVIDIA's CUDA repo, so add the repo
-and its GPG signing key first — the `cuda-keyring` package installs the key into
-`/usr/share/keyrings`:
+Add NVIDIA's CUDA repo + GPG key and install **cuDNN 9 for CUDA 12** (needed by
+`rembg[gpu]`; skip on a CPU-only machine — see the
+[cuDNN step in `../SETUP.md`](../SETUP.md#wsl2-for-3d) for the full explanation):
 
 ```bash
-# Add NVIDIA's CUDA repo + GPG key (WSL-Ubuntu network repo)
 wget https://developer.download.nvidia.com/compute/cuda/repos/wsl-ubuntu/x86_64/cuda-keyring_1.1-1_all.deb
 sudo dpkg -i cuda-keyring_1.1-1_all.deb
-
-# Install cuDNN 9 for CUDA 12
-sudo apt-get update
-sudo apt-get -y install cudnn9-cuda-12
-
-# Verify the runtime is present
-ldconfig -p | grep libcudnn
+sudo apt-get update && sudo apt-get -y install cudnn9-cuda-12
+ldconfig -p | grep libcudnn   # verify the runtime is present
 ```
 
 Then install the Python deps (use `python3`, not `python`):

@@ -18,6 +18,10 @@ the rig): multi-camera capture → COLMAP reconstruction → meshed model. See t
   images.
 - **python3-tk** (`sudo apt install python3-tk`) — the capture and reconstruction
   GUIs use tkinter, which Ubuntu's stock `python3` does not bundle.
+- **Capture only** (running `capture_app.py` against the physical rig):
+  `gphoto2` on PATH, plus the `pyserial` and `pillow` Python packages. See
+  [Capture setup](#capture-setup) below — not needed if you only run
+  reconstruction on already-captured images.
 - **cuDNN 9 for CUDA 12** (`cudnn9-cuda-12`) — `rembg[gpu]` pulls
   `onnxruntime-gpu`, which needs the cuDNN runtime alongside CUDA. Without it
   background removal fails at model load (`libcudnn.so.9: cannot open shared
@@ -69,6 +73,47 @@ Then build CUDA COLMAP (one-time) — see
 > memory-hungry. WSL2 caps its VM at half the host RAM by default — raise the RAM
 > and swap (pagefile) limits via `.wslconfig`; see
 > [`../SETUP.md`](../SETUP.md#giving-wsl-more-ram--a-bigger-swap-pagefile).
+
+## Capture setup
+
+Only needed to run the capture apps (`capture_app.py` /
+`capture_app_parallel.py`) against the physical multi-camera rig. If you are only
+reconstructing images someone else captured, skip this section.
+
+The capture apps drive the Canon DSLRs through **gphoto2** and talk to the rig's
+Arduino over a **serial port**, so on the capture workstation you need:
+
+- **gphoto2** on PATH — the apps shell out to it to detect and trigger the
+  cameras:
+
+  ```bash
+  sudo apt install gphoto2
+  ```
+
+- **python3-tk** — the capture GUI is tkinter (same package as the reconstruction
+  GUI above; `sudo apt install python3-tk`).
+
+- **pyserial** and **pillow** Python packages — `pyserial` for the Arduino serial
+  link, `pillow` for the in-app camera preview thumbnails:
+
+  ```bash
+  python3 -m pip install --break-system-packages pyserial pillow
+  ```
+
+- **Serial access** — add yourself to the `dialout` group so you can open the
+  Arduino's serial device without `sudo`, then log out and back in:
+
+  ```bash
+  sudo usermod -a -G dialout $USER
+  ```
+
+> **Running capture under WSL2:** WSL does not see USB devices by default, so the
+> DSLRs and the Arduino are invisible to gphoto2/pyserial until you attach them
+> with [`usbipd-win`](https://learn.microsoft.com/windows/wsl/connect-usb) from an
+> elevated Windows PowerShell (`usbipd list`, then `usbipd attach --wsl --busid
+> <BUSID>` for each camera and the Arduino). If that is fiddly on your rig, run
+> the capture apps on native Linux (or Windows) instead — only the reconstruction
+> stage requires WSL/CUDA.
 
 ## Usage
 

@@ -86,6 +86,54 @@ The only things it can't install are Node.js, gphoto2 (msys2 on Windows), and
 dcraw — see Prerequisites above. To install the Python deps manually instead, see
 [`backend/modeling/README.md`](backend/modeling/README.md).
 
+### GPU acceleration (optional — CUDA / `nvcc`)
+
+Stage 0 of the modeling pipeline (background removal via `rembg`) runs on the CPU
+by default. It transparently uses an NVIDIA GPU when one is available, which makes
+mask generation several times faster — but that path needs the **CUDA toolkit**
+(which provides `nvcc`) installed alongside a driver and cuDNN. This is entirely
+optional; skip it to stay on CPU.
+
+1. **NVIDIA driver + GPU.** Confirm the card is visible:
+
+   ```bash
+   nvidia-smi
+   ```
+
+2. **Install the CUDA toolkit (`nvcc`).** onnxruntime-gpu/torch need the matching
+   CUDA runtime that the toolkit installs:
+
+   - **Windows** — download the **CUDA Toolkit** installer from
+     https://developer.nvidia.com/cuda-downloads (it installs `nvcc.exe` and adds
+     it to PATH).
+   - **Linux** — `sudo apt install nvidia-cuda-toolkit`, or NVIDIA's versioned
+     `cuda-toolkit-12-x` package from the CUDA repo for a specific CUDA version.
+
+   Verify the compiler is on PATH:
+
+   ```bash
+   nvcc --version
+   ```
+
+3. **Install cuDNN** for your CUDA version (required by `onnxruntime-gpu`):
+   https://developer.nvidia.com/cudnn.
+
+4. **Install the GPU Python wheels** in place of the CPU defaults — the GPU build
+   of onnxruntime plus a CUDA build of torch (still honouring the `numpy<2.0`
+   pin):
+
+   ```bash
+   pip install rembg[gpu] onnxruntime-gpu
+   pip install torch --index-url https://download.pytorch.org/whl/cu121
+   ```
+
+   (Swap `cu121` for the CUDA version you installed above.)
+
+The pipeline auto-detects the GPU: when `onnxruntime` reports a
+`CUDAExecutionProvider` it prints `Device : CUDA`, otherwise it falls back to
+`Device : CPU`. See
+[`backend/modeling/README.md`](backend/modeling/README.md#gpu-acceleration).
+
 ## Usage
 
 Run `python run.py` (Windows) or `python3 run_linux.py` (Linux) and click the

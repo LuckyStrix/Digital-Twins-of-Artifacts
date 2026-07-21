@@ -28,6 +28,18 @@ Notes on the pins (see comments in `requirements.txt`):
 - `opencv-python-headless` is used deliberately to avoid clashing with the
   headless OpenCV that rembg pulls in.
 
+### GPU acceleration
+
+`requirements.txt` pins the **CPU** backend (`onnxruntime`, `rembg==2.0.65`), so
+Stage 0 (background removal) works out of the box with no GPU. To run it on an
+NVIDIA GPU instead — which needs the **CUDA toolkit (`nvcc`)**, a driver, and
+cuDNN installed — follow the
+[GPU acceleration steps in the 2D README](../../README.md#gpu-acceleration-optional--cuda--nvcc),
+then swap in the GPU wheels (`rembg[gpu]`, `onnxruntime-gpu`, a CUDA `torch`).
+`_run_rembg()` passes `CUDAExecutionProvider` automatically when onnxruntime
+reports it, so no code change is needed — the run log prints `Device : CUDA` once
+the GPU stack is in place, or `Device : CPU` otherwise.
+
 ## Usage
 
 ```bash

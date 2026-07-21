@@ -59,7 +59,7 @@ ldconfig -p | grep libcudnn   # verify the runtime is present
 Then install the Python deps (use `python3`, not `python`):
 
 ```bash
-python3 -m pip install -r Modeling/requirements.txt
+python3 -m pip install --break-system-packages -r Modeling/requirements.txt
 ```
 
 Then build CUDA COLMAP (one-time) — see

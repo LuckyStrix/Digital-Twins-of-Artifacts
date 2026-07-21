@@ -20,7 +20,7 @@ model, driven by a Tkinter GUI (`app.py`, run under WSL with WSLg). See the
 
 ```bash
 sudo apt install exiftool
-python3 -m pip install -r requirements.txt
+python3 -m pip install --break-system-packages -r requirements.txt
 ```
 
 `requirements.txt` pulls `open3d`, `numpy<2.5`, `rembg[gpu]` (use plain `rembg`

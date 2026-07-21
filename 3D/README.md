@@ -18,29 +18,60 @@ the rig): multi-camera capture → COLMAP reconstruction → meshed model. See t
   images.
 - **python3-tk** (`sudo apt install python3-tk`) — the capture and reconstruction
   GUIs use tkinter, which Ubuntu's stock `python3` does not bundle.
-- **cuDNN** (`sudo apt install libcudnn9-cuda-12`) — `rembg[gpu]` pulls
+- **cuDNN 9 for CUDA 12** (`cudnn9-cuda-12`) — `rembg[gpu]` pulls
   `onnxruntime-gpu`, which needs the cuDNN runtime alongside CUDA. Without it
-  background removal fails at model load (`libcudnn.so.* cannot open shared
-  object file`). On a CPU-only machine, use `rembg` (no `[gpu]`) instead and skip
-  this.
+  background removal fails at model load (`libcudnn.so.9: cannot open shared
+  object file`). It is **not** in Ubuntu's default repos — you must add NVIDIA's
+  CUDA repo + GPG key first (see [Setup](#setup) below). On a CPU-only machine,
+  use `rembg` (no `[gpu]`) instead and skip this.
 - Python 3.9–3.12 and the deps in `Modeling/requirements.txt` (open3d has no
-  prebuilt wheels for 3.13/3.14 yet).
+  prebuilt wheels for 3.13/3.14 yet). Pinned there: `numpy<2.5`,
+  `onnxruntime-gpu<1.27`, and `torch` (required by rembg's birefnet model).
 
 ## Setup
 
+Base tools from Ubuntu's repos:
+
 ```bash
-sudo apt install exiftool python3-tk libcudnn9-cuda-12
-pip install -r Modeling/requirements.txt
+sudo apt install exiftool python3-tk
+```
+
+Install **cuDNN 9 for CUDA 12**. It lives in NVIDIA's CUDA repo, so add the repo
+and its GPG signing key first — the `cuda-keyring` package installs the key into
+`/usr/share/keyrings`:
+
+```bash
+# Add NVIDIA's CUDA repo + GPG key (WSL-Ubuntu network repo)
+wget https://developer.download.nvidia.com/compute/cuda/repos/wsl-ubuntu/x86_64/cuda-keyring_1.1-1_all.deb
+sudo dpkg -i cuda-keyring_1.1-1_all.deb
+
+# Install cuDNN 9 for CUDA 12
+sudo apt-get update
+sudo apt-get -y install cudnn9-cuda-12
+
+# Verify the runtime is present
+ldconfig -p | grep libcudnn
+```
+
+Then install the Python deps (use `python3`, not `python`):
+
+```bash
+python3 -m pip install -r Modeling/requirements.txt
 ```
 
 Then build CUDA COLMAP (one-time) — see
 [`Modeling/BUILDING_COLMAP.md`](Modeling/BUILDING_COLMAP.md).
 
+> **Out of memory / `Killed` mid-run?** COLMAP dense reconstruction and rembg are
+> memory-hungry. WSL2 caps its VM at half the host RAM by default — raise the RAM
+> and swap (pagefile) limits via `.wslconfig`; see
+> [`../SETUP.md`](../SETUP.md#giving-wsl-more-ram--a-bigger-swap-pagefile).
+
 ## Usage
 
 - **Capture** (needs the physical rig): `capture_app.py` or the parallel-camera
   variant `capture_app_parallel.py`; rig firmware in `arduinoCode/`.
-- **Reconstruction**: `python Modeling/app.py` — see
+- **Reconstruction**: `python3 Modeling/app.py` — see
   [`Modeling/README.md`](Modeling/README.md) for the four-stage pipeline.
 
 ## Structure

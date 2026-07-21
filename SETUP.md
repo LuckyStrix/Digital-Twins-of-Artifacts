@@ -12,12 +12,16 @@ the linked per-pillar README for the detailed steps.
 | `3D/`        | **WSL2 (Ubuntu)**  | CUDA-enabled COLMAP, exiftool, NVIDIA GPU | 3.9–3.12 |
 | `Website/`   | any                | none (static site)                        | 3.x      |
 
-> **Use Python 3.9–3.12, not 3.13/3.14.** The pipelines pin `numpy<2.0`, and
-> numpy 1.26.x (plus scipy, opencv, rembg) only ship prebuilt wheels up to
-> Python 3.12. On 3.13+ pip falls back to building numpy from C source and fails
-> with `ERROR: Unknown compiler(s)` unless you have a full MSVC/GCC toolchain.
-> If you hit that, install Python 3.12 and launch with it (e.g. `py -3.12 run.py`
-> on Windows). The `Website/` static server works on any Python 3.
+> **Use Python 3.9–3.12, not 3.13/3.14.** The pipelines pin `numpy<2.5`, and
+> numpy (plus scipy, opencv, rembg, open3d, onnxruntime) only ship prebuilt
+> wheels up to Python 3.12. On 3.13+ pip falls back to building from C source and
+> fails with `ERROR: Unknown compiler(s)` unless you have a full MSVC/GCC
+> toolchain. If you hit that, install Python 3.12 and launch with it (e.g.
+> `py -3.12 run.py` on Windows). The `Website/` static server works on any
+> Python 3.
+>
+> Invoke everything with **`python3`** (and `python3 -m pip`), not `python` —
+> on WSL/Ubuntu `python` is often unset or points at Python 2.
 
 The `2D/` and `3D/` pipelines run on **different operating systems** and keep
 their Python dependencies in separate `requirements.txt` files — do not try to
@@ -89,20 +93,82 @@ WSLg for the GUI and CUDA-on-WSL for GPU-accelerated COLMAP).
    https://learn.microsoft.com/windows/wsl/tutorials/gpu-compute and
    https://docs.nvidia.com/cuda/wsl-user-guide/
 
-3. Install the system packages the pipeline needs beyond CUDA:
+3. Install `exiftool` and `python3-tk` from Ubuntu's repos:
 
    ```bash
-   sudo apt install exiftool python3-tk libcudnn9-cuda-12
+   sudo apt install exiftool python3-tk
    ```
 
    - **python3-tk** — the capture and reconstruction GUIs use tkinter, which
      Ubuntu's stock `python3` does not include.
-   - **libcudnn9-cuda-12** — `rembg[gpu]` (background removal) pulls
-     `onnxruntime-gpu`, which needs the cuDNN runtime alongside CUDA. On a
-     CPU-only machine, use `rembg` (no `[gpu]`) instead and skip cuDNN.
+   - **exiftool** — COLMAP is fed metadata-stripped images.
 
-4. Continue with [`3D/README.md`](3D/README.md), which covers `exiftool`, the
-   Python deps, and building CUDA COLMAP.
+4. Install **cuDNN 9 for CUDA 12** (`cudnn9-cuda-12`). `rembg[gpu]` (background
+   removal) pulls `onnxruntime-gpu`, which needs the cuDNN runtime alongside
+   CUDA; without it, background removal fails at model load with
+   `libcudnn.so.9: cannot open shared object file`.
+
+   cuDNN is **not** in Ubuntu's default repos — you must add NVIDIA's CUDA repo
+   and its signing (GPG) key first. The `cuda-keyring` package installs that key
+   into `/usr/share/keyrings` for you:
+
+   ```bash
+   # 1. Add NVIDIA's CUDA repo + GPG signing key (WSL-Ubuntu network repo)
+   wget https://developer.download.nvidia.com/compute/cuda/repos/wsl-ubuntu/x86_64/cuda-keyring_1.1-1_all.deb
+   sudo dpkg -i cuda-keyring_1.1-1_all.deb
+
+   # 2. Refresh the package index and install cuDNN 9 for CUDA 12
+   sudo apt-get update
+   sudo apt-get -y install cudnn9-cuda-12
+   ```
+
+   Verify the runtime is present:
+
+   ```bash
+   ldconfig -p | grep libcudnn
+   ```
+
+   On a **CPU-only** machine, use `rembg` (no `[gpu]`) instead and skip cuDNN
+   entirely.
+
+5. Continue with [`3D/README.md`](3D/README.md), which covers the Python deps
+   and building CUDA COLMAP.
+
+## Giving WSL more RAM / a bigger swap (pagefile)
+
+COLMAP dense reconstruction and rembg's GPU models are memory-hungry; by default
+WSL2 caps its VM at **half the host RAM** and a small auto-swap, so large jobs
+get OOM-killed (the process dies with `Killed`, or WSL freezes). Raise the limits
+with a **`.wslconfig`** file on the **Windows host** (this is a Windows file, not
+a file inside Ubuntu):
+
+1. In Windows, create/edit `C:\Users\<YourWindowsUser>\.wslconfig` (e.g. open
+   PowerShell and run `notepad $env:USERPROFILE\.wslconfig`).
+
+2. Add a `[wsl2]` section — tune to your machine (leave the host a few GB):
+
+   ```ini
+   [wsl2]
+   memory=16GB      # RAM ceiling for the WSL VM
+   swap=32GB        # swap / pagefile size (acts as overflow when RAM fills)
+   swapFile=C:\\wsl-swap.vhdx   # where the swap file lives (optional)
+   processors=8     # CPU cores (optional)
+   ```
+
+3. Apply it by fully restarting WSL from **PowerShell**, then reopen Ubuntu:
+
+   ```powershell
+   wsl --shutdown
+   ```
+
+4. Confirm inside Ubuntu:
+
+   ```bash
+   free -h          # "Mem" and "Swap" totals should reflect the new limits
+   ```
+
+   Microsoft's reference for every `.wslconfig` setting:
+   https://learn.microsoft.com/windows/wsl/wsl-config#configuration-setting-for-wslconfig
 
 ## Website
 

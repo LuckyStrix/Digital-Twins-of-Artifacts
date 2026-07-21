@@ -11,18 +11,23 @@ model, driven by a Tkinter GUI (`app.py`, run under WSL with WSLg). See the
 - **CUDA-enabled COLMAP** — see the dependency notes below and
   [`BUILDING_COLMAP.md`](BUILDING_COLMAP.md).
 - **exiftool**: `sudo apt install exiftool`.
+- **cuDNN 9 for CUDA 12** (`cudnn9-cuda-12`) for `rembg[gpu]` — needs NVIDIA's
+  CUDA repo + GPG key; see [`../README.md`](../README.md#setup) or
+  [`../../SETUP.md`](../../SETUP.md).
 - Python deps from `requirements.txt`.
 
 ## Setup
 
 ```bash
 sudo apt install exiftool
-pip install -r requirements.txt
+python3 -m pip install -r requirements.txt
 ```
 
-`requirements.txt` pulls `open3d`, `numpy`, `rembg[gpu]` (use plain `rembg` on a
-CPU-only machine), and `pillow`. rembg downloads its `birefnet-general` model on
-first use.
+`requirements.txt` pulls `open3d`, `numpy<2.5`, `rembg[gpu]` (use plain `rembg`
+on a CPU-only machine) with `onnxruntime-gpu<1.27` and `torch`, and `pillow`.
+rembg downloads its `birefnet-general` model on first use. For the cuDNN runtime
+that `onnxruntime-gpu` needs, and for raising WSL's RAM/swap limits if runs get
+OOM-killed, see [`../README.md`](../README.md#setup).
 
 ## Dependencies
 
@@ -54,7 +59,7 @@ bash src/check_config.sh python3 colmap -- numpy open3d
 ## Usage
 
 ```bash
-python app.py
+python3 app.py
 ```
 
 ## Pipeline stages

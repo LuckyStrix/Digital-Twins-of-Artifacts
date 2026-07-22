@@ -244,6 +244,11 @@
   }
   figcaption b { color: var(--ink); }
 
+  /* Keep inline bold on the same fixed leading as its paragraph, so a bold
+     phrase never expands its line (some viewers reset <b> to line-height:normal,
+     which lets a taller bold face grow that one line). */
+  b, strong { font-weight: 700; line-height: inherit; }
+
   /* system card: photo + diagram side by side to use the wide format */
   .sysrow {
     flex: 1;
@@ -414,6 +419,14 @@
   /* ---- print: true 48 x 36 in ------------------------------------- */
   @media print {
     @page { size: 48in 36in; margin: 0; }
+    /* Only the genuinely coloured elements force their background to print
+       (orange banner, dark footer, and the white-text-on-colour badges/tags).
+       The white sheet and cards are left at the default, so the majority
+       white background lays down no ink at all. */
+    .banner, .footer, .flow-title .tag, .specs .sys {
+      -webkit-print-color-adjust: exact !important;
+      print-color-adjust: exact !important;
+    }
     body { background: #fff; padding: 0; gap: 0; }
     .hint { display: none; }
     .poster {
@@ -537,7 +550,7 @@
         <p class="eyebrow">Reference</p>
         <h2>Technical specifications</h2>
         <table class="specs">
-          <tr><th>Camera</th><td class="sysc"><span class="sys sys-both">2D&nbsp;+&nbsp;3D</span></td><td>Canon DSLRs, tethered; RAW &rarr; 16-bit TIFF (~5208 &times; 3476 px)</td></tr>
+          <tr><th>Camera</th><td class="sysc"><span class="sys sys-both">2D&nbsp;+&nbsp;3D</span></td><td>Canon DSLRs, tethered. 2D: RAW &rarr; 16-bit TIFF (~5208 &times; 3476 px); 3D: JPG</td></tr>
           <tr><th>Lighting</th><td class="sysc"><span class="sys sys-2d">2D</span></td><td>4 directional lights (N/E/S/W) at &theta; &asymp; 37&deg;; rotating polarizer</td></tr>
           <tr><th>Polarization</th><td class="sysc"><span class="sys sys-2d">2D</span></td><td>cross-pol (geometry) + co-pol (ink) capture pairs</td></tr>
           <tr><th>Reconstruction</th><td class="sysc"><span class="sys sys-3d">3D</span></td><td>CUDA COLMAP (SfM + MVS) &rarr; FPFH/RANSAC + ICP &rarr; Open3D Poisson mesh</td></tr>
@@ -612,7 +625,7 @@
     <section class="card">
       <p class="eyebrow">Acknowledgements</p>
       <h2>Thanks</h2>
-      <p>Thanks to the <b>Rochester Institute of Technology</b>, the rest of our <b>Freshman Imaging Project class</b> &mdash; who built the project&rsquo;s foundations with us &mdash; and FIP professors <b>Karen Braun</b> and <b>Jim Ferwerda</b>. Carried out in collaboration with the <b>RIT Cary Graphic Arts Collection</b>, which provided the artifacts.</p>
+      <p>Thanks to the <b>Rochester Institute of Technology</b>, the rest of our <b>Freshman Imaging Project class</b> &mdash; who built the project&rsquo;s foundations with us &mdash; and FIP professors <b>Karen Braun</b> and <b>Jim Ferwerda</b>. Carried out in collaboration with the <b>RIT Cary Graphic Arts Collection</b>, which provided the artifacts. This work was supported by the <b>Hoffman Endowment</b>.</p>
     </section>
 
   </main>

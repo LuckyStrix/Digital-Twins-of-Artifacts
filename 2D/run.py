@@ -77,9 +77,9 @@ import sys
 import threading
 import time
 import urllib.request
-import webbrowser
 from datetime import datetime
 from pathlib import Path
+import textwrap
 
 import tkinter as tk
 from tkinter import filedialog, messagebox, scrolledtext
@@ -162,6 +162,8 @@ PYTHON_DEPS = [
 ]
 
 CLEANUP_SCRIPT = BACKEND / "delete-cr2-tiff.ps1"
+TXT_SCRIPT = BACKEND / "create_artifact_info.py"
+TXT_NAME = "info.txt"
 
 
 class PipelineApp:
@@ -263,6 +265,7 @@ class PipelineApp:
         add_button("Step 1 — Capture Scroll (needs camera + Arduino)", self.on_run_capture)
         add_button("Step 2 — Run Modeling Pipeline", self.on_run_modeling)
         add_button("Step 3 — Build 3D Model (.glb)", self.on_build_model)
+        add_button("Step 4 — Generate Artifact Description (.txt)", self.on_generate_desc)
         tk.Frame(button_frame, height=1, bg="#cccccc").pack(fill=tk.X, pady=6)
         add_button("Run Everything (skips stages already done)", self.on_run_all,
                    font=("TkDefaultFont", 9, "bold"))
@@ -392,7 +395,9 @@ class PipelineApp:
         self.active_dir = Path(folder)
         self.active_dir_var.set(str(self.active_dir))
         self.log(f"Active working folder set to: {self.active_dir}")
-        CAPTURE_DATA_DIR = self.active_dir
+        env = None
+        env = dict(os.environ)
+        env[CAPTURE_DATA_DIR] = self.active_dir
         for side in self._side_dirs():
             label = self._side_label(side)
             prefix = f"  {label}: " if label else "  Folder status: "
@@ -419,10 +424,66 @@ class PipelineApp:
     def on_build_model(self):
         self.run_in_background(self.step_build_model, "build 3D model")
 
+    def on_generate_desc(self):
+        self.run_in_background(self.step_generate_desc, "generate description")
+
     def on_run_all(self):
         self.run_in_background(self.step_run_all, "full pipeline")
 
+
     # ── Steps ───────────────────────────────────────────────────────────────────
+    def wrap_description(self, text, width=70):
+        """Wrap long description text to a fixed width, like the example file."""
+        paragraphs = text.splitlines() or [""]
+        wrapped_lines = []
+        for para in paragraphs:
+            if para.strip() == "":
+                wrapped_lines.append("")
+            else:
+                wrapped_lines.extend(textwrap.wrap(para, width=width))
+        return "\n".join(wrapped_lines)
+
+
+    def submit(self, root):
+        name = self.name_entry.get().strip()
+        type_ = self.type_var.get().strip()
+        description = self.description_text.get("1.0", tk.END).strip()
+
+        if not name or not type_ or not description:
+            messagebox.showwarning(
+                "Missing information",
+                "Please fill in Name, Type, and Description before submitting."
+            )
+            return
+
+        save_dir = self.active_dir
+        if not save_dir:
+            messagebox.showerror(
+                "CAPTURE_DATA_DIR not set",
+                "The CAPTURE_DATA_DIR environment variable is not set.\n"
+                "Please set it before running this script."
+            )
+            return
+
+        os.makedirs(save_dir, exist_ok=True)
+        save_path = os.path.join(save_dir, "info.txt")
+
+        content = (
+            f"Name: {name}\n"
+            f"Type: {type_}\n"
+            f"Description: {self.wrap_description(description)}\n"
+        )
+
+        try:
+            with open(save_path, "w", encoding="utf-8") as f:
+                f.write(content)
+        except OSError as e:
+            messagebox.showerror("Error saving file", str(e))
+            return
+
+        messagebox.showinfo("Saved", f"Saved to:\n{save_path}")
+        root.destroy()
+
     def _module_present(self, import_name: str) -> bool:
         """True if `import_name` is importable in this Python (no actual import)."""
         check = ("import importlib.util, sys; "
@@ -566,6 +627,9 @@ class PipelineApp:
 
     def _glb_path(self, side: Path = None) -> Path:
         return (side or self.active_dir) / MODEL_SUBDIR / GLB_NAME
+    
+    def _txt_path(self, side: Path = None) -> Path:
+        return (side or self.active.dir) / MODEL_SUBDIR / TXT_NAME
 
     def _set_active_dir(self, path):
         """Set the active working folder and refresh its on-screen display.
@@ -587,6 +651,10 @@ class PipelineApp:
     def _has_glb(self, d: Path = None) -> bool:
         d = d or self.active_dir
         return (d / MODEL_SUBDIR / GLB_NAME).exists()
+    
+    def _has_txt(self, d: Path = None) -> bool:
+        d = d or self.active_dir
+        return (d / MODEL_SUBDIR / TXT_NAME).exists()
 
     def _ask_continue(self, title: str, message: str) -> bool:
         """Pop a modal OK/Cancel dialog from a background thread; return True on OK.
@@ -868,6 +936,42 @@ class PipelineApp:
             self.log(f"Saved model -> {dest}.")
         else:
             self.log("render.glb was not created — see log above for details.")
+
+    def step_generate_desc(self):
+        root = tk.Tk()
+        root.title("New Artifact Info")
+        root.geometry("420x360")
+        root.resizable(False, False)
+
+        padding = {"padx": 12, "pady": 6}
+
+        tk.Label(root, text="Name:").pack(anchor="w", **padding)
+        self.name_entry = tk.Entry(root, width=45)
+        self.name_entry.pack(**padding)
+
+        tk.Label(root, text="Type:").pack(anchor="w", **padding)
+        self.type_var = tk.StringVar(root)
+        self.type_var.set("papyrus")  # default selection
+        type_dropdown = tk.OptionMenu(root, self.type_var, "papyrus", "tablet")
+        type_dropdown.config(width=20)
+        type_dropdown.pack(**padding)
+
+        tk.Label(root, text="Description:").pack(anchor="w", **padding)
+        self.description_text = tk.Text(root, width=45, height=8, wrap="word")
+        self.description_text.pack(**padding)
+
+        submit_button = tk.Button(
+            root, text="Generate .txt",
+            command=lambda: self.submit(root)
+        )
+        submit_button.pack(pady=12)
+
+        self.name_entry.focus_set()
+        root.mainloop()
+
+
+        
+
     def _smart_run(self):
         """Run the pipeline on the active folder, skipping stages already done.
 
@@ -900,7 +1004,7 @@ class PipelineApp:
             tag = f" [{label}]" if label else ""
 
             if self._has_maps(side):
-                self.log(f"Render-ready maps already in {self._maps_dir(side)} — "
+                self.log(f"Render-ready maps already in {self._maps_dir(side)} ─ "
                           f"skipping modeling{tag}.")
             else:
                 self._run_modeling_for(side)
@@ -910,7 +1014,7 @@ class PipelineApp:
                     return
 
             if self._has_glb(side):
-                self.log(f"Model already built ({self._glb_path(side)}) — "
+                self.log(f"Model already built ({self._glb_path(side)}) ─ "
                           f"skipping render{tag}.")
             else:
                 self._build_model_for(side)
@@ -918,8 +1022,16 @@ class PipelineApp:
                     self.log(f"Model build did not produce render.glb{tag}; "
                               "stopping.")
                     return
+        if self._has_txt(side):
+            self.log(f"Description already written ({self._txt_path(side)}) ─ "
+                     f"skipping description generation{tag}.")
+        else:
+            self.step_generate_desc()
+            if not self._has_txt():
+                self.log(f"Description Generation failed{tag}; "
+                         "stopping.")
+                return
 
-        #self.step_open_viewer()
 
     def step_run_all(self):
         self._smart_run()

@@ -404,9 +404,11 @@ class PipelineApp:
             have = [
                 "scans" if self._has_scans(side) else "no scans",
                 "maps" if self._has_maps(side) else "no maps",
-                ".glb" if self._has_glb(side) else "no .glb",
             ]
-            self.log(prefix + ", ".join(have) + ".")
+            glbs = [".glb" if self._has_glb(side, side) else "no .glb"]
+            self.log(prefix + ", ".join(have) + ", " + " ".join(glbs) + ".")
+        txt = ".txt" if self._has_txt() else "no .txt"
+        self.log(txt)
         self.log("Click a step or 'Run Everything' to process it.")
 
     def on_open_focus_viewer(self):
@@ -648,13 +650,14 @@ class PipelineApp:
         maps = d / MAPS_SUBDIR
         return all((maps / name).exists() for name in RENDER_MAPS)
 
-    def _has_glb(self, d: Path = None) -> bool:
+    def _has_glb(self, glb, d: Path = None) -> bool:
         d = d or self.active_dir
-        return (d / MODEL_SUBDIR / GLB_NAME).exists()
+        return (d / f"{glb}.glb").exists()
     
     def _has_txt(self, d: Path = None) -> bool:
         d = d or self.active_dir
-        return (d / MODEL_SUBDIR / TXT_NAME).exists()
+        txt = TXT_NAME
+        return (d / f"{txt}").exists()
 
     def _ask_continue(self, title: str, message: str) -> bool:
         """Pop a modal OK/Cancel dialog from a background thread; return True on OK.

@@ -68,7 +68,9 @@ Then click the buttons top to bottom:
                               them in the active working folder.
   2. Run Modeling Pipeline  - generates the texture maps into <active>/maps/.
   3. Build 3D Model (.glb)  - bakes the maps into <active>/model/render.glb.
-  4. Open 3D Viewer         - serves backend/website/ and opens it in a browser.
+  4. Generate Artifact Description (.txt) - prompts for the artifact's name,
+                              type and description and writes info.txt into the
+                              active working folder.
 
 The individual steps 1-4 always run (force re-do). "Run Everything" and "Select
 working image set" run the same pipeline but skip stages whose outputs already
@@ -85,6 +87,7 @@ import threading
 import time
 import urllib.request
 import webbrowser
+import textwrap
 from datetime import datetime
 from pathlib import Path
 
@@ -162,6 +165,11 @@ PYTHON_DEPS = [
     ("rembg",                   "rembg",        "modeling (alpha mask)"),
     ("onnxruntime",             "onnxruntime",  "modeling (alpha mask)"),
 ]
+
+# Optional helper script and the per-side artifact-description file the
+# "Generate Artifact Description" step writes into <side>/model/.
+TXT_SCRIPT = BACKEND / "create_artifact_info.py"
+TXT_NAME = "info.txt"
 
 
 class PipelineApp:
@@ -263,7 +271,7 @@ class PipelineApp:
         add_button("Step 1 — Capture Scroll (needs camera + Arduino)", self.on_run_capture)
         add_button("Step 2 — Run Modeling Pipeline", self.on_run_modeling)
         add_button("Step 3 — Build 3D Model (.glb)", self.on_build_model)
-        #add_button("Step 4 — Open 3D Viewer", self.on_open_viewer)
+        add_button("Step 4 — Generate Artifact Description (.txt)", self.on_generate_desc)
         tk.Frame(button_frame, height=1, bg="#cccccc").pack(fill=tk.X, pady=6)
         add_button("Run Everything (skips stages already done)", self.on_run_all,
                    font=("TkDefaultFont", 9, "bold"))
@@ -419,13 +427,64 @@ class PipelineApp:
     def on_build_model(self):
         self.run_in_background(self.step_build_model, "build 3D model")
 
-    #def on_open_viewer(self):
-    #    self.run_in_background(self.step_open_viewer, "open 3D viewer")
+    def on_generate_desc(self):
+        self.run_in_background(self.step_generate_desc, "generate description")
 
     def on_run_all(self):
         self.run_in_background(self.step_run_all, "full pipeline")
 
     # ── Steps ───────────────────────────────────────────────────────────────────
+    def wrap_description(self, text, width=70):
+        """Wrap long description text to a fixed width, like the example file."""
+        paragraphs = text.splitlines() or [""]
+        wrapped_lines = []
+        for para in paragraphs:
+            if para.strip() == "":
+                wrapped_lines.append("")
+            else:
+                wrapped_lines.extend(textwrap.wrap(para, width=width))
+        return "\n".join(wrapped_lines)
+
+    def submit(self, root):
+        name = self.name_entry.get().strip()
+        type_ = self.type_var.get().strip()
+        description = self.description_text.get("1.0", tk.END).strip()
+
+        if not name or not type_ or not description:
+            messagebox.showwarning(
+                "Missing information",
+                "Please fill in Name, Type, and Description before submitting."
+            )
+            return
+
+        save_dir = self.active_dir
+        if not save_dir:
+            messagebox.showerror(
+                "No working folder set",
+                "No active working folder is set.\n"
+                "Select or capture an image set before generating a description."
+            )
+            return
+
+        os.makedirs(save_dir, exist_ok=True)
+        save_path = os.path.join(save_dir, TXT_NAME)
+
+        content = (
+            f"Name: {name}\n"
+            f"Type: {type_}\n"
+            f"Description: {self.wrap_description(description)}\n"
+        )
+
+        try:
+            with open(save_path, "w", encoding="utf-8") as f:
+                f.write(content)
+        except OSError as e:
+            messagebox.showerror("Error saving file", str(e))
+            return
+
+        messagebox.showinfo("Saved", f"Saved to:\n{save_path}")
+        root.destroy()
+
     def _module_present(self, import_name: str) -> bool:
         """True if `import_name` is importable in this Python (no actual import)."""
         check = ("import importlib.util, sys; "
@@ -571,6 +630,9 @@ class PipelineApp:
     def _glb_path(self, side: Path = None) -> Path:
         return (side or self.active_dir) / MODEL_SUBDIR / GLB_NAME
 
+    def _txt_path(self, side: Path = None) -> Path:
+        return (side or self.active_dir) / MODEL_SUBDIR / TXT_NAME
+
     def _set_active_dir(self, path):
         """Set the active working folder and refresh its on-screen display.
 
@@ -591,6 +653,10 @@ class PipelineApp:
     def _has_glb(self, d: Path = None) -> bool:
         d = d or self.active_dir
         return (d / MODEL_SUBDIR / GLB_NAME).exists()
+
+    def _has_txt(self, d: Path = None) -> bool:
+        d = d or self.active_dir
+        return (d / MODEL_SUBDIR / TXT_NAME).exists()
 
     def _ask_continue(self, title: str, message: str) -> bool:
         """Pop a modal OK/Cancel dialog from a background thread; return True on OK.
@@ -805,6 +871,27 @@ class PipelineApp:
                 self.log(f"BUILD 3D MODEL — {label}")
                 self.log("=" * 64)
             self._build_model_for(side)
+        self._cleanup_intermediates()
+
+    def _cleanup_intermediates(self):
+        """Remove intermediate .cr2/.tiff/.glb files left under backend/ after a
+        build. Mirrors backend/delete-cr2-tiff.ps1 (the Windows path used by
+        run.py) but done natively in Python so it works on Linux. The 9 capture
+        TIFFs are kept, and the working data/ folders (outside backend/) — where
+        the copied render.glb, maps/ and info.txt live — are never touched."""
+        keep = set(CAPTURE_TIFFS)
+        removed = 0
+        for pattern in ("*.cr2", "*.tiff", "*.glb"):
+            for f in BACKEND.rglob(pattern):
+                if f.name in keep or not f.is_file():
+                    continue
+                try:
+                    f.unlink()
+                    removed += 1
+                except OSError as e:
+                    self.log(f"  could not delete {f}: {e}")
+        if removed:
+            self.log(f"Cleanup: removed {removed} intermediate file(s) under backend/.")
 
     def _build_model_for(self, side: Path):
         maps_dir = self._maps_dir(side)
@@ -898,6 +985,38 @@ class PipelineApp:
         self.log(f"Opening {url}")
         webbrowser.open(url)
     """
+    def step_generate_desc(self):
+        root = tk.Tk()
+        root.title("New Artifact Info")
+        root.geometry("420x360")
+        root.resizable(False, False)
+
+        padding = {"padx": 12, "pady": 6}
+
+        tk.Label(root, text="Name:").pack(anchor="w", **padding)
+        self.name_entry = tk.Entry(root, width=45)
+        self.name_entry.pack(**padding)
+
+        tk.Label(root, text="Type:").pack(anchor="w", **padding)
+        self.type_var = tk.StringVar(root)
+        self.type_var.set("papyrus")  # default selection
+        type_dropdown = tk.OptionMenu(root, self.type_var, "papyrus", "tablet")
+        type_dropdown.config(width=20)
+        type_dropdown.pack(**padding)
+
+        tk.Label(root, text="Description:").pack(anchor="w", **padding)
+        self.description_text = tk.Text(root, width=45, height=8, wrap="word")
+        self.description_text.pack(**padding)
+
+        submit_button = tk.Button(
+            root, text="Generate .txt",
+            command=lambda: self.submit(root)
+        )
+        submit_button.pack(pady=12)
+
+        self.name_entry.focus_set()
+        root.mainloop()
+
     def _smart_run(self):
         """Run the pipeline on the active folder, skipping stages already done.
 
@@ -949,7 +1068,15 @@ class PipelineApp:
                               "stopping.")
                     return
 
-        #self.step_open_viewer()
+        # ── Artifact description (.txt) ───────────────────────────────────────
+        if self._has_txt(side):
+            self.log(f"Description already written ({self._txt_path(side)}) — "
+                     f"skipping description generation{tag}.")
+        else:
+            self.step_generate_desc()
+            if not self._has_txt():
+                self.log(f"Description generation failed{tag}; stopping.")
+                return
 
     def step_run_all(self):
         self._smart_run()

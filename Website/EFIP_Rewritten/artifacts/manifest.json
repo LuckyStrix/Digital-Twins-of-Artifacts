@@ -25,7 +25,7 @@
       "id": "sample-papyrus",
       "name": "Sample Papyrus Replica",
       "type": "papyrus",
-      "description": "This is a placeholder artifact lent to us by the RIT Cary Graphic Arts Collection to test our systems with, and is a sample of what a real papyrus scroll may look like.",
+      "description": "This is a placeholder artifact lent to us by the RIT Cary Graphic Arts Collection to test our systems with, and is a sample of what a real papyrus scroll may look like. Delete this once real artifacts have been added",
       "model": "sample-papyrus/side1.glb",
       "back": "sample-papyrus/side2.glb"
     },

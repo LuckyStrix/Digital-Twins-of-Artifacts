@@ -1,7 +1,17 @@
 # delete-cr2-tiff.ps1
 
 # --- CONFIG ---
-$rootPath = "C:\Users\erago\OneDrive\Documents\RIT\EFIP\papyrusPipelineFull\backend"   # <-- change this
+$rootPath = $env:DELETE_TARGET_DIR
+
+if ([string]::IsNullOrWhiteSpace($rootPath)) {
+    Write-Host "ERROR: DELETE_TARGET_DIR environment variable is not set."
+    exit 1
+}
+
+if (-not (Test-Path $rootPath)) {
+    Write-Host "ERROR: Path does not exist: $rootPath"
+    exit 1
+}
 
 # List the 9 files you want to KEEP (just the filename, or full path if you prefer exact matching)
 $excludeFiles = @(

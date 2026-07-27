@@ -871,7 +871,10 @@ class PipelineApp:
                 self.log(f"BUILD 3D MODEL — {label}")
                 self.log("=" * 64)
             self._build_model_for(side)
-        subprocess.run(["powershell", "-ExecutionPolicy", "Bypass", "-File", r".\delete-cr2-tiff.ps1"], capture_output=True, cwd=BACKEND)
+        target_folder = str(BACKEND)
+        env = os.environ.copy()
+        env["DELETE_TARGET_DIR"] = target_folder
+        rc = self.run_command(["powershell", "-ExecutionPolicy", "Bypass", "-File", r".\delete-cr2-tiff.ps1"], cwd=BACKEND, env=env)
 
     def _build_model_for(self, side: Path):
         maps_dir = self._maps_dir(side)
@@ -931,7 +934,7 @@ class PipelineApp:
 
         glb = RENDERING_DIR / "render.glb"
         if glb.exists():
-            dest = side / MODEL_SUBDIR / GLB_NAME
+            dest = CAPTURE_DATA_DIR / f"{side}.glb"
             dest.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(glb, dest)
             self.log(f"Saved model -> {dest}.")

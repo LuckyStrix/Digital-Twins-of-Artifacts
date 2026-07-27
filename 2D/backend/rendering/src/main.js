@@ -77,7 +77,7 @@ function applyRotations() {
 const ambientLight = new THREE.AmbientLight(0xffffff, 0.4);
 scene.add(ambientLight);
 
-const frontLight = new THREE.PointLight(0xffffff, 3, 50);
+const frontLight = new THREE.PointLight(0xffffff, 5, 50);
 scene.add(frontLight);
 
 // Slider

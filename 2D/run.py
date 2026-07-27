@@ -939,36 +939,38 @@ class PipelineApp:
             self.log("render.glb was not created — see log above for details.")
 
     def step_generate_desc(self):
-        root = tk.Tk()
-        root.title("New Artifact Info")
-        root.geometry("420x360")
-        root.resizable(False, False)
+        done = threading.Event()
 
-        padding = {"padx": 12, "pady": 6}
+        def build_popup():
+            popup = tk.Toplevel(self.root)
+            popup.title("New Artifact Info")
+            popup.geometry("420x360")
+            popup.resizable(False, False)
 
-        tk.Label(root, text="Name:").pack(anchor="w", **padding)
-        self.name_entry = tk.Entry(root, width=45)
-        self.name_entry.pack(**padding)
+            padding = {"padx": 12, "pady": 6}
+            tk.Label(popup, text="Name:").pack(anchor="w", **padding)
+            self.name_entry = tk.Entry(popup, width=45)
+            self.name_entry.pack(**padding)
 
-        tk.Label(root, text="Type:").pack(anchor="w", **padding)
-        self.type_var = tk.StringVar(root)
-        self.type_var.set("papyrus")  # default selection
-        type_dropdown = tk.OptionMenu(root, self.type_var, "papyrus", "tablet")
-        type_dropdown.config(width=20)
-        type_dropdown.pack(**padding)
+            tk.Label(popup, text="Type:").pack(anchor="w", **padding)
+            self.type_var = tk.StringVar(popup)
+            self.type_var.set("papyrus")
+            tk.OptionMenu(popup, self.type_var, "papyrus", "tablet").pack(**padding)
 
-        tk.Label(root, text="Description:").pack(anchor="w", **padding)
-        self.description_text = tk.Text(root, width=45, height=8, wrap="word")
-        self.description_text.pack(**padding)
+            tk.Label(popup, text="Description:").pack(anchor="w", **padding)
+            self.description_text = tk.Text(popup, width=45, height=8, wrap="word")
+            self.description_text.pack(**padding)
 
-        submit_button = tk.Button(
-            root, text="Generate .txt",
-            command=lambda: self.submit(root)
-        )
-        submit_button.pack(pady=12)
+            def do_submit():
+                self.submit(popup)
+                done.set()
 
-        self.name_entry.focus_set()
-        root.mainloop()
+            tk.Button(popup, text="Generate .txt", command=do_submit).pack(pady=12)
+            popup.protocol("WM_DELETE_WINDOW", lambda: (popup.destroy(), done.set()))
+            self.name_entry.focus_set()
+
+        self.root.after(0, build_popup)
+        done.wait()  # blocks the worker thread until the popup is closed
 
 
         
@@ -1024,8 +1026,8 @@ class PipelineApp:
                               "stopping.")
                     return
         if self._has_txt(self.active_dir):
-            self.log(f"Description already written ({self._txt_path(side)}) ─ "
-                     f"skipping description generation{tag}.")
+            self.log(f"Description already written ({self._txt_path()}) ─ "
+                     f"skipping description generation.")
         else:
             self.step_generate_desc()
             if not self._has_txt():

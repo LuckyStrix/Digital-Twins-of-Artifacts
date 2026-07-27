@@ -631,7 +631,7 @@ class PipelineApp:
         return (side or self.active_dir) / MODEL_SUBDIR / GLB_NAME
     
     def _txt_path(self, side: Path = None) -> Path:
-        return (side or self.active.dir) / MODEL_SUBDIR / TXT_NAME
+        return (side or self.active_dir) / TXT_NAME
 
     def _set_active_dir(self, path):
         """Set the active working folder and refresh its on-screen display.
@@ -1025,7 +1025,7 @@ class PipelineApp:
                     self.log(f"Model build did not produce render.glb{tag}; "
                               "stopping.")
                     return
-        if self._has_txt(side):
+        if self._has_txt(self.active_dir):
             self.log(f"Description already written ({self._txt_path(side)}) ─ "
                      f"skipping description generation{tag}.")
         else:

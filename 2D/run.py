@@ -395,9 +395,8 @@ class PipelineApp:
         self.active_dir = Path(folder)
         self.active_dir_var.set(str(self.active_dir))
         self.log(f"Active working folder set to: {self.active_dir}")
-        env = None
         env = dict(os.environ)
-        env[CAPTURE_DATA_DIR] = self.active_dir
+        env["CAPTURE_DATA_DIR"] = str(self.active_dir)
         for side in self._side_dirs():
             label = self._side_label(side)
             prefix = f"  {label}: " if label else "  Folder status: "
@@ -932,8 +931,7 @@ class PipelineApp:
 
         glb = RENDERING_DIR / "render.glb"
         if glb.exists():
-            glb_new =f"{side}.glb"
-            dest = side / MODEL_SUBDIR / glb_new
+            dest = side / MODEL_SUBDIR / GLB_NAME
             dest.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(glb, dest)
             self.log(f"Saved model -> {dest}.")

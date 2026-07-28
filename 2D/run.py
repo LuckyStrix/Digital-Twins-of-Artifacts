@@ -940,6 +940,8 @@ class PipelineApp:
             self.log(f"Saved model -> {dest}.")
         else:
             self.log("render.glb was not created — see log above for details.")
+        env["DELETE_TARGET_DIR"] = target_folder
+        rc = self.run_command(["powershell", "-ExecutionPolicy", "Bypass", "-File", r".\delete-cr2-tiff.ps1"], cwd=BACKEND, env=env)
 
     def step_generate_desc(self):
         done = threading.Event()

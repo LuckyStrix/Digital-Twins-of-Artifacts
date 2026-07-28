@@ -64,6 +64,9 @@ const controls = new OrbitControls(camera, renderer.domElement);
 controls.enableDamping = true;
 
 let rotX = -90, rotY = 0, rotZ = 0;
+let specularIntensityValue = 1;
+let roughnessValue = 1;
+let specularBoostFactor = 1;
 
 function applyRotations() {
   if (plane) {
@@ -125,7 +128,7 @@ scene.add(plane);
 // Texture loader
 let diffuseMap, normalMap, specularMap, roughnessMap, alphaMap;
 
-async function loadTiffTexture(url, { alphaFromRed = false } = {}) {
+async function loadTiffTexture(url, { alphaFromRed = false, boostFactor = 1.0 } = {}) {
   const res = await fetch(url);
   if (!res.ok) throw new Error(`${url} failed (${res.status})`);
   const buf = await res.arrayBuffer();
@@ -140,14 +143,16 @@ async function loadTiffTexture(url, { alphaFromRed = false } = {}) {
   // which the KHR_materials_specular loader path forces through an sRGB
   // decode), mirror the grayscale value into alpha so it survives untouched.
   if (alphaFromRed) {
-    for (let i = 0; i < rgba.length; i += 4) rgba[i + 3] = rgba[i];
+    for (let i = 0; i < rgba.length; i += 4) {
+      rgba[i + 3] = Math.min(255, rgba[i] * boostFactor)
+    }
   }
 
   // ImageBitmap is a valid drawImage() source, which GLTFExporter requires.
   // imageOrientation:'flipY' replaces the DataTexture flipY workaround.
   const bitmap = await createImageBitmap(
     new ImageData(new Uint8ClampedArray(rgba), width, height),
-    { imageOrientation: 'flipY' }
+    { imageOrientation: 'flipY', premultiplyAlpha: 'none' }
   );
   const tex = new THREE.Texture(bitmap);
   tex.needsUpdate = true;
@@ -200,11 +205,12 @@ function updateMaterial() {
     // (RGB), the KHR_materials_specular loader treats this as linear data, so
     // the calibrated value round-trips through export/import unmodified.
     specularIntensityMap: specularMap,
+    specularIntensity:    specularIntensityValue,
     // See makeSpecularTintCanvas: tints the reflectance toward the diffuse
     // hue without lowering its peak magnitude.
     specularColorMap: specTintTex,
     alphaMap: alphaMap,
-    roughness: 1.0,
+    roughness: roughnessValue,
     metalness: 0.0,
     side: THREE.DoubleSide,
     transparent: true,
@@ -320,8 +326,9 @@ function buildExportMesh() {
     normalMap:            mkTex(potNorm),
     roughnessMap:         mkTex(potRough),
     specularIntensityMap: mkTex(potSpec),
+    specularIntensity:    specularIntensityValue,
     specularColorMap:     mkTex(potSpecTint),
-    roughness: 1.0,
+    roughness: roughnessValue,
     metalness: 0.0,
     side: THREE.FrontSide,
     transparent: true,
@@ -373,7 +380,7 @@ window.exportGLB = async () => {
 
 loadTiffTexture('textures/DiffuseMap_render.tiff').then(t    => { diffuseMap   = t; updateMaterial(); }).catch(console.error);
 loadTiffTexture('textures/NormalMap_render.tiff').then(t    => { normalMap    = t; updateMaterial(); }).catch(console.error);
-loadTiffTexture('textures/SpecularMap_render.tiff', { alphaFromRed: true }).then(t  => { specularMap  = t; updateMaterial(); }).catch(console.error);
+loadTiffTexture('textures/SpecularMap_render.tiff', { alphaFromRed: true, boostFactor: specularBoostFactor }).then(t  => { specularMap  = t; updateMaterial(); }).catch(console.error);
 loadTiffTexture('textures/RoughnessMap_render.tiff').then(t => { roughnessMap = t; updateMaterial(); }).catch(console.error);
 loadTiffTexture('textures/AlphaMask_render.tiff').then(t    => { alphaMap     = t; updateMaterial(); }).catch(console.error);
 

@@ -10,14 +10,14 @@ the linked per-pillar README for the detailed steps.
 |--------------|--------------------|-------------------------------------------|--------|
 | `2D/`        | **Windows / Linux**| Node.js (LTS), gphoto2, dcraw             | 3.9–3.12 |
 | `3D/`        | **WSL2 (Ubuntu)**  | CUDA-enabled COLMAP, exiftool, NVIDIA GPU | 3.9–3.12 |
-| `Website/`   | any                | none (static site)                        | 3.x      |
+| `website/`   | any                | none (static site)                        | 3.x      |
 
 > **Use Python 3.9–3.12, not 3.13/3.14.** The pipelines pin `numpy<2.5`, and
 > numpy (plus scipy, opencv, rembg, open3d, onnxruntime) only ship prebuilt
 > wheels up to Python 3.12. On 3.13+ pip falls back to building from C source and
 > fails with `ERROR: Unknown compiler(s)` unless you have a full MSVC/GCC
 > toolchain. If you hit that, install Python 3.12 and launch with it (e.g.
-> `py -3.12 run.py` on Windows). The `Website/` static server works on any
+> `py -3.12 run.py` on Windows). The `website/` static server works on any
 > Python 3.
 >
 > Invoke everything with **`python3`** (and `python3 -m pip`), not `python` —
@@ -192,10 +192,10 @@ a file inside Ubuntu):
 
 ## Website
 
-No install step. From `Website/EFIP_Rewritten/`:
+No install step. From `website/`:
 
 ```bash
 python3 -m http.server 8000
 ```
 
-See [`Website/EFIP_Rewritten/README.md`](Website/EFIP_Rewritten/README.md).
+See [`website/README.md`](website/README.md).

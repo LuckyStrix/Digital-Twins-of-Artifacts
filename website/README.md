@@ -1,7 +1,7 @@
-# Fully Rewritten
+# Website — artifact gallery
 
-A from-scratch rebuild of the artifact gallery site. Static HTML/CSS/JS —
-no build tooling, no server-side code required to host it.
+The artifact gallery site. Static HTML/CSS/JS — no build tooling, no
+server-side code required to host it.
 
 ## Structure
 
@@ -54,6 +54,38 @@ then open `http://localhost:8000/`.
 Upload the contents of this folder as-is to any static host. Just make
 sure `artifacts/manifest.json` is up to date (run the build script)
 before you upload.
+
+## Viewer internals: on-demand rendering
+
+The viewer draws a frame only when something changes, rather than redrawing
+every rAF tick whether or not anything moved. An artifact left open on screen
+costs nothing.
+
+**How it works.** `requestRender()` in `js/viewer.js` marks the next frame as
+needed (slider moved, model loaded, texture arrived, window resized).
+`isAnimating()` covers things mid-transition that keep changing on their own
+(flip tween, hand tracking, lens fade-out, reveal-light lerp). Camera motion
+needs neither — both control types fire a `change` event wired to
+`requestRender()`, and because damping keeps firing it until the camera
+settles, inertia is handled for free. `controls.update()` still runs every
+tick; only the draw is skipped.
+
+**Measured** (WebGL draw calls, `sample-papyrus`, software renderer),
+against the earlier draw-every-tick viewer:
+
+| | draw every tick | on-demand |
+|---|---|---|
+| idle, 4 s | 108 | **0** |
+| idle again after interaction, 4 s | 108 | **0** |
+| wheel zoom, 2 s | 58 | 2 |
+
+Output is pixel-for-pixel identical to the draw-every-tick viewer on both
+`sample-papyrus` and `mainDemotablet` (0 differing pixels).
+
+**If you extend this viewer**, anything that changes what is on screen must
+call `requestRender()`, or a continuously-changing thing must be added to
+`isAnimating()`. A missing call looks like a frozen viewer; a spurious one
+costs a single redraw. When unsure, call it.
 
 ## To fill in
 

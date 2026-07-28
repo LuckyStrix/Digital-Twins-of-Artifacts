@@ -15,6 +15,34 @@
       "model": "example-papyrus-demo/model.glb"
     },
     {
+      "id": "bubble_wrap",
+      "name": "Bubble Wrap",
+      "type": "papyrus",
+      "description": "Bubble Wrap",
+      "model": "bubble_wrap/28-07-26_16-14-38.glb"
+    },
+    {
+      "id": "envolope",
+      "name": "Envelope",
+      "type": "papyrus",
+      "description": "An envelope",
+      "model": "envolope/28-07-26_13-36-25.glb"
+    },
+    {
+      "id": "foil",
+      "name": "Foil",
+      "type": "papyrus",
+      "description": "A piece of foil",
+      "model": "foil/28-07-26_13-47-31.glb"
+    },
+    {
+      "id": "paper",
+      "name": "Paper",
+      "type": "papyrus",
+      "description": "A piece of paper",
+      "model": "paper/28-07-26_16-01-19.glb"
+    },
+    {
       "id": "mainDemotablet",
       "name": "Sample Cuneiform Tablet Replica",
       "type": "tablet",

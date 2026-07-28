@@ -159,19 +159,6 @@ MASK_DILATE_PX  = 0
 SMOOTH_SIGMA = 200.0
 
 # ── Stage 2: Specular map parameters ──────────────────────────────────────────
-# Multiplicative boost applied to SpecularMap_Cal.tiff (the renderer's
-# specularIntensityMap source) before the [0,1] clip. This scales the whole
-# signal uniformly (preserving the relative ink/papyrus proportions, i.e. no
-# percentile/black-point shift) so the ink's reflectance reaches ~1.0 on the
-# brightest ink. SpecularMap_Cal_stretched.tiff and the roughness map are
-# derived from the unboosted signal (self-normalised) and are unaffected by
-# this constant.
-#
-# Rescaled from 3.0 -> 0.9 alongside the switch to white-referenced calibration
-# (illumination_envelope): the co-cross specular signal is now ~3x brighter
-# (it used to top out ~0.34, needing 3.0x; it now tops out ~1.1). Leaving it at
-# 3.0 would hard-clip all ink to pure white and destroy the relative
-# proportions. Re-tune if the ink looks blown out or too flat.
 SPECULAR_BOOST = 3
 
 # ── Stage 3: Height map parameters ────────────────────────────────────────────

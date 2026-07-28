@@ -4,6 +4,7 @@ import { OBJLoader } from "three/examples/jsm/loaders/OBJLoader.js";
 import { MTLLoader } from "three/examples/jsm/loaders/MTLLoader.js";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { TrackballControls } from "three/examples/jsm/controls/TrackballControls.js";
+import { RoomEnvironment } from "three/examples/jsm/environments/RoomEnvironment.js";
 import { FilesetResolver, HandLandmarker } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14";
 
 // .glb and loose .gltf (+ .bin + textures) both go through GLTFLoader.
@@ -113,6 +114,7 @@ const directionalSlider = document.getElementById("directionalSlider");
 const azimuthSlider = document.getElementById("azimuthSlider");
 const elevationSlider = document.getElementById("elevationSlider");
 const ambientValue = document.getElementById("ambientValue");
+const fillLabel = document.getElementById("fillLabel");
 const directionalValue = document.getElementById("directionalValue");
 const azimuthValue = document.getElementById("azimuthValue");
 const elevationValue = document.getElementById("elevationValue");
@@ -132,6 +134,51 @@ const cameraPreviewEl = document.getElementById("cameraPreview");
 
 const flipWrapper = document.getElementById("flipWrapper");
 const flipButton = document.getElementById("flipButton");
+
+// ── On-demand rendering ───────────────────────────────────────────────────
+// The viewer used to redraw every rAF tick whether or not anything had moved,
+// so an artifact sitting open burned GPU continuously producing identical
+// frames. Now a frame is drawn only when something asks for one.
+//
+// Two mechanisms, because there are two kinds of change:
+//
+//   requestRender()  — one-shot. Something happened (slider moved, model
+//                      finished loading, texture arrived, window resized) and
+//                      the next frame must reflect it.
+//
+//   isAnimating()    — continuous. Something is mid-transition and will keep
+//                      changing on its own for a while, so keep drawing until
+//                      it settles.
+//
+// Camera motion needs NEITHER: OrbitControls and TrackballControls both fire
+// a 'change' event, wired to requestRender below. Damping means they keep
+// firing after the pointer is released and stop once the camera settles, so
+// inertia is covered for free.
+//
+// The failure mode to guard against is a frozen viewer — something changes
+// and nothing asks for a frame. When in doubt, call requestRender(): a
+// spurious frame costs one redraw, a missing one looks like a bug.
+let renderRequested = true; // draw at least once on startup
+
+function requestRender() {
+  renderRequested = true;
+}
+
+function isAnimating() {
+  // Flip is a timed tween, runs to completion.
+  if (flipAnim) return true;
+  // Hand tracking runs inference and moves the lens every frame.
+  if (trackingActive) return true;
+  // The magnifier fades out (uEnabled *= 0.85) after tracking stops, so it
+  // still needs frames once trackingActive is already false.
+  if (postMaterial.uniforms.uEnabled.value > 0) return true;
+  // The reveal spotlight lerps toward its target and is only at rest when it
+  // has arrived.
+  if (revealLight && Math.abs(revealLight.intensity - revealLightTargetIntensity) > 0.005) {
+    return true;
+  }
+  return false;
+}
 
 infoToggle.addEventListener("click", () => {
   const open = infoPanel.classList.toggle("open");
@@ -190,6 +237,7 @@ flipButton.addEventListener("click", () => {
   const from = flipPivot.rotation.y;
   flipAnim = { from, to: from + Math.PI, start: performance.now(), swapped: false };
   flipButton.disabled = true;
+  requestRender(); // isAnimating() carries it the rest of the way
 });
 
 function updateFlip() {
@@ -234,7 +282,12 @@ function loadBackSide(backPath, artifactType) {
       holder.visible = false;
       flipPivot.add(holder);
       backHolder = holder;
+      applyEnvironmentIntensity(backHolder);
       flipButton.disabled = false;
+      // Hidden until the flip, but request anyway: three uploads its textures
+      // on first draw, so paying that on a quiet frame keeps the flip smooth
+      // instead of stalling on the first frame that reveals it.
+      requestRender();
     },
     (err) => {
       // The front side is already usable — don't degrade it over a
@@ -246,7 +299,62 @@ function loadBackSide(backPath, artifactType) {
 }
 
 const LIGHT_RADIUS = 5;
-const DEFAULTS = { ambient: 1.6, directional: 1.4, azimuth: 45, elevation: 35 };
+// environment 0.40 / directional 1.0. Set from how the artifacts actually
+// read: above ~0.4 the papyrus washes out fast, because Reinhard desaturates
+// as it compresses and bare papyrus already has a high albedo (~0.52 linear),
+// so it runs up the flat part of the curve quickly.
+//
+// Note the key light is NOT a useful lever for overall brightness — measured,
+// dropping it 1.4 -> 0.8 moved papyrus only 186.4 -> 183.8, because Reinhard
+// is already compressing hard up there. Environment intensity is the one that
+// moves it, at the cost of some IBL specular (see INK_IOR).
+//
+// ── Why lighting is per artifact TYPE ────────────────────────────────────
+// Papyrus and tablets want opposite things, and one rig cannot serve both.
+//
+// Papyrus is FLAT with ink sitting on the surface. It has no relief to cast
+// shadows, so shadow contrast buys nothing and the only way to distinguish
+// ink from substrate is specular — hence image-based lighting, which is the
+// only thing that puts light in the mirror direction from every angle.
+//
+// A cuneiform tablet is the opposite: the content IS the relief. Incised
+// wedges are legible because they self-shadow, which is why raking light is
+// the standard for photographing inscriptions. Omnidirectional IBL fill
+// pours light into exactly those recesses and erases the shadows that make
+// the wedges readable — measured on mainDemotablet, the impressions went
+// visibly flat. Tablets also have a bright pale albedo that rides high on
+// the Reinhard curve, where per-channel compression desaturates hard and
+// turned the warm tan grey.
+//
+// So: papyrus gets IBL + Reinhard; everything else keeps the original
+// ambient + directional rig with no tone mapping. Dropping the environment
+// for tablets also removes ENVMAP from their shader entirely, which is a
+// meaningful fragment-cost saving on top of the visual fix.
+const LIGHTING_PROFILES = {
+  papyrus: {
+    label: "Environment light",
+    environment: 0.4,   // IBL — carries specular, needed for ink luster
+    ambient: 0.0,       // would only dilute the highlight contrast
+    directional: 1.0,
+    toneMapping: "reinhard",
+    exposure: 1.2
+  },
+  default: {            // tablets and anything else with real relief
+    label: "Ambient brightness",
+    environment: 0.0,   // no IBL: its fill destroys the self-shadowing
+    ambient: 1.6,
+    directional: 1.4,
+    toneMapping: "none",
+    exposure: 1.0
+  }
+};
+
+function lightingProfileFor(artifactType) {
+  return LIGHTING_PROFILES[artifactType] || LIGHTING_PROFILES.default;
+}
+
+let profile = LIGHTING_PROFILES.default;
+const DEFAULTS = { azimuth: 45, elevation: 35 };
 
 // azimuth: 0 = straight at the camera, ±90 = grazing the side — kept to
 // this half-range (see azimuthSlider's min/max in viewer.html) so the key
@@ -263,17 +371,68 @@ function lightPositionFromAngles(azimuthDeg, elevationDeg) {
 
 // Filled in once the scene exists, so the slider listeners (registered
 // immediately) can reach the lights that loadScene() creates later.
-let ambientLight = null;
 let keyLight = null;
+let ambientLight = null;
+
+// The fill slider is a 0..1.5 MULTIPLIER on whichever fill the active profile
+// uses — image-based light for papyrus, AmbientLight for everything else — so
+// 1.0 always means "the tuned level for this artifact type".
+//
+// Scene.environmentIntensity landed in three r163 and viewer.html pins
+// 0.158, so IBL intensity has to be pushed onto each material's
+// envMapIntensity instead — and re-pushed whenever a model loads, because the
+// loader creates those materials long after this listener is registered.
+let fillScale = 1.0;
+let envIntensity = 0.0;
+
+// Index of refraction for the ink binder. glTF pins dielectric F0 at 0.04
+// (n = 1.5) and KHR_materials_specular can only scale DOWN from it, so the
+// exported GLBs cap the ink's normal-incidence reflectance at 4% — and with
+// the shipped specular map's median of 0.137 the ink actually gets ~0.55%.
+// Cross-polarised capture strips the specular lobe out of the diffuse map by
+// construction, so a lustrous ink loses its sheen at capture time and the
+// specular path is then too weak to give it back: bronze renders as flat
+// paint-brown. Gum-arabic and metallic-pigment binders genuinely sit well
+// above n = 1.5, so raising ior is the physically-motivated way to restore
+// it. F0 = ((n-1)/(n+1))^2, so 2.2 -> 0.141, about 3.5x the glTF default.
+//
+// This is a viewer-side override standing in for the pipeline fix (baking
+// KHR_materials_ior at export). Remove it once the GLBs carry their own ior.
+const INK_IOR = 2.2;
+
+function applyEnvironmentIntensity(root) {
+  if (!root) return;
+  root.traverse((obj) => {
+    if (!obj.isMesh || !obj.material) return;
+    const materials = Array.isArray(obj.material) ? obj.material : [obj.material];
+    materials.forEach((m) => {
+      if ("envMapIntensity" in m) m.envMapIntensity = envIntensity;
+      // Guarded: only MeshPhysicalMaterial has ior, and only materials that
+      // actually carry a specular map have somewhere to put the extra F0.
+      if ("ior" in m && m.specularIntensityMap) m.ior = INK_IOR;
+    });
+  });
+}
+
+// Push the current fill level into whichever mechanism this profile uses.
+function applyFillLevel() {
+  envIntensity = profile.environment * fillScale;
+  if (ambientLight) ambientLight.intensity = profile.ambient * fillScale;
+  applyEnvironmentIntensity(frontHolder);
+  applyEnvironmentIntensity(backHolder);
+  requestRender();
+}
 
 ambientSlider.addEventListener("input", () => {
   ambientValue.textContent = ambientSlider.value;
-  if (ambientLight) ambientLight.intensity = parseFloat(ambientSlider.value);
+  fillScale = parseFloat(ambientSlider.value);
+  applyFillLevel();
 });
 
 directionalSlider.addEventListener("input", () => {
   directionalValue.textContent = directionalSlider.value;
   if (keyLight) keyLight.intensity = parseFloat(directionalSlider.value);
+  requestRender();
 });
 
 function updateKeyLightPosition() {
@@ -283,6 +442,7 @@ function updateKeyLightPosition() {
   keyLight.position.copy(
     lightPositionFromAngles(parseFloat(azimuthSlider.value), parseFloat(elevationSlider.value))
   );
+  requestRender();
 }
 azimuthSlider.addEventListener("input", updateKeyLightPosition);
 elevationSlider.addEventListener("input", updateKeyLightPosition);
@@ -334,7 +494,10 @@ async function loadBackgroundsList() {
 function getCubeTexture(bg) {
   if (cubeTextureCache.has(bg.id)) return cubeTextureCache.get(bg.id);
   const urls = CUBE_FACE_ORDER.map((face) => `backgrounds/${bg.faces[face]}`);
-  const texture = new THREE.CubeTextureLoader().load(urls, undefined, undefined, () => {
+  // The onLoad callback matters now: the texture arrives well after the frame
+  // that requested it, so without this the new background would not appear
+  // until something else happened to trigger a draw.
+  const texture = new THREE.CubeTextureLoader().load(urls, requestRender, undefined, () => {
     setStatus("Background failed to load.");
     fadeStatus();
   });
@@ -346,10 +509,12 @@ function applyBackgroundState() {
   if (!activeScene) return;
   if (!backgroundEnable.checked || backgrounds.length === 0) {
     activeScene.background = new THREE.Color(DEFAULT_BACKGROUND_COLOR);
+    requestRender();
     return;
   }
   const selected = backgrounds.find((bg) => bg.id === backgroundSelect.value) || backgrounds[0];
   activeScene.background = getCubeTexture(selected);
+  requestRender();
 }
 
 backgroundEnable.addEventListener("change", applyBackgroundState);
@@ -399,7 +564,8 @@ const postMaterial = new THREE.ShaderMaterial({
     uRadius: { value: 0.17 },
     uZoom: { value: LENS_ZOOM },
     uSoftness: { value: 0.028 },
-    uEnabled: { value: 0.0 }
+    uEnabled: { value: 0.0 },
+    uExposure: { value: 1.0 }
   },
   vertexShader: `
     varying vec2 vUv;
@@ -415,7 +581,24 @@ const postMaterial = new THREE.ShaderMaterial({
     uniform float uZoom;
     uniform float uSoftness;
     uniform float uEnabled;
+    uniform float uExposure;
     varying vec2 vUv;
+
+    // three.js force-disables tone mapping whenever it renders into a
+    // WebGLRenderTarget (WebGLPrograms.getParameters pins toneMapping to
+    // NoToneMapping unless currentRenderTarget === null). The base scene is
+    // drawn straight to the screen and IS tone mapped, so sceneTarget holds
+    // untone-mapped pixels — without re-applying the curve here the lens
+    // would show a brighter, clipped image than the frame around it. Must
+    // stay in sync with renderer.toneMapping below; ported from three's
+    // tonemapping_pars_fragment chunk so the two paths match exactly.
+    // uExposure <= 0 is the "this profile uses NoToneMapping" flag, in which
+    // case the base scene was drawn straight through and the lens must be too.
+    vec3 Reinhard(vec3 color) {
+      if (uExposure <= 0.0) return clamp(color, 0.0, 1.0);
+      color *= uExposure;
+      return clamp(color / (vec3(1.0) + color), 0.0, 1.0);
+    }
 
     void main() {
       vec2 delta = vUv - uCenter;
@@ -426,7 +609,7 @@ const postMaterial = new THREE.ShaderMaterial({
       zoomUv = clamp(zoomUv, vec2(0.0), vec2(1.0));
 
       vec4 zoomColor = texture2D(tDiffuse, zoomUv);
-      vec3 color = pow(max(zoomColor.rgb, vec3(0.0)), vec3(1.0 / 2.2));
+      vec3 color = pow(max(Reinhard(zoomColor.rgb), vec3(0.0)), vec3(1.0 / 2.2));
 
       float ringOuter = smoothstep(uRadius + 0.006, uRadius, dist);
       float ringInner = smoothstep(uRadius, uRadius - 0.006, dist);
@@ -497,6 +680,7 @@ async function startTracking() {
     await cameraPreviewEl.play();
 
     trackingActive = true;
+    requestRender(); // isAnimating() takes over from here and keeps frames coming
     revealLightTargetIntensity = 0;
     gestureLabelEl.classList.add("visible");
     handTrackingStart.disabled = true;
@@ -536,6 +720,11 @@ function stopTracking() {
 
   setStatus("Tracking stopped");
   fadeStatus();
+
+  // Everything above is snapped straight to 0, so isAnimating() goes false
+  // immediately. Without this one explicit request the last drawn frame — the
+  // one still showing the lens and spotlight — would stay on screen.
+  requestRender();
 }
 
 handTrackingStart.addEventListener("click", startTracking);
@@ -704,10 +893,76 @@ function loadScene(modelPath, mtlPath, artifactType, backPath) {
   camera.position.set(0, 0, 3);
   activeCamera = camera;
 
+  profile = lightingProfileFor(artifactType);
+
   const renderer = new THREE.WebGLRenderer({ antialias: true });
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  // Capped at 1.5, not 2. Fragment count scales with the SQUARE of this, so
+  // 2.0 -> 1.5 is a 44% cut in shaded pixels — the cheapest single lever on
+  // a viewer that redraws every frame, and on a HiDPI panel the difference
+  // is hard to see next to MSAA.
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
   renderer.setSize(window.innerWidth, window.innerHeight);
   document.body.prepend(renderer.domElement);
+
+  // Tone mapping is per artifact type (see LIGHTING_PROFILES).
+  //
+  // Reinhard, NOT ACES — and this is the important part.
+  //
+  // ACES is a film LOOK transform: its S-curve has a deliberate shadow toe.
+  // RRTAndODTFit maps 0.02 -> 0.0032 (6x darker) but 0.5 -> 0.374 (0.75x),
+  // so it crushes darks ~8x harder than midtones. On a manuscript the ink
+  // IS the content, so that toe destroys exactly what people came to read.
+  // Measured on sample-papyrus, ink region vs bare papyrus:
+  //
+  //   config              ink mean   ink detail (SD)   papyrus
+  //   no env, no TM          22.4         7.3           164.2
+  //   env + ACES @0.55       19.5         5.1           190.8   <- ink DARKER
+  //   env + ACES @1.00       26.8        13.5           218.6      than baseline
+  //   env + Reinhard @1.2    34.1        21.6           186.2
+  //   env + no tone mapping  32.6        19.8           226.9   (3.35% clipped)
+  //
+  // Reinhard is x/(1+x): derivative 1.0 at the origin, so it has no toe at
+  // all and leaves shadow slope intact while still compressing highlights.
+  // It beats ACES on every ink metric at the same saturation cost, and
+  // unlike NoToneMapping it keeps headroom for when the specular maps get
+  // their real magnitude (see the ior/roughness pipeline work).
+  //
+  // Tablets skip it: their pale albedo rides high on the curve where
+  // per-channel compression desaturates, which greyed out the warm tan.
+  //
+  // Keep the lens shader's Reinhard() in sync if this operator changes.
+  const usesReinhard = profile.toneMapping === "reinhard";
+  renderer.toneMapping = usesReinhard ? THREE.ReinhardToneMapping : THREE.NoToneMapping;
+  renderer.toneMappingExposure = profile.exposure;
+  // The lens re-applies the curve by hand because three disables tone mapping
+  // when rendering to a target; 0 exposure is the flag for "no curve".
+  postMaterial.uniforms.uExposure.value = usesReinhard ? profile.exposure : 0.0;
+
+  // Image-based lighting. A DirectionalLight is a zero-solid-angle source:
+  // it produces a highlight only where the half-vector lands on the surface
+  // normal, which for a camera-facing plane means one corner of the
+  // azimuth/elevation range — and no roughness value gains more than ~1.5x
+  // off that peak. An environment has radiance in every direction, so there
+  // is always something in the mirror direction no matter how the artifact
+  // turns. That, not the key light, is what makes a 4%-reflectance
+  // dielectric read as glossy. RoomEnvironment is procedural HDR, so it
+  // needs no asset and (unlike the LDR background cubemaps, which clip at
+  // 1.0) it carries the dynamic range that makes a 4% reflection visible.
+  //
+  // Pass the renderer: on three 0.158 RoomEnvironment's constructor reads
+  // renderer._useLegacyLights to choose its internal light intensity (5 vs
+  // 900). Omitting it leaves the legacy value and the environment comes out
+  // ~180x too dim. The arg is harmless on newer three, where the
+  // constructor takes none.
+  //
+  // Skipped entirely when the profile doesn't use it (tablets): no PMREM
+  // generation at load, and no ENVMAP_TYPE_CUBE_UV in the compiled shader,
+  // so those artifacts pay none of the per-fragment IBL cost.
+  if (profile.environment > 0) {
+    const pmrem = new THREE.PMREMGenerator(renderer);
+    scene.environment = pmrem.fromScene(new RoomEnvironment(renderer), 0.04).texture;
+    pmrem.dispose();
+  }
 
   // Render target the hand-tracking lens samples from (see animate()).
   const drawingBufferSize = new THREE.Vector2();
@@ -747,16 +1002,37 @@ function loadScene(modelPath, mtlPath, artifactType, backPath) {
     controls.handleResize();
   }
 
-  ambientLight = new THREE.AmbientLight(0xffffff, DEFAULTS.ambient);
+  // Both control types fire 'change' whenever they actually move the camera —
+  // guarded by an epsilon internally, so damping/inertia keeps firing while
+  // the camera settles and goes quiet once it stops. This single line is what
+  // makes orbiting and zooming feel identical to the always-on version.
+  controls.addEventListener("change", requestRender);
+
+  // AmbientLight only exists for profiles that use it (tablets). For papyrus
+  // its intensity is 0, since scene.environment supplies indirect light and
+  // carries specular too — a flat diffuse term on top would only dilute the
+  // highlight contrast the environment buys.
+  ambientLight = new THREE.AmbientLight(0xffffff, profile.ambient);
   scene.add(ambientLight);
 
-  keyLight = new THREE.DirectionalLight(0xffffff, DEFAULTS.directional);
+  keyLight = new THREE.DirectionalLight(0xffffff, profile.directional);
   keyLight.position.copy(lightPositionFromAngles(DEFAULTS.azimuth, DEFAULTS.elevation));
   scene.add(keyLight);
 
-  const fillLight = new THREE.DirectionalLight(0xffffff, 0.6);
+  // The back fill is a bulk fill for tablets (which have no IBL to fill their
+  // shadow side) but only a gentle accent for papyrus, where the environment
+  // already fills from every direction.
+  const fillLight = new THREE.DirectionalLight(0xffffff, profile.environment > 0 ? 0.25 : 0.6);
   fillLight.position.set(-3, -2, -4);
   scene.add(fillLight);
+
+  // Sync the UI to the profile the artifact actually got.
+  fillLabel.textContent = profile.label;
+  directionalSlider.value = profile.directional;
+  directionalValue.textContent = profile.directional.toFixed(2);
+  ambientSlider.value = fillScale;
+  ambientValue.textContent = fillScale.toFixed(2);
+  applyFillLevel();
 
   loadModel(
     modelPath,
@@ -764,6 +1040,7 @@ function loadScene(modelPath, mtlPath, artifactType, backPath) {
     (model) => {
       const { holder, size } = makeSideHolder(model, artifactType);
       frontHolder = holder;
+      applyEnvironmentIntensity(frontHolder);
       modelHitMeshes = collectHitMeshes(frontHolder);
 
       flipPivot = new THREE.Group();
@@ -782,6 +1059,7 @@ function loadScene(modelPath, mtlPath, artifactType, backPath) {
       scene.add(flipPivot);
       setStatus("Model loaded");
       fadeStatus();
+      requestRender();
 
       if (backPath) loadBackSide(backPath, artifactType);
     },
@@ -799,11 +1077,20 @@ function loadScene(modelPath, mtlPath, artifactType, backPath) {
     sceneTarget.setSize(drawingBufferSize.x, drawingBufferSize.y);
     // TrackballControls caches the viewport size for its rotate/pan math.
     if (controls.handleResize) controls.handleResize();
+    requestRender();
   });
 
   function animate() {
     requestAnimationFrame(animate);
+
+    // controls.update() runs EVERY tick even when we skip the draw: it is what
+    // applies damping and fires the 'change' event that calls requestRender.
+    // Gate it behind the skip and inertia would stall the moment we stopped
+    // drawing. It is CPU-only maths — the expensive part is the draw below.
     controls.update();
+
+    if (!renderRequested && !isAnimating()) return;
+    renderRequested = false;
 
     updateFlip();
     updateHandPoint();

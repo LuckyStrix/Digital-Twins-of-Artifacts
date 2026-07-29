@@ -9,6 +9,30 @@ This system was built from work started during the 2025-26 Freshman Imaging Proj
 3D/ is primarily for scanning Cuneiform Tablets, but can be used for any 3D object placed on it.
 2D/ is primarily for Papyrus Manuscripts, but can be used for any object that doesn't need thickness or height in the output, just detail
 
+## System overview
+
+Which rig an artifact uses depends on whether its shape carries meaning in
+three dimensions. Both run capture → an automated modeling pipeline → the
+shared web viewer, but the rig hardware and pipeline stages differ:
+
+```mermaid
+flowchart LR
+    subgraph SysA["2D — Photometric Stereo (papyrus, flat manuscripts)"]
+        direction LR
+        a1["DSLR + 4-light array<br/>+ polarizer rig"] --> a2["5-stage photometric-<br/>stereo pipeline"] --> a3["render.glb"]
+    end
+    subgraph SysB["3D — Photogrammetry (cuneiform tablets, objects)"]
+        direction LR
+        b1["Multi-camera rig<br/>+ turntable"] --> b2["4-stage COLMAP<br/>reconstruction pipeline"] --> b3["model.gltf"]
+    end
+    a3 --> V[["Web viewer<br/>(website/)"]]
+    b3 --> V
+```
+
+For the hardware + pipeline breakdown of each system, including how each one
+behaves at runtime, see [`2D/README.md`](2D/README.md#how-it-works) and
+[`3D/README.md`](3D/README.md#how-it-works).
+
 ## Repository layout
 
 ```

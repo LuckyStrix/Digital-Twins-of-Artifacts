@@ -1,20 +1,6 @@
 {
   "artifacts": [
     {
-      "id": "example-papyrus-back",
-      "name": "Book of the Dead Fragment (Demo Artifact - Back)",
-      "type": "papyrus",
-      "description": "This is a placeholder artifact included so the gallery and 3D viewer have something to display out of the box. Delete this whole folder once real artifacts from the modeling pipeline have been added.\n\nIt stands in for a fragment of an ancient Egyptian funerary papyrus scroll, and demonstrates how an artifact's name, type, and description flow from a folder in artifacts/ into a gallery card and viewer page.",
-      "model": "example-papyrus-back/model.glb"
-    },
-    {
-      "id": "example-papyrus-demo",
-      "name": "Book of the Dead Fragment (Demo Artifact)",
-      "type": "papyrus",
-      "description": "This is a placeholder artifact included so the gallery and 3D viewer have something to display out of the box. Delete this whole folder once real artifacts from the modeling pipeline have been added.\n\nIt stands in for a fragment of an ancient Egyptian funerary papyrus scroll, and demonstrates how an artifact's name, type, and description flow from a folder in artifacts/ into a gallery card and viewer page.",
-      "model": "example-papyrus-demo/model.glb"
-    },
-    {
       "id": "bubble_wrap",
       "name": "Bubble Wrap",
       "type": "papyrus",
@@ -77,6 +63,20 @@
       "type": "tablet",
       "description": "This is a placeholder artifact lent to us by the RIT Cary Graphic Arts Collection to test our systems with, and is a sample of what a real cuneiform tablet may look like.",
       "model": "demoTablet3/demo3.glb"
+    },
+    {
+      "id": "waxSeal1_papyrus",
+      "name": "Wax Seal 1",
+      "type": "papyrus",
+      "description": "A wax seal provided to us for testing",
+      "model": "waxSeal1_papyrus/29-07-26_12-07-08.glb"
+    },
+    {
+      "id": "waxSeal2_papyrus",
+      "name": "Wax Seal 2",
+      "type": "papyrus",
+      "description": "A wax seal provided to us for testing",
+      "model": "waxSeal2_papyrus/29-07-26_12-30-24.glb"
     }
   ]
 }

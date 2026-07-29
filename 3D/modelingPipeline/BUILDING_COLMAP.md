@@ -4,7 +4,7 @@ The `3D/` pipeline needs GPU-accelerated dense reconstruction, so it wants a
 **CUDA-enabled COLMAP**. The distro package (`sudo apt install colmap`) is
 **CPU-only** and won't do — you must build COLMAP from source with CUDA and put
 the result where `run.sh` expects it: an executable named **`colmap_local`** in
-`3D/Modeling/` (this file's directory).
+`3D/modelingPipeline/` (this file's directory).
 
 `colmap_local` is intentionally **not committed** (it's git-ignored) — everyone
 builds it for their own GPU.
@@ -116,7 +116,7 @@ Then make the fresh binary discoverable, either by symlinking it to the
 expected path:
 
 ```bash
-ln -sf "$(pwd)/build/src/colmap/exe/colmap" /path/to/3D/Modeling/colmap_local
+ln -sf "$(pwd)/build/src/colmap/exe/colmap" /path/to/3D/modelingPipeline/colmap_local
 ```
 
 or by pointing the pipeline at it via environment variable:

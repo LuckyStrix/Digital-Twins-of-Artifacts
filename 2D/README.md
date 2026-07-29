@@ -12,6 +12,49 @@ code and differ only in how they drive the capture rig:
 - **`run_linux.py`** — Linux build (native gphoto2/dcraw on PATH, serial port
   `/dev/ttyACM0`). See [Linux](#linux) below.
 
+## How it works
+
+```mermaid
+flowchart TD
+    subgraph Rig["Capture rig — backend/capture"]
+        Cam["DSLR, tethered via gphoto2"]
+        Ard["Arduino: N/E/S/W lights + polarizer stepper"]
+    end
+    Rig -->|"8 directional-light TIFFs<br/>(cross- + co-polarized)"| S0
+
+    subgraph Pipeline["Modeling pipeline — backend/modeling"]
+        S0["Stage 0: Alpha Mask<br/>ML segmentation"] --> S1["Stage 1: Lighting Calibration<br/>flat copy-paper correction"]
+        S1 --> S2["Stage 2: Core Maps<br/>Normal / Diffuse / Specular / Roughness"]
+        S2 --> S3["Stage 3: Height Map<br/>weighted Frankot-Chellappa integration"]
+        S3 --> S4["Stage 4: Prep for Rendering<br/>rotate + pad"]
+    end
+    S4 --> R["Rendering — backend/rendering<br/>Three.js/Vite bakes render.glb"]
+    R --> V["Interactive web viewer"]
+```
+
+**How it runs day to day:**
+- `run.py` / `run_linux.py` is a single launcher whose buttons run top to
+  bottom: select a working image set → (optional) Open Focus Viewer → Capture
+  Calibration (once per rig setup) → Capture Scroll → Run Modeling Pipeline →
+  Build 3D Model → Open Viewer.
+- The **active working folder** holds one scan set; the pipeline reads and
+  writes only inside it (`maps/` from modeling, `model/render.glb` from
+  rendering), so each scan set is self-contained and a fresh capture just
+  starts its own timestamped folder under `data/`.
+- Ticking **"Scan both sides of the object"** shoots two scan sets (pausing
+  for you to flip the object) into `side1/`/`side2/` subfolders, and modeling
+  + rendering then run once per side. Leaving it unticked keeps the older
+  single-scan-set behavior.
+- The individual numbered steps always force a re-run; **"Run Everything"**
+  and selecting a working image set instead skip any stage whose output
+  already exists in that folder — handy for resuming after Stage 2 or 3 fails
+  without redoing an earlier stage.
+- Stage 0 (background removal) auto-detects the GPU: the run log prints
+  `Device : CUDA` when `onnxruntime` reports a `CUDAExecutionProvider`, or
+  `Device : CPU` otherwise — no config needed either way, only the installed
+  wheels differ (see [GPU acceleration](#gpu-acceleration-optional--cuda--nvcc)
+  below).
+
 ## Prerequisites
 
 ### Windows

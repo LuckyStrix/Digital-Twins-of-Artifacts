@@ -6,7 +6,7 @@ server-side code required to host it.
 ## Structure
 
 ```
-index.html          Homepage: header, artifact gallery, "Our Systems" (blank), contact footer
+index.html          Homepage: header, artifact gallery, "Our Systems", contact footer
 viewer.html          Generic 3D viewer for a single artifact (?id=<artifact-folder-name>)
 css/style.css         All styles for both pages
 js/main.js            Loads artifacts/manifest.json and renders the gallery cards
@@ -89,14 +89,6 @@ costs a single redraw. When unsure, call it.
 
 ## To fill in
 
-- `index.html` — `#project-name` and `#project-description` in the
-  header, and the contact info in the footer (`#contact`), are
-  placeholder text marked with `[ ... ]`. Replace them.
-- `#systems` in `index.html` is an intentionally empty section for
-  information about your capture/modeling systems.
-- `artifacts/example-papyrus-demo/` is a placeholder artifact so the
-  gallery isn't empty on first load — delete it once real artifacts
-  are in place, then rerun the build script.
 - `backgrounds/demo-colors/` is a placeholder cube map (six flat
   colors) so the Background panel has something to show — delete it
   once you've added real cube maps, then rerun the build script.

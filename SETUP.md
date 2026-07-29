@@ -77,7 +77,7 @@ WSLg for the GUI and CUDA-on-WSL for GPU-accelerated COLMAP).
    Use **24.04 specifically** — do not install the default/latest `Ubuntu`
    (currently 26.04). CUDA's `nvcc` only supports GCC ≤ 13, but Ubuntu 26.04
    defaults to GCC 15, which leaves the COLMAP build unable to link (see
-   [`3D/Modeling/BUILDING_COLMAP.md`](3D/Modeling/BUILDING_COLMAP.md)). 24.04 ships
+   [`3D/modelingPipeline/BUILDING_COLMAP.md`](3D/modelingPipeline/BUILDING_COLMAP.md)). 24.04 ships
    GCC 13 and is the supported toolchain.
 
    Official guide: https://learn.microsoft.com/windows/wsl/install

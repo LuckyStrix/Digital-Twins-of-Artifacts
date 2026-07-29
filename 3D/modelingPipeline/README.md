@@ -77,7 +77,9 @@ Mirrors the `app.py` module docstring:
 
 ```
 app.py                  Tkinter reconstruction-pipeline GUI (4 stages)
+app_defaults.json       Last-used GUI field values, saved/restored between runs
 process_photos.py       Stage 1: background removal
+erode_masks.py          Re-erode already-generated masks without rerunning Stage 1
 run.sh                  Stage 2 orchestrator (COLMAP; resolves colmap binary)
 src/check_config.sh     Dependency checker (invoked by run.sh)
 src/main.sh             COLMAP MVS + meshing driver

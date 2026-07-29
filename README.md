@@ -3,8 +3,8 @@ Digital Twins of Artifacts is a comprehensive system for creating 2D and 3D mode
 
 This system was built from work started during the 2025-26 Freshman Imaging Project class ("FIP"), a two-semester class where Imaging Science and Motion Picture Science freshmen are given an open-ended problem to solve, and spend the class researching and developing a solution. The group worked diligently to lay the foundation for the system. The summer after, Carter & Iris stayed to continue improving and integrating the systems during the 2026 Extended Freshman Imaging Project ("E-FIP"), a 10-week summer program funded by the Charles and Karin Hoffman Endowed Fund.
 
-<img src="Research_Symposium_Documents/PCapSystemPhoto.jpg" alt="The four-light papyrus capture system" width="500">
-<img src="Research_Symposium_Documents/IMG_8873.JPG" alt="The turntable-based tablet capture system" width="500">
+<img src="Research_Symposium_Documents/PCapSystemPhoto.jpg" alt="A papyrus manuscript on an imaging stage with curtains to block external light. There are four lights poitioned above it at an angle, one from each direction. A camera is mounted directly above, pointing straight downwards." width="400">
+<img src="Research_Symposium_Documents/IMG_8873.JPG" alt="A cuneiform tablet rests on a turntable, illuminated by even lighting. Two cameras are pointed at it from one side, one at a shallow angle and the other at a steeper angle. A dome rests on top of the entire setup to block external light and assist in spreading the light evenly." width="400">
 
 3D/ is primarily for scanning Cuneiform Tablets, but can be used for any 3D object placed on it.
 2D/ is primarily for Papyrus Manuscripts, but can be used for any object that doesn't need thickness or height in the output, just detail

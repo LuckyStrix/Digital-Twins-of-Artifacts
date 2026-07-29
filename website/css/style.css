@@ -284,6 +284,35 @@ main {
   align-self: flex-start;
 }
 
+.system-photo {
+  display: block;
+  width: 100%;
+  height: 190px;
+  object-fit: cover;
+  border-radius: 10px;
+  margin: 0 0 18px;
+  box-shadow: 0 3px 10px var(--shadow);
+}
+
+.system-photo-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin: 0 0 18px;
+}
+
+.system-photo-grid .system-photo {
+  margin: 0;
+  height: 150px;
+}
+
+.system-photo-caption {
+  margin: -12px 0 18px;
+  font-size: 0.8rem;
+  font-style: italic;
+  opacity: 0.65;
+}
+
 .system-card h3 {
   margin: 0 0 12px;
   font-family: var(--font-heading);

@@ -15,19 +15,7 @@ Which rig an artifact uses depends on whether its shape carries meaning in
 three dimensions. Both run capture → an automated modeling pipeline → the
 shared web viewer, but the rig hardware and pipeline stages differ:
 
-```mermaid
-flowchart LR
-    subgraph SysA["2D — Photometric Stereo (papyrus, flat manuscripts)"]
-        direction LR
-        a1["DSLR + 4-light array<br/>+ polarizer rig"] --> a2["5-stage photometric-<br/>stereo pipeline"] --> a3["render.glb"]
-    end
-    subgraph SysB["3D — Photogrammetry (cuneiform tablets, objects)"]
-        direction LR
-        b1["Multi-camera rig<br/>+ turntable"] --> b2["4-stage COLMAP<br/>reconstruction pipeline"] --> b3["model.gltf"]
-    end
-    a3 --> V[["Web viewer<br/>(website/)"]]
-    b3 --> V
-```
+<img src="docs/diagrams/system-overview.svg" alt="Diagram: the 2D photometric-stereo system (papyrus) runs a light-array rig into a 5-stage pipeline producing render.glb, and the 3D photogrammetry system (tablets) runs a multi-camera turntable rig into a 4-stage COLMAP pipeline producing model.gltf; both feed the shared web viewer.">
 
 For the hardware + pipeline breakdown of each system, including how each one
 behaves at runtime, see [`2D/README.md`](2D/README.md#how-it-works) and

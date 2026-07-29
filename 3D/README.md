@@ -6,21 +6,7 @@ the rig): multi-camera capture → COLMAP reconstruction → meshed model. See t
 
 ## How it works
 
-```mermaid
-flowchart TD
-    subgraph Rig["Capture rig — captureApp/capture_app_parallel.py + arduinoCode/"]
-        Cams["Canon DSLRs, gphoto2"]
-        Turn["Arduino-driven turntable"]
-    end
-    Rig -->|"per-angle photos, one set per side"| S1
-
-    subgraph Pipeline["Reconstruction pipeline — modelingPipeline/app.py"]
-        S1["1. Background Removal<br/>process_photos.py"] --> S2["2. COLMAP MVS<br/>run.sh — CUDA SfM + dense stereo, per side"]
-        S2 --> S3["3. FPFH Alignment<br/>alignment/run.py → merged_fpfh.ply"]
-        S3 --> S4["4. Mesh Reconstruction<br/>src/reconstruct_mesh.py → model.gltf"]
-    end
-    S4 --> V["Interactive web viewer<br/>(website/)"]
-```
+<img src="../docs/diagrams/3d-pipeline.svg" alt="Diagram: the multi-camera turntable rig feeds the 4-stage COLMAP reconstruction pipeline (1 Clean, 2 Reconstruct, 3 Align, 4 Mesh), which produces the model.gltf mesh.">
 
 **How it runs day to day:**
 - `modelingPipeline/app.py` is a single Tkinter GUI that runs the four stages

@@ -14,23 +14,7 @@ code and differ only in how they drive the capture rig:
 
 ## How it works
 
-```mermaid
-flowchart TD
-    subgraph Rig["Capture rig — backend/capture"]
-        Cam["DSLR, tethered via gphoto2"]
-        Ard["Arduino: N/E/S/W lights + polarizer stepper"]
-    end
-    Rig -->|"8 directional-light TIFFs<br/>(cross- + co-polarized)"| S0
-
-    subgraph Pipeline["Modeling pipeline — backend/modeling"]
-        S0["Stage 0: Alpha Mask<br/>ML segmentation"] --> S1["Stage 1: Lighting Calibration<br/>flat copy-paper correction"]
-        S1 --> S2["Stage 2: Core Maps<br/>Normal / Diffuse / Specular / Roughness"]
-        S2 --> S3["Stage 3: Height Map<br/>weighted Frankot-Chellappa integration"]
-        S3 --> S4["Stage 4: Prep for Rendering<br/>rotate + pad"]
-    end
-    S4 --> R["Rendering — backend/rendering<br/>Three.js/Vite bakes render.glb"]
-    R --> V["Interactive web viewer"]
-```
+<img src="../docs/diagrams/2d-pipeline.svg" alt="Diagram: the DSLR + Arduino lighting rig feeds the 5-stage photometric-stereo pipeline (0 Segment, 1 Calibrate, 2 Core maps, 3 Height, 4 Bake), which produces the render.glb model.">
 
 **How it runs day to day:**
 - `run.py` / `run_linux.py` is a single launcher whose buttons run top to

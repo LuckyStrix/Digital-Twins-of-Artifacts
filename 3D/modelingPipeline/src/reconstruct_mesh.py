@@ -24,6 +24,7 @@ import json
 import os
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import numpy as np
@@ -304,6 +305,18 @@ def parse_args() -> argparse.Namespace:
     )
 
     parser.add_argument(
+        "--normalize-pose",
+        type=int,
+        default=int(os.environ.get("FIPMESH_RECON_NORMALIZE_POSE", "0")),
+        help=(
+            "Recenter the mesh (and cleaned cloud) at the origin and rotate it via PCA "
+            "so its largest cross-section lies in the XY plane, thickness along Z -- "
+            "i.e. orient the tablet flat, like a coin lying on a table. Applied once, "
+            "before decimation/texturing, so it carries through to every exported "
+            "variant (0/1, default: 0)."
+        ),
+    )
+    parser.add_argument(
         "--mirror-backfill",
         choices=("none", "x", "y", "z", "auto"),
         default="none",
@@ -364,6 +377,17 @@ def parse_args() -> argparse.Namespace:
             "Path to camera_centers.json produced by run_colmap_mvs.py. "
             "When provided, normals are oriented toward camera positions instead of "
             "using the centroid heuristic. Env: FIPMESH_CAMERA_CENTERS."
+        ),
+    )
+    parser.add_argument(
+        "--side1-camera-centers",
+        default=os.environ.get("FIPMESH_SIDE1_CAMERA_CENTERS", ""),
+        help=(
+            "Path to side 1's camera_centers.json (produced by run_colmap_mvs.py for "
+            "the side-1 COLMAP run). Only used when --normalize-pose is enabled: after "
+            "flattening, if side 1's cameras ended up on the -Z side, the mesh is "
+            "rotated 180 degrees so side 1 faces +Z (up) -- without mirroring the "
+            "geometry. Env: FIPMESH_SIDE1_CAMERA_CENTERS."
         ),
     )
     return parser.parse_args()
@@ -574,6 +598,60 @@ def apply_mirror_backfill(points: np.ndarray, axis: str) -> tuple[np.ndarray, fl
     _, unique_idx = np.unique(quantized, axis=0, return_index=True)
     unique_idx.sort()
     return merged[unique_idx], pivot
+
+
+def load_camera_centers(path: str) -> list[list[float]]:
+    """Load a camera_centers.json (list of [x, y, z]) written by run_colmap_mvs.py.
+    Returns [] if `path` is blank or unreadable."""
+    path = str(path).strip()
+    if not path:
+        return []
+    try:
+        with open(path) as f:
+            centers = json.load(f)
+        print(f"camera centers loaded: {len(centers)} from {path}")
+        return centers
+    except Exception as exc:
+        print(f"warning: could not load camera centers from {path}: {exc}", file=sys.stderr)
+        return []
+
+
+def orient_up_towards_side1(mesh, pcd, pose_transform: np.ndarray,
+                             side1_camera_centers: list[list[float]]) -> bool:
+    """After `pose_transform` has flattened the cloud onto the XY plane, flip it
+    180 degrees (about X) if side 1's cameras ended up on the -Z side, so side 1
+    consistently ends up facing +Z. A 180-degree rotation (rather than negating a
+    single axis) keeps the transform a proper rotation, so the mesh is reoriented,
+    never mirrored. Returns True if a flip was applied."""
+    if not side1_camera_centers:
+        return False
+    centers = np.asarray(side1_camera_centers, dtype=np.float64)
+    avg_center = np.append(centers.mean(axis=0), 1.0)
+    local_z = float((pose_transform @ avg_center)[2])
+    if local_z >= 0:
+        return False
+    flip_180_x = np.diag([1.0, -1.0, -1.0, 1.0])
+    mesh.transform(flip_180_x)
+    pcd.transform(flip_180_x)
+    return True
+
+
+def compute_pca_pose(points: np.ndarray) -> np.ndarray:
+    """4x4 rigid transform that recenters `points` at the origin and rotates them
+    so the two largest-variance axes span X/Y and the smallest-variance
+    (thickness) axis lies along Z -- i.e. the largest cross-section ends up in
+    the XY plane, like a coin lying flat on a table."""
+    centroid = points.mean(axis=0)
+    cov = np.cov((points - centroid).T)
+    eigvals, eigvecs = np.linalg.eigh(cov)  # ascending eigenvalues
+    order = np.argsort(eigvals)[::-1]       # descending variance: X, Y, Z(=thinnest)
+    rotation = eigvecs[:, order]
+    if np.linalg.det(rotation) < 0:         # keep it a proper (non-mirroring) rotation
+        rotation[:, -1] *= -1.0
+    transform = np.eye(4)
+    transform[:3, :3] = rotation.T
+    transform[:3, 3] = -rotation.T @ centroid
+    return transform
 
 
 def orient_normals_outward_from_centroid(pcd: o3d.geometry.PointCloud) -> None:
@@ -1355,6 +1433,15 @@ def transfer_vertex_colors_from_point_cloud(
 
 def main() -> int:
     args = parse_args()
+
+    t_start = time.time()
+    _t_prev = [t_start]
+
+    def _step(name: str) -> None:
+        now = time.time()
+        print(f"[step] {name}  (prev stage: {now - _t_prev[0]:.1f}s)")
+        _t_prev[0] = now
+
     input_path = Path(args.input)
     output_path = Path(args.output)
     clean_cloud_path = Path(args.output_clean_cloud) if args.output_clean_cloud else None
@@ -1394,7 +1481,7 @@ def main() -> int:
 
     max_input_points = int(args.max_input_points)
     if max_input_points > 0 and len(points) > max_input_points:
-        print("[step] random downsample (point cap)")
+        _step("random downsample (point cap)")
         rng = np.random.default_rng(seed=0)
         keep_idx = rng.choice(len(points), size=max_input_points, replace=False)
         keep_idx.sort()
@@ -1403,7 +1490,7 @@ def main() -> int:
         print(f"point cap target:     {max_input_points}")
         print(f"points after cap:     {len(points)}")
 
-    print("[step] input")
+    _step("input")
     print(f"input points raw:    {len(points_raw)}")
     print(f"input points uniq:   {len(points)}")
     print(f"input colors:        {'yes' if input_has_colors else 'no'}")
@@ -1411,12 +1498,12 @@ def main() -> int:
         print(f"sanitize removed:    {removed_sanitize}")
 
     if args.voxel_size > 0:
-        print("[step] voxel downsample")
+        _step("voxel downsample")
         pcd = pcd.voxel_down_sample(voxel_size=args.voxel_size)
         print(f"points after voxel:  {len(pcd.points)}")
 
     if args.outlier_std_ratio > 0 and args.outlier_nb_neighbors > 0:
-        print("[step] statistical outlier removal")
+        _step("statistical outlier removal")
         pcd, _ = pcd.remove_statistical_outlier(
             nb_neighbors=max(3, int(args.outlier_nb_neighbors)),
             std_ratio=float(args.outlier_std_ratio),
@@ -1434,7 +1521,7 @@ def main() -> int:
         if radius <= 0 and med_nn > 0:
             radius = med_nn * max(0.5, float(args.radius_outlier_radius_factor))
         if radius > 0:
-            print("[step] radius outlier removal")
+            _step("radius outlier removal")
             pcd, _ = pcd.remove_radius_outlier(
                 nb_points=max(2, int(args.radius_outlier_nb_points)),
                 radius=radius,
@@ -1449,7 +1536,7 @@ def main() -> int:
             save_snapshot(output_path, "02_radius_outliers_removed", pcd)
 
     if args.crop_quantile > 0:
-        print("[step] bbox quantile crop")
+        _step("bbox quantile crop")
         pcd = pcd_from_points(quantile_crop_points(np.asarray(pcd.points), args.crop_quantile))
         print(f"crop quantile:       {args.crop_quantile:g}")
         print(f"points after crop:   {len(pcd.points)}")
@@ -1465,7 +1552,7 @@ def main() -> int:
         if db_eps <= 0 and med_nn > 0:
             db_eps = med_nn * max(1.0, float(args.dbscan_eps_factor))
         if db_eps > 0:
-            print("[step] cluster cleanup (DBSCAN)")
+            _step("cluster cleanup (DBSCAN)")
             pcd, db_info = cluster_cleanup_point_cloud(
                 pcd,
                 eps=db_eps,
@@ -1484,7 +1571,7 @@ def main() -> int:
                 return 4
             med_nn = median_nn_distance(pcd)
     elif args.dbscan_min_points > 0 and not dbscan_allowed:
-        print("[step] cluster cleanup (DBSCAN)")
+        _step("cluster cleanup (DBSCAN)")
         print(
             "dbscan skipped:      "
             f"point count {len(pcd.points)} exceeds dbscan-max-points={dbscan_guard}"
@@ -1494,7 +1581,7 @@ def main() -> int:
     mirror_pivot = np.nan
     auto_ratio = np.nan
     if args.mirror_backfill != "none":
-        print("[step] optional mirror backfill")
+        _step("optional mirror backfill")
         work_points = np.asarray(pcd.points)
         selected_axis = args.mirror_backfill
         if args.mirror_backfill == "auto":
@@ -1515,17 +1602,10 @@ def main() -> int:
         normal_radius = auto_normal_radius(np.asarray(pcd.points))
     normal_radius = max(normal_radius, 1e-6)
 
-    camera_centers: list[list[float]] = []
-    camera_centers_path = str(args.camera_centers).strip() if args.camera_centers else ""
-    if camera_centers_path:
-        try:
-            with open(camera_centers_path) as _cc_f:
-                camera_centers = json.load(_cc_f)
-            print(f"camera centers loaded: {len(camera_centers)} from {camera_centers_path}")
-        except Exception as _cc_exc:
-            print(f"warning: could not load camera centers from {camera_centers_path}: {_cc_exc}", file=sys.stderr)
+    camera_centers = load_camera_centers(args.camera_centers)
+    side1_camera_centers = load_camera_centers(args.side1_camera_centers)
 
-    print("[step] estimate + orient normals")
+    _step("estimate + orient normals")
     pcd.estimate_normals(
         search_param=o3d.geometry.KDTreeSearchParamHybrid(
             radius=normal_radius,
@@ -1546,13 +1626,13 @@ def main() -> int:
     print(f"normal orient mode:  {normal_orient_mode}")
 
     if clean_cloud_path is not None:
-        print("[step] write cleaned cloud")
+        _step("write cleaned cloud")
         ensure_parent(str(clean_cloud_path))
         ok_cloud = o3d.io.write_point_cloud(str(clean_cloud_path), pcd, write_ascii=True)
         if not ok_cloud:
             print(f"warning: failed to write clean cloud to {clean_cloud_path}", file=sys.stderr)
 
-    print("[step] poisson reconstruction")
+    _step("poisson reconstruction")
     mesh, densities = o3d.geometry.TriangleMesh.create_from_point_cloud_poisson(
         pcd,
         depth=max(5, int(args.poisson_depth)),
@@ -1568,7 +1648,7 @@ def main() -> int:
     densities_np = np.asarray(densities)
     density_q = float(np.clip(args.density_trim_quantile, 0.0, 0.99))
     if density_q > 0 and len(densities_np) == len(mesh.vertices) and len(densities_np) > 0:
-        print("[step] density trim")
+        _step("density trim")
         density_cut = float(np.quantile(densities_np, density_q))
         mesh.remove_vertices_by_mask(densities_np < density_cut)
         print(f"density q:           {density_q:.4f}")
@@ -1579,7 +1659,7 @@ def main() -> int:
         aabb = aabb.scale(max(1.0, float(args.poisson_crop_scale)), aabb.get_center())
         mesh = mesh.crop(aabb)
 
-    print("[step] mesh cleanup")
+    _step("mesh cleanup")
     mesh = cleanup_mesh_topology(mesh)
     mesh = keep_significant_mesh_components(
         mesh,
@@ -1595,7 +1675,7 @@ def main() -> int:
             diag = float(np.linalg.norm(pcd.get_axis_aligned_bounding_box().get_extent()))
             hole_size = diag * max(0.0, float(args.fill_holes_max_size_ratio))
         if hole_size > 0:
-            print("[step] fill mesh holes")
+            _step("fill mesh holes")
             verts_before, tris_before = len(mesh.vertices), len(mesh.triangles)
             mesh, fill_passes_run = fill_mesh_holes(
                 mesh, hole_size, max_passes=max(1, int(args.fill_holes_passes))
@@ -1615,10 +1695,20 @@ def main() -> int:
         print("error: mesh became empty after cleanup", file=sys.stderr)
         return 6
 
-    print("[step] mesh normal orientation check")
+    _step("mesh normal orientation check")
     mesh, mesh_winding_flipped = orient_mesh_winding_outward(mesh)
     print(f"mesh winding flipped: {'yes' if mesh_winding_flipped else 'no'}")
     mesh.compute_vertex_normals()
+
+    if args.normalize_pose and len(mesh.vertices) > 0:
+        _step("normalize pose (center + flatten cross-section)")
+        pose_transform = compute_pca_pose(np.asarray(mesh.vertices))
+        mesh.transform(pose_transform)
+        pcd.transform(pose_transform)
+        print("pose:                centered at origin, largest cross-section in XY plane")
+        if side1_camera_centers:
+            flipped = orient_up_towards_side1(mesh, pcd, pose_transform, side1_camera_centers)
+            print(f"pose side1 up:       {'flipped 180deg' if flipped else 'already up'}")
 
     decimated_mesh = None
     if (
@@ -1626,7 +1716,7 @@ def main() -> int:
         and args.decimate_target_triangles > 0
         and len(mesh.triangles) > args.decimate_target_triangles
     ):
-        print("[step] optional decimation")
+        _step("optional decimation")
         decimated_mesh = mesh.simplify_quadric_decimation(
             target_number_of_triangles=max(4, int(args.decimate_target_triangles))
         )
@@ -1657,7 +1747,7 @@ def main() -> int:
     gltf_path_written = None
     gltf_decimated_path_written = None
     if pcd_has_colors(pcd):
-        print("[step] textured output (vertex colors)")
+        _step("textured output (vertex colors)")
         textured_mesh = transfer_vertex_colors_from_point_cloud(mesh, pcd)
         if textured_mesh is None:
             print(
@@ -1667,10 +1757,10 @@ def main() -> int:
         if export_all_variants and decimated_mesh is not None and textured_decimated_path is not None:
             textured_decimated_mesh = transfer_vertex_colors_from_point_cloud(decimated_mesh, pcd)
     else:
-        print("[step] textured output (vertex colors)")
+        _step("textured output (vertex colors)")
         print("textured output:     skipped (input/clean cloud has no colors)")
 
-    print("[step] write mesh exports")
+    _step("write mesh exports")
     primary_mesh = textured_mesh if textured_mesh is not None else mesh
     ok_primary, obj_mtl, obj_tex = write_mesh_file(
         primary_mesh,
@@ -1707,7 +1797,7 @@ def main() -> int:
     simplified_triangle_count = 0
     simplified_target_vertices = int(args.simplified_target_vertices)
     if simplified_target_vertices > 0 and len(primary_mesh.triangles) > 0:
-        print("[step] simplified export (for web viewer)")
+        _step("simplified export (for web viewer)")
         # A closed 2-manifold triangle mesh has roughly twice as many faces as
         # vertices (Euler's formula), so this converts the requested vertex budget
         # into the triangle-count target quadric decimation actually takes.
@@ -1848,7 +1938,7 @@ def main() -> int:
                 file=sys.stderr,
             )
 
-    print("[step] optional texture hook")
+    _step("optional texture hook")
     texture_rc = run_texture_hook(
         texture_cmd,
         output_path,
@@ -1857,6 +1947,7 @@ def main() -> int:
     )
     if texture_cmd and texture_rc != 0:
         print(f"warning: texture hook exited with code {texture_rc}", file=sys.stderr)
+    _step("done")
 
     print(f"points after clean:  {len(pcd.points)}")
     if args.mirror_backfill == "auto":
@@ -1927,6 +2018,7 @@ def main() -> int:
         print(f"texture hook rc:     {texture_rc}")
     else:
         print("texture hook:        skipped (no command configured)")
+    print(f"total time:          {time.time() - t_start:.1f}s")
     return 0
 
 

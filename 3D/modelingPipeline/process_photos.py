@@ -53,6 +53,39 @@ OPTIONS
                         resize their input to a fixed internal working resolution before
                         running on the GPU, so this mainly cuts CPU/RAM time spent
                         decoding/resizing large source photos rather than GPU VRAM.
+  --erode-px N          Shrink the foreground mask inward by N pixels after
+                        segmentation (0-255, default: 0 = off). Trims thin halos of
+                        background bleed left at the silhouette edge by rembg.
+  --grow-chroma N       Grow the mask to include any region touching the current
+                        foreground whose chroma (max(R,G,B) - min(R,G,B)) is >= N
+                        (0-255, default: 0 = off). Fixes rembg dropping an attached,
+                        differently-coloured piece (e.g. a mounting board) as
+                        background: as long as the actual backdrop is neutral
+                        (black/white/grey), anything with real colour next to the
+                        tablet gets pulled in. No hue is hardcoded, so this works
+                        for any tablet/board colour combination on the same style
+                        of neutral backdrop. Chroma is used instead of HSV
+                        saturation because saturation is a ratio (chroma / value)
+                        that blows up from ordinary sensor noise on near-black
+                        pixels — a black backdrop can misread as "saturated"
+                        despite having almost no real colour. Try 40-60 to start.
+  --grow-close-px N     Morphological closing radius (px) applied to the colour
+                        mask before growing, to bridge small gaps/glare spots
+                        within the coloured region (default: 15). Only matters
+                        when --grow-chroma > 0.
+  --grow-feather-px N   Soften the edge of the newly grown region with a blur of
+                        this radius (px), since the colour mask is a hard
+                        threshold unlike rembg's matted alpha (default: 3). Only
+                        matters when --grow-chroma > 0.
+  --grow-hull-fill      Replace the grown region with its convex hull, filled
+                        solid (default: off). Bridges low-colour detail sitting
+                        on top of it (e.g. a printed label) that a plain hole-fill
+                        can't reach if it touches the region's own edge, but this
+                        assumes the underlying piece (e.g. a mounting board) is
+                        basically convex — off by default since most tablets
+                        aren't board-backed, and turning it on for an irregular
+                        board shape would bridge across real concavities too.
+                        Only matters when --grow-chroma > 0.
   --nas                 Run legacy NAS workflow instead of local mode
 """
 
@@ -61,9 +94,12 @@ import shutil
 import sys
 from pathlib import Path
 
+import cv2
 import numpy as np
 from PIL import Image, ImageFilter
 from rembg import new_session, remove
+
+from erode_masks import erode_alpha
 
 SCRIPT_DIR = Path(__file__).parent
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".tiff", ".tif", ".bmp", ".webp"}
@@ -159,6 +195,52 @@ def parse_args() -> argparse.Namespace:
              "rembg already resizes to a fixed internal resolution per model.",
     )
     p.add_argument(
+        "--erode-px",
+        type=int,
+        default=0,
+        metavar="N",
+        help="Shrink the foreground mask inward by N pixels after segmentation "
+             "(0-255, default: 0 = off). Trims thin halos/fringe of background bleed "
+             "left at the silhouette edge by rembg.",
+    )
+    p.add_argument(
+        "--grow-chroma",
+        type=int,
+        default=0,
+        metavar="N",
+        help="Grow the mask to include any region touching the current foreground "
+             "with chroma (max(R,G,B) - min(R,G,B)) >= N (0-255, default: 0 = off). "
+             "Recovers an attached, differently-coloured piece (e.g. a mounting "
+             "board) that rembg dropped as background, as long as the real backdrop "
+             "is neutral (black/white/grey). Try 40-60.",
+    )
+    p.add_argument(
+        "--grow-close-px",
+        type=int,
+        default=15,
+        metavar="N",
+        help="Morphological closing radius (px) for the colour mask used by "
+             "--grow-chroma, to bridge small gaps/glare within the coloured "
+             "region (default: 15).",
+    )
+    p.add_argument(
+        "--grow-feather-px",
+        type=int,
+        default=3,
+        metavar="N",
+        help="Blur radius (px) softening the edge of the region added by "
+             "--grow-chroma (default: 3).",
+    )
+    p.add_argument(
+        "--grow-hull-fill",
+        action="store_true",
+        help="Replace the grown region with its filled convex hull (default: off). "
+             "Bridges low-colour detail on top of it (e.g. a printed label) even if "
+             "it touches the region's own edge. Assumes the underlying piece is "
+             "basically convex — off by default since most tablets aren't "
+             "board-backed. Only matters when --grow-chroma > 0.",
+    )
+    p.add_argument(
         "--stride",
         type=int,
         default=1,
@@ -185,6 +267,78 @@ def _mask_edge_band(alpha: np.ndarray, radius: int) -> np.ndarray:
     eroded = np.array(Image.fromarray(binary, mode="L")
                        .filter(ImageFilter.MinFilter(2 * radius + 1)))
     return (alpha > 0) & (eroded == 0)
+
+
+def _convex_hull_fill(mask: np.ndarray) -> np.ndarray:
+    """Replace each connected component of a binary mask with its filled convex
+    hull.
+
+    A simple hole-fill only recovers a gap that's fully enclosed by foreground
+    on every side — it can't help if a low-colour spot (e.g. a label with no
+    colour margin on one edge) forms an open notch reaching the region's own
+    boundary rather than a sealed hole. Taking the convex hull instead bridges
+    that too, on the assumption that the underlying object (a flat mounting
+    board) is basically convex — true for a standard rectangular/oval mat, but
+    this will bridge across *any* concavity in the recovered region, not just
+    small ones, so it's a real assumption, not a free correctness win."""
+    mask_u8 = mask.astype(np.uint8) * 255
+    contours, _ = cv2.findContours(mask_u8, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
+    filled = np.zeros_like(mask_u8)
+    for contour in contours:
+        cv2.drawContours(filled, [cv2.convexHull(contour)], -1, 255, thickness=cv2.FILLED)
+    return filled > 0
+
+
+def _grow_mask_by_color(alpha: np.ndarray, src_rgb: np.ndarray, chroma_threshold: int,
+                        close_px: int = 15, feather_px: int = 3,
+                        hull_fill: bool = False) -> np.ndarray:
+    """Expand alpha to cover any region touching the current foreground that has
+    real colour (chroma = max(R,G,B) - min(R,G,B) >= chroma_threshold), whatever
+    that colour is.
+
+    Chroma, not HSV saturation, is what separates "colourful" from "neutral"
+    here: saturation is a *ratio* (chroma / value), so it blows up from ordinary
+    sensor noise on near-black pixels — a black backdrop can read as strongly
+    "saturated" despite having almost no actual colour. Chroma stays low there
+    since it looks at the raw channel spread instead.
+
+    This targets a specific rembg failure mode: its saliency model picks out
+    "the interesting object" and drops an attached, differently-coloured piece
+    (e.g. a mounting board) as background. Since no hue is hardcoded — only
+    "not neutral" — this generalises across any tablet/board colour combination,
+    as long as the actual backdrop stays neutral (black/white/grey).
+
+    Only colour-mask components that touch the existing foreground are kept, so
+    unrelated coloured clutter elsewhere in frame isn't pulled in. If hull_fill
+    is set, the kept region is then convex-hulled (see _convex_hull_fill) to
+    bridge low-colour detail on top of it, like a printed label — off by
+    default, since it assumes the recovered piece is convex."""
+    if chroma_threshold <= 0:
+        return alpha
+
+    rgb16 = src_rgb.astype(np.int16)
+    chroma = rgb16.max(axis=2) - rgb16.min(axis=2)
+    color_mask = (chroma >= chroma_threshold).astype(np.uint8)
+    if close_px > 0:
+        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2 * close_px + 1,) * 2)
+        color_mask = cv2.morphologyEx(color_mask, cv2.MORPH_CLOSE, kernel)
+
+    fg = alpha > 0
+    num_labels, labels = cv2.connectedComponents(color_mask, connectivity=8)
+    keep = np.zeros_like(color_mask, dtype=bool)
+    for label in range(1, num_labels):
+        component = labels == label
+        if np.any(component & fg):
+            keep |= component
+
+    if hull_fill:
+        keep = _convex_hull_fill(keep)
+
+    grown = keep.astype(np.uint8) * 255
+    if feather_px > 0:
+        k = 2 * feather_px + 1
+        grown = cv2.GaussianBlur(grown, (k, k), 0)
+    return np.maximum(alpha, grown)
 
 
 def _apply_brightness_thresholds(rgba: Image.Image, src_rgb: np.ndarray,
@@ -258,17 +412,35 @@ def _multi_pass_remove(src_img: Image.Image, session, passes: int,
 def remove_background(src: Path, dst: Path, session, background: str,
                       black_threshold: int = 0, white_threshold: int = 0,
                       value_threshold: int = 0, edge_band: int = 0,
-                      passes: int = 1, seg_scale_pct: int = 100) -> None:
+                      passes: int = 1, seg_scale_pct: int = 100,
+                      erode_px: int = 0, grow_chroma: int = 0,
+                      grow_close_px: int = 15, grow_feather_px: int = 3,
+                      grow_hull_fill: bool = False) -> None:
     """Remove background from src and write to dst with the chosen fill."""
     dst.parent.mkdir(parents=True, exist_ok=True)
     src_img = Image.open(src)
     seg_scale = max(1, min(100, seg_scale_pct)) / 100.0
     result = _multi_pass_remove(src_img, session, passes, seg_scale)
 
+    need_src_rgb = (black_threshold > 0 or white_threshold > 0
+                     or value_threshold > 0 or grow_chroma > 0)
+    src_rgb = np.array(src_img.convert("RGB")) if need_src_rgb else None
+
+    if grow_chroma > 0:
+        alpha = _grow_mask_by_color(np.array(result.split()[3]), src_rgb,
+                                     grow_chroma, grow_close_px, grow_feather_px,
+                                     grow_hull_fill)
+        result = result.copy()
+        result.putalpha(Image.fromarray(alpha))
+
     if black_threshold > 0 or white_threshold > 0 or value_threshold > 0:
-        src_rgb = np.array(src_img.convert("RGB"))
         result = _apply_brightness_thresholds(result, src_rgb, black_threshold,
                                                white_threshold, value_threshold, edge_band)
+
+    if erode_px > 0:
+        alpha = erode_alpha(np.array(result.split()[3]), erode_px)
+        result = result.copy()
+        result.putalpha(Image.fromarray(alpha))
 
     if background == "transparent":
         out = dst.with_suffix(".png")
@@ -313,7 +485,9 @@ def collect_images(input_dir: Path, stride: int = 1) -> list[tuple[Path, Path]]:
 def run_local(input_dir: Path, output_dir: Path, model: str, background: str,
               black_threshold: int = 0, white_threshold: int = 0,
               value_threshold: int = 0, edge_band: int = 0, passes: int = 1,
-              stride: int = 1, seg_scale_pct: int = 100) -> None:
+              stride: int = 1, seg_scale_pct: int = 100, erode_px: int = 0,
+              grow_chroma: int = 0, grow_close_px: int = 15,
+              grow_feather_px: int = 3, grow_hull_fill: bool = False) -> None:
     if not input_dir.exists():
         sys.exit(f"[error] Input folder not found: {input_dir}\n"
                  f"        Create it or pass --input <path>.")
@@ -349,6 +523,12 @@ def run_local(input_dir: Path, output_dir: Path, model: str, background: str,
         print(f"[info]  Passes: {passes}")
     if seg_scale_pct < 100:
         print(f"[info]  Segmentation input scale: {seg_scale_pct}% (output stays full res)")
+    if erode_px > 0:
+        print(f"[info]  Mask erosion: {erode_px}px")
+    if grow_chroma > 0:
+        print(f"[info]  Grow by colour: chroma >= {grow_chroma} "
+              f"(close {grow_close_px}px, feather {grow_feather_px}px"
+              f"{', hull-fill' if grow_hull_fill else ''})")
     print(f"[rembg] Loading model '{model}' ...")
 
     session = new_session(model)
@@ -361,7 +541,9 @@ def run_local(input_dir: Path, output_dir: Path, model: str, background: str,
             remove_background(src, dst, session, background,
                                black_threshold=black_threshold, white_threshold=white_threshold,
                                value_threshold=value_threshold, edge_band=edge_band,
-                               passes=passes, seg_scale_pct=seg_scale_pct)
+                               passes=passes, seg_scale_pct=seg_scale_pct, erode_px=erode_px,
+                               grow_chroma=grow_chroma, grow_close_px=grow_close_px,
+                               grow_feather_px=grow_feather_px, grow_hull_fill=grow_hull_fill)
             print(f"  [{i}/{len(pairs)}] {rel}")
         except Exception as exc:
             errors += 1
@@ -420,7 +602,9 @@ def _copy_to_nas(src: Path, dst: Path) -> None:
 
 def run_nas(model: str, background: str, black_threshold: int = 0,
             white_threshold: int = 0, value_threshold: int = 0,
-            edge_band: int = 0, passes: int = 1, seg_scale_pct: int = 100) -> None:
+            edge_band: int = 0, passes: int = 1, seg_scale_pct: int = 100,
+            erode_px: int = 0, grow_chroma: int = 0, grow_close_px: int = 15,
+            grow_feather_px: int = 3, grow_hull_fill: bool = False) -> None:
     LOCAL_DATA.mkdir(parents=True, exist_ok=True)
 
     source_folder = _most_recent_folder(NAS_DATA)
@@ -433,7 +617,9 @@ def run_nas(model: str, background: str, black_threshold: int = 0,
     run_local(local_src, local_masked, model, background,
               black_threshold=black_threshold, white_threshold=white_threshold,
               value_threshold=value_threshold, edge_band=edge_band, passes=passes,
-              seg_scale_pct=seg_scale_pct)
+              seg_scale_pct=seg_scale_pct, erode_px=erode_px,
+              grow_chroma=grow_chroma, grow_close_px=grow_close_px,
+              grow_feather_px=grow_feather_px, grow_hull_fill=grow_hull_fill)
 
     nas_output = NAS_DATA / local_masked.name
     _copy_to_nas(local_masked, nas_output)
@@ -450,12 +636,17 @@ def main() -> None:
         run_nas(args.model, args.background, black_threshold=args.black_threshold,
                 white_threshold=args.white_threshold, value_threshold=args.value_threshold,
                 edge_band=args.edge_band, passes=args.passes,
-                seg_scale_pct=args.seg_scale_pct)
+                seg_scale_pct=args.seg_scale_pct, erode_px=args.erode_px,
+                grow_chroma=args.grow_chroma, grow_close_px=args.grow_close_px,
+                grow_feather_px=args.grow_feather_px, grow_hull_fill=args.grow_hull_fill)
     else:
         run_local(Path(args.input), Path(args.output), args.model, args.background,
                   black_threshold=args.black_threshold, white_threshold=args.white_threshold,
                   value_threshold=args.value_threshold, edge_band=args.edge_band,
-                  passes=args.passes, stride=args.stride, seg_scale_pct=args.seg_scale_pct)
+                  passes=args.passes, stride=args.stride, seg_scale_pct=args.seg_scale_pct,
+                  erode_px=args.erode_px, grow_chroma=args.grow_chroma,
+                  grow_close_px=args.grow_close_px, grow_feather_px=args.grow_feather_px,
+                  grow_hull_fill=args.grow_hull_fill)
 
 
 if __name__ == "__main__":

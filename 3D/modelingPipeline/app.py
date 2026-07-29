@@ -16,10 +16,12 @@ from __future__ import annotations
 import os
 import re
 import sys
+import json
 import shutil
 import threading
 import subprocess
 import queue
+from functools import lru_cache
 from pathlib import Path
 from datetime import datetime
 import tkinter as tk
@@ -28,6 +30,7 @@ from tkinter import ttk, filedialog, messagebox, scrolledtext
 # ── Path constants ─────────────────────────────────────────────────────────────
 SCRIPT_DIR = Path(__file__).parent.resolve()
 ALIGN_DIR  = SCRIPT_DIR / "alignment"
+DEFAULTS_PATH = SCRIPT_DIR / "app_defaults.json"
 
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".tiff", ".tif", ".bmp", ".webp"}
 
@@ -244,6 +247,7 @@ class ReconParser:
         (r'\[step\] mesh cleanup',                 73,  "Mesh cleanup…"),
         (r'\[step\] fill mesh holes',               76,  "Filling holes…"),
         (r'\[step\] mesh normal orientation',      79,  "Normal orientation check…"),
+        (r'\[step\] normalize pose',                82,  "Centering & flattening pose…"),
         (r'\[step\] optional decimation',          85,  "Decimation…"),
         (r'\[step\] textured output',              90,  "Textured output…"),
         (r'\[step\] write mesh exports',           94,  "Writing mesh exports…"),
@@ -269,6 +273,87 @@ class ReconParser:
 
 def _find_python(path: Path) -> str:
     return str(path) if path.exists() else sys.executable
+
+
+def _viewer_env() -> dict:
+    """Environment for spawning viewer.py (Open3D window).
+
+    Under WSLg, Open3D's bundled GLFW can fail to create a window two ways:
+      - Mesa picks the Zink (Vulkan) GL backend and can't select a device
+        ("ZINK: failed to choose pdev") -- LIBGL_ALWAYS_SOFTWARE forces the
+        llvmpipe software rasterizer instead, skipping device selection.
+      - GLFW's Wayland backend refuses to create the window at all because
+        it tries to set an explicit window position, which the Wayland
+        protocol doesn't allow apps to do ("The platform does not support
+        setting the window position"). Dropping WAYLAND_DISPLAY makes GLFW's
+        platform auto-detection fall back to X11 (via WSLg's XWayland);
+        GLFW_PLATFORM=x11 forces it explicitly on GLFW 3.4+ (a no-op on
+        older GLFW that doesn't read this variable).
+    Harmless outside WSL -- these only affect the spawned viewer process.
+    """
+    env = os.environ.copy()
+    env.pop("WAYLAND_DISPLAY", None)
+    env.setdefault("GLFW_PLATFORM", "x11")
+    env.setdefault("LIBGL_ALWAYS_SOFTWARE", "1")
+    return env
+
+
+def _running_under_wsl() -> bool:
+    return "WSL_DISTRO_NAME" in os.environ or "WSL_INTEROP" in os.environ
+
+
+@lru_cache(maxsize=1)
+def _find_native_windows_python() -> str | None:
+    """Under WSL, find a native Windows python.exe with open3d installed.
+
+    Native Windows Open3D uses Win32/WGL windowing directly, which sidesteps
+    WSLg's GLFW-over-Wayland problems entirely (some Open3D/GLFW builds can't
+    create a window under WSLg's Wayland compositor at all -- see
+    _viewer_env()). Returns None outside WSL, or if no such interpreter is
+    found.
+    """
+    if not _running_under_wsl():
+        return None
+    for exe in sorted(Path("/mnt/c/Users").glob("*/AppData/Local/Programs/Python/Python3*/python.exe")):
+        try:
+            r = subprocess.run([str(exe), "-c", "import open3d"],
+                                capture_output=True, timeout=15)
+            if r.returncode == 0:
+                return str(exe)
+        except Exception:
+            continue
+    return None
+
+
+def _to_windows_path(p: Path) -> str:
+    """Convert a WSL path to its Windows equivalent for handing to a native .exe."""
+    try:
+        r = subprocess.run(["wslpath", "-w", str(p)],
+                            capture_output=True, text=True, timeout=10)
+        if r.returncode == 0:
+            return r.stdout.strip()
+    except Exception:
+        pass
+    return str(p)
+
+
+def resolve_viewer_launch(path: Path) -> tuple[list[str], dict]:
+    """Command + env to launch viewer.py for `path`.
+
+    Prefers a native Windows Python (see _find_native_windows_python) when
+    running under WSL; falls back to the in-repo/venv interpreter with the
+    WSLg workaround env otherwise.
+    """
+    native_py = _find_native_windows_python()
+    if native_py:
+        return (
+            [native_py, _to_windows_path(SCRIPT_DIR / "viewer.py"), _to_windows_path(path)],
+            os.environ.copy(),
+        )
+    return (
+        [_find_python(SCRIPT_DIR / "venv" / "bin" / "python3"), str(SCRIPT_DIR / "viewer.py"), str(path)],
+        _viewer_env(),
+    )
 
 
 def _has_images(d: Path) -> bool:
@@ -387,10 +472,77 @@ class StageWidget(ttk.LabelFrame):
 # ══════════════════════════════════════════════════════════════════════════════
 
 class ConfigPanel(ttk.Frame):
+    # Attribute names of the tk Variables that "Save Current Settings as
+    # Default" persists. Deliberately excludes per-run paths (input/output
+    # dirs, alignment PLY overrides) since those aren't tunable settings.
+    _PERSISTED_VARS = [
+        "side1_var", "side2_var",
+        "bg_var", "black_thresh_var", "white_thresh_var", "value_thresh_var",
+        "edge_band_var", "erode_px_var", "grow_chroma_var", "grow_hull_fill_var",
+        "passes_var", "seg_scale_var", "model_var",
+        "quality_var", "use_gpu_var", "gpu_index_var", "img_scale_var",
+        "img_stride_var",
+        "sift_features_var", "sift_peak_var", "sift_edge_var",
+        "sift_dsp_var", "sift_affine_var",
+        "match_guided_var", "match_max_var",
+        "extract_threads_var", "match_threads_var", "mapper_threads_var",
+        "fusion_threads_var", "patch_cache_var", "fusion_cache_var",
+        "sec_rotate_deg_var", "sec_rotate_axis_var",
+        "sec_extra_x_var", "sec_extra_y_var", "sec_extra_z_var",
+        "sec_translate_x_var", "sec_translate_y_var", "sec_translate_z_var",
+        "sec_align_mode_var",
+        "r_max_input_pts", "r_outlier_nn", "r_outlier_std",
+        "r_radius_nn", "r_radius_factor",
+        "r_dbscan_max_pts", "r_dbscan_min_pts", "r_dbscan_eps",
+        "r_dbscan_keep", "r_dbscan_ratio",
+        "r_normal_max_nn", "r_normal_orient_k",
+        "r_poisson_depth", "r_poisson_linear", "r_density_trim",
+        "r_poisson_crop_scale", "r_hole_reduction",
+        "r_fill_holes", "r_fill_holes_ratio", "r_fill_holes_passes",
+        "r_comp_min_ratio", "r_comp_min_tris", "r_comp_max_count",
+        "r_smooth_iters", "r_decimate_tris", "r_simplified_target_verts",
+        "r_normalize_pose",
+        "align_method_var", "align_voxel_var", "align_samples_var",
+    ]
+
     def __init__(self, parent, app: "App"):
         super().__init__(parent)
         self.app = app
         self._build()
+
+    # ── settings persistence ───────────────────────────────────────────────────
+    def save_defaults(self):
+        data = {}
+        for attr in self._PERSISTED_VARS:
+            data[attr] = getattr(self, attr).get()
+        try:
+            DEFAULTS_PATH.write_text(json.dumps(data, indent=2))
+        except OSError as e:
+            messagebox.showerror("Save Defaults", f"Could not save defaults:\n{e}")
+            return
+        messagebox.showinfo("Save Defaults",
+                             "Current settings saved as default.\n"
+                             "They'll be pre-filled next time the app opens.")
+
+    def load_defaults(self):
+        if not DEFAULTS_PATH.exists():
+            return
+        try:
+            data = json.loads(DEFAULTS_PATH.read_text())
+        except (OSError, json.JSONDecodeError):
+            return
+        for attr, value in data.items():
+            if attr in self._PERSISTED_VARS and hasattr(self, attr):
+                try:
+                    getattr(self, attr).set(value)
+                except tk.TclError:
+                    pass
+        # The seg-quality Scale isn't bound via textvariable, so nudge it
+        # (and its label) to match the loaded value.
+        if hasattr(self, "_seg_scale_widget"):
+            pct = self.seg_scale_var.get()
+            self._seg_scale_widget.set(pct)
+            self._seg_scale_lbl.config(text=f"{pct}%")
 
     def _build(self):
         nb = ttk.Notebook(self)
@@ -496,6 +648,44 @@ class ConfigPanel(ttk.Frame):
         ttk.Label(rr2d, text="(0=whole mask)", foreground=PAL["subtext"]).pack(
             side=tk.LEFT, padx=4)
 
+        rr2d2 = ttk.Frame(f); rr2d2.pack(fill=tk.X, pady=2)
+        ttk.Label(rr2d2, text="Erode mask (px):", width=14).pack(side=tk.LEFT)
+        self.erode_px_var = tk.IntVar(value=0)
+        ttk.Spinbox(rr2d2, from_=0, to=100, textvariable=self.erode_px_var,
+                    width=6).pack(side=tk.LEFT)
+        ttk.Label(rr2d2, text="(0=off, shrinks mask inward)",
+                  foreground=PAL["subtext"]).pack(side=tk.LEFT, padx=4)
+
+        rr2d3 = ttk.Frame(f); rr2d3.pack(fill=tk.X, pady=2)
+        ttk.Label(rr2d3, text="Grow by colour:", width=14).pack(side=tk.LEFT)
+        self.grow_chroma_var = tk.IntVar(value=0)
+        ttk.Spinbox(rr2d3, from_=0, to=255, textvariable=self.grow_chroma_var,
+                    width=6).pack(side=tk.LEFT)
+        ttk.Label(rr2d3, text="(0=off, chroma threshold — try 40-60)",
+                  foreground=PAL["subtext"]).pack(side=tk.LEFT, padx=4)
+        ttk.Label(
+            f,
+            text=("Grows the mask onto any region touching the tablet that has real "
+                  "colour, regardless of hue — fixes rembg dropping an attached, "
+                  "differently-coloured piece (e.g. a mounting board) as background. "
+                  "Only works against a neutral (black/white/grey) backdrop."),
+            foreground=PAL["subtext"], wraplength=360,
+        ).pack(anchor=tk.W, pady=(0, 4))
+
+        rr2d4 = ttk.Frame(f); rr2d4.pack(fill=tk.X, pady=2)
+        self.grow_hull_fill_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(rr2d4, text="Convex-hull fill grown region",
+                         variable=self.grow_hull_fill_var).pack(side=tk.LEFT)
+        ttk.Label(
+            f,
+            text=("Bridges low-colour detail sitting on the grown region (e.g. a "
+                  "printed label) even where it touches the region's own edge. "
+                  "Assumes the attached piece is basically convex (a standard "
+                  "rectangular/oval mounting board) — off by default since most "
+                  "tablets aren't board-backed."),
+            foreground=PAL["subtext"], wraplength=360,
+        ).pack(anchor=tk.W, pady=(0, 4))
+
         rr2e = ttk.Frame(f); rr2e.pack(fill=tk.X, pady=2)
         ttk.Label(rr2e, text="Passes:", width=14).pack(side=tk.LEFT)
         self.passes_var = tk.IntVar(value=1)
@@ -507,14 +697,16 @@ class ConfigPanel(ttk.Frame):
         rr2f = ttk.Frame(f); rr2f.pack(fill=tk.X, pady=2)
         ttk.Label(rr2f, text="Seg. quality:", width=14).pack(side=tk.LEFT)
         self.seg_scale_var = tk.IntVar(value=100)
-        seg_scale_lbl = ttk.Label(rr2f, text="100%", width=5)
+        self._seg_scale_lbl = ttk.Label(rr2f, text="100%", width=5)
         def _on_seg_scale(val):
             pct = int(round(float(val)))
             self.seg_scale_var.set(pct)
-            seg_scale_lbl.config(text=f"{pct}%")
-        ttk.Scale(rr2f, from_=10, to=100, orient=tk.HORIZONTAL, length=140,
-                  command=_on_seg_scale, value=100).pack(side=tk.LEFT, padx=(0, 6))
-        seg_scale_lbl.pack(side=tk.LEFT)
+            self._seg_scale_lbl.config(text=f"{pct}%")
+        self._seg_scale_widget = ttk.Scale(
+            rr2f, from_=10, to=100, orient=tk.HORIZONTAL, length=140,
+            command=_on_seg_scale, value=100)
+        self._seg_scale_widget.pack(side=tk.LEFT, padx=(0, 6))
+        self._seg_scale_lbl.pack(side=tk.LEFT)
         ttk.Label(
             f,
             text=("Downscales the image fed to the bg-removal model to save memory/time; "
@@ -825,6 +1017,25 @@ class ConfigPanel(ttk.Frame):
             foreground=PAL["subtext"], wraplength=340, justify=tk.LEFT,
         ).pack(anchor=tk.W, pady=(0, 6))
 
+        _h(f, "Pose normalization")
+        self.r_normalize_pose = tk.BooleanVar(value=False)
+        norm_row = ttk.Frame(f); norm_row.pack(fill=tk.X, pady=2)
+        ttk.Checkbutton(
+            norm_row,
+            text="Center at origin & flatten (largest cross-section on XY plane)",
+            variable=self.r_normalize_pose,
+        ).pack(side=tk.LEFT)
+        ttk.Label(
+            f,
+            text=("Recenters the mesh's centroid at (0,0,0) and rotates it (via PCA "
+                  "on the mesh vertices) so its two widest axes span X/Y and its "
+                  "thinnest axis (tablet thickness) lies along Z — like a coin lying "
+                  "flat on a table. Applied once to the cleaned cloud and mesh right "
+                  "after cleanup, so every exported variant (OBJ/PLY/glTF/simplified "
+                  "glb) shares the same pose."),
+            foreground=PAL["subtext"], wraplength=340, justify=tk.LEFT,
+        ).pack(anchor=tk.W, pady=(0, 6))
+
     # ── Alignment tab ──────────────────────────────────────────────────────────
     def _build_align(self, f):
         def browse_ply(var):
@@ -916,7 +1127,8 @@ class ConfigPanel(ttk.Frame):
         return env
 
     def get_recon_cmd(self, input_ply: str, out_obj: str,
-                      clean_cloud: str, decimated: str) -> list[str]:
+                      clean_cloud: str, decimated: str,
+                      side1_camera_centers: str = "") -> list[str]:
         py = _find_python(SCRIPT_DIR / "venv" / "bin" / "python3")
         cmd = [
             py,
@@ -949,9 +1161,12 @@ class ConfigPanel(ttk.Frame):
             "--component-max-count",      str(self.r_comp_max_count.get()),
             "--smooth-iters",             str(self.r_smooth_iters.get()),
             "--decimate-target-triangles", str(self.r_decimate_tris.get()),
+            "--normalize-pose",            "1" if self.r_normalize_pose.get() else "0",
         ]
         if self.r_poisson_linear.get():
             cmd.append("--poisson-linear-fit")
+        if side1_camera_centers:
+            cmd += ["--side1-camera-centers", side1_camera_centers]
         return cmd
 
 
@@ -1075,6 +1290,7 @@ class App(tk.Tk):
 
         self._build_menu()
         self._build_layout()
+        self._cfg.load_defaults()
         self.after(80, self._poll_log)
         self._reconcile_stage_states()
 
@@ -1084,6 +1300,8 @@ class App(tk.Tk):
         fm = tk.Menu(mb, tearoff=0)
         fm.add_command(label="Open session folder",
                        command=self._open_session_folder)
+        fm.add_command(label="Save Current Settings as Default",
+                       command=lambda: self._cfg.save_defaults())
         fm.add_separator()
         fm.add_command(label="Quit", command=self.destroy)
         mb.add_cascade(label="File", menu=fm)
@@ -1215,12 +1433,25 @@ class App(tk.Tk):
             return self._merged_ply()
         return self._colmap_dir(s1 if s1 else None) / "fused.ply"
 
+    def _side1_camera_centers_path(self) -> Path:
+        s1, _ = self._active_sides()
+        return self._colmap_dir(s1 if s1 else None) / "camera_centers.json"
+
     def _open_session_folder(self):
         d = self._session_dir()
-        if sys.platform == "win32":
-            os.startfile(str(d))
-        else:
-            subprocess.Popen(["xdg-open", str(d)])
+        try:
+            if sys.platform == "win32":
+                os.startfile(str(d))
+            elif _running_under_wsl():
+                # WSL usually has no desktop file-open helper (xdg-open) of its
+                # own; go through Windows Explorer via WSL interop instead.
+                subprocess.Popen(["explorer.exe", _to_windows_path(d)])
+            else:
+                subprocess.Popen(["xdg-open", str(d)])
+        except FileNotFoundError as exc:
+            messagebox.showerror(
+                "Open Folder",
+                f"Could not open folder automatically ({exc}).\n\n{d}")
 
     # ── subprocess runner ─────────────────────────────────────────────────────
     def _run_proc(self, cmd: list, cwd: Path,
@@ -1267,26 +1498,30 @@ class App(tk.Tk):
         if not path.exists():
             messagebox.showwarning("File not found", f"Not found:\n{path}")
             return
-        viewer_py = _find_python(SCRIPT_DIR / "venv" / "bin" / "python3")
+        cmd, env = resolve_viewer_launch(path)
         try:
             proc = subprocess.Popen(
-                [viewer_py, str(SCRIPT_DIR / "viewer.py"), str(path)],
-                stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
-                text=True,
+                cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                text=True, env=env,
             )
         except FileNotFoundError:
-            self.log(f"[viewer] interpreter not found: {viewer_py!r}")
+            self.log(f"[viewer] interpreter not found: {cmd[0]!r}")
             messagebox.showerror("Viewer failed",
-                                  f"Could not launch viewer: interpreter not found:\n{viewer_py}")
+                                  f"Could not launch viewer: interpreter not found:\n{cmd[0]}")
             return
 
         def _watch():
-            err = proc.stderr.read()
+            out = proc.stdout.read()
             proc.wait()
-            if proc.returncode != 0 and err.strip():
-                self.log(f"[viewer] {err.strip()}")
+            # Open3D can fail to create a window and still exit 0, so check
+            # the log text too, not just the return code.
+            failed = proc.returncode != 0 or "Failed creating OpenGL window" in out
+            if failed and out.strip():
+                self.log(f"[viewer] {out.strip()}")
+            if failed:
                 self.after(0, lambda: messagebox.showerror(
-                    "Viewer failed", f"Viewer exited with an error:\n{err.strip()}"))
+                    "Viewer failed",
+                    f"Viewer could not open a window:\n\n{out.strip()[-1000:]}"))
 
         threading.Thread(target=_watch, daemon=True).start()
 
@@ -1376,6 +1611,14 @@ class App(tk.Tk):
         edge_band = self._cfg.edge_band_var.get()
         if edge_band > 0:
             cmd += ["--edge-band", str(edge_band)]
+        erode_px = self._cfg.erode_px_var.get()
+        if erode_px > 0:
+            cmd += ["--erode-px", str(erode_px)]
+        grow_chroma = self._cfg.grow_chroma_var.get()
+        if grow_chroma > 0:
+            cmd += ["--grow-chroma", str(grow_chroma)]
+            if self._cfg.grow_hull_fill_var.get():
+                cmd += ["--grow-hull-fill"]
         passes = self._cfg.passes_var.get()
         if passes > 1:
             cmd += ["--passes", str(passes)]
@@ -1542,8 +1785,10 @@ class App(tk.Tk):
         clean_cloud   = recon_dir / "clean_cloud.ply"
         decimated_obj = recon_dir / "recon_mesh_recon_decimated.obj"
 
+        side1_cam_centers = self._side1_camera_centers_path()
         cmd = self._cfg.get_recon_cmd(
-            str(input_ply), str(out_obj), str(clean_cloud), str(decimated_obj))
+            str(input_ply), str(out_obj), str(clean_cloud), str(decimated_obj),
+            side1_camera_centers=str(side1_cam_centers) if side1_cam_centers.exists() else "")
         self.log(f"[stage 4] Reconstructing mesh from {input_ply.name}…")
         parser = ReconParser()
 

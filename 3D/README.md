@@ -12,7 +12,11 @@ the rig): multi-camera capture → COLMAP reconstruction → meshed model. See t
 - `modelingPipeline/app.py` is a single Tkinter GUI that runs the four stages
   above in order against one working folder in `data/`, one photo set per side.
 - **Stage 1** removes each photo's background (`rembg`, GPU-accelerated when
-  available) and writes masked PNGs to `processed/`. A ragged mask edge throws
+  available) and writes masked PNGs to `processed/`. By default it also
+  hard-thresholds rembg's soft alpha matte to a clean binary mask (`--hard-mask`,
+  on by default) — COLMAP only ever sees RGB, not alpha, so a soft edge leaves
+  real background colour blended into the tablet's boundary pixels, which can
+  reconstruct as speckled noise along the mesh edges. A ragged mask edge throws
   off alignment later, so `erode_masks.py <folder> <px>` (or `process_photos.py
   --erode-px N` inline) shrinks the alpha mask inward to clean it up.
 - **Stage 2** hands the masked photos to COLMAP for GPU structure-from-motion +

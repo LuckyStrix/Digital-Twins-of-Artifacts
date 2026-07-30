@@ -73,6 +73,160 @@ Mirrors the `app.py` module docstring:
 4. **Mesh reconstruction** — `src/reconstruct_mesh.py` → `output/recon/` and
    `output/model.gltf`
 
+## GUI reference
+
+`app.py` is one window with four tabs (Inputs, COLMAP, Reconstruct, Alignment)
+plus a run panel that walks the four stages in order and streams live output to
+the log pane. Settings persist between runs in `app_defaults.json` (delete it
+to reset to the values below). Where a field has a longer explanation, the app
+shows it inline under the control — this section is a quicker reference, not a
+replacement for those.
+
+### Inputs tab
+
+**Paths**
+- **Input dir / Output dir** — source photo folder and where the pipeline
+  writes everything. Output defaults to `<input>_recon` next to the input once
+  you pick one.
+- **Primary / Secondary** side folder names (default `side1`/`side2`) — the
+  subfolder names under the input dir holding each side's photos. Leave
+  Secondary blank to skip Stage 3 (alignment) and reconstruct a single side.
+  Auto-detected from the input dir's structure when you browse to it.
+
+**Background removal** (`process_photos.py`, Stage 1)
+- **Background** — `white` / `black` / `transparent` composite color for the
+  masked output. Transparent keeps a PNG alpha channel; white/black composite
+  the tablet onto a solid backdrop.
+- **Hard mask cutoff** (default **on**) — thresholds rembg's soft alpha matte
+  to a binary mask instead of leaving a blended gradient at the silhouette.
+  Recommended on; see the in-app note for why (CLI: `--hard-mask` /
+  `--no-hard-mask`).
+- **Black / White / Value threshold** (0 = off) — force near-black, near-white,
+  or near-black-*or*-white background pixels transparent by raw channel/value
+  cutoff, on top of rembg's mask.
+- **Chroma threshold** (0 = off, try 15–30) — removes low-saturation colour
+  bleed left around the mask edge; only safe against a neutral (black/white/
+  grey) backdrop.
+- **Edge band (px)** (0 = whole mask) — restricts the threshold cleanups above
+  to a band this many pixels wide around the mask boundary, instead of the
+  entire image.
+- **Erode mask (px)** (0 = off) — shrinks the alpha mask inward by this many
+  pixels after cleanup, matching what `erode_masks.py <folder> <px>` does to
+  an already-processed folder.
+- **Grow by colour** (0 = off, try 40–60) — grows the mask onto any
+  colour-bearing region touching the tablet, regardless of hue. Fixes rembg
+  dropping an attached, differently-coloured piece (e.g. a mounting board) as
+  background. Only works against a neutral backdrop.
+- **Convex-hull fill grown region** (default off) — bridges low-colour detail
+  (e.g. a printed label) sitting on the grown region, even where it touches the
+  region's own edge. Assumes the attached piece is roughly convex; off by
+  default since most tablets aren't board-backed.
+- **Passes** (1 = off) — re-runs background removal on its own output this many
+  times; can clean up residual background at the cost of speed.
+- **Seg. quality** (10–100%) — downscales the image fed to the segmentation
+  model to save CPU/RAM time. Saved output is always full resolution; rembg
+  resizes every model's input to a fixed size regardless, so this doesn't
+  affect GPU VRAM.
+- **rembg model** — which rembg/BiRefNet model performs the segmentation
+  (default `birefnet-general`). Swap to a specialized model (e.g.
+  `isnet-general-use`) if the default mis-segments a particular material.
+
+### COLMAP tab
+
+Mirrors `run_colmap_mvs.py`'s CLI/env options; see that script's `--help` for
+full detail on any field.
+
+- **Quality** — `extreme`/`high`/`medium`/`low` preset controlling COLMAP's
+  internal image-size and matching trade-offs (higher = slower, more detail).
+- **Use GPU** / **GPU index** — enable CUDA dense matching/fusion and pick
+  which GPU (`-1` = auto-select).
+- **Image scale (0–1)** — downscale images before feature extraction.
+- **Image stride** — despite living on this tab, this drives Stage 1's own
+  frame-skipping (`process_photos.py --stride N`, keep every Nth photo) so
+  that COLMAP only ever receives the already-filtered images; COLMAP itself
+  always runs with stride 1 against whatever Stage 1 produced.
+- **SIFT**: **Max features**, **Peak threshold**, **Edge threshold** control
+  how many/how strong the keypoints extracted per image are. **Domain size
+  pooling** and **Estimate affine shape** are SIFT variants that trade extra
+  compute for features more robust to scale/viewpoint change — useful for
+  textureless or highly curved surfaces.
+- **Matching**: **Guided matching** re-matches using estimated geometry for
+  higher precision; **Max matches** caps matches kept per image pair.
+- **Threads / Cache** (0 = auto) — per-stage CPU thread counts and PatchMatch/
+  fusion GPU cache sizes in GB; raise the caches if you have GPU memory to
+  spare and are fusing large scenes, lower them if COLMAP runs out of VRAM.
+- **Secondary camera** — how side 2's reconstruction is re-posed relative to
+  side 1 before alignment: **Rotate degrees/axis** plus **Extra rotate X/Y/Z**
+  and **Translate X/Y/Z** for fine adjustment, and **Align mode**
+  (`auto`/`manual`) for whether the pipeline estimates this automatically or
+  uses only the values you entered.
+
+### Reconstruct tab
+
+Mirrors `src/reconstruct_mesh.py`'s CLI options (`python3 src/reconstruct_mesh.py
+--help` for the authoritative descriptions and defaults).
+
+- **Point cloud filtering** — **Max input points** randomly downsamples before
+  reconstruction (0 disables). **Outlier neighbors/std ratio** and **Radius
+  outlier NB pts/factor** are Open3D's statistical and radius outlier removal
+  passes (≤0 disables each).
+- **DBSCAN clustering** — clusters the cleaned cloud and keeps only the
+  largest, connected cluster(s), to drop disconnected background debris that
+  outlier removal alone doesn't catch. **Eps factor** sets the neighbor-distance
+  radius (as a multiple of median NN spacing) that defines a cluster; **min
+  points** is the DBSCAN density threshold; **keep largest** caps how many
+  clusters survive; **min cluster ratio** drops clusters smaller than this
+  fraction of the largest one. **Max points** skips DBSCAN entirely above that
+  cloud size (it's the slowest cleanup step).
+- **Normals** — **max NN**/**orient K** control how many neighbors are used to
+  estimate and consistently orient surface normals before Poisson.
+- **Poisson reconstruction** — **depth** is the octree resolution (higher =
+  more detail, more memory); **linear fit** trades a bit of smoothness for
+  sharper detail; **density trim quantile** strips the lowest-confidence
+  Poisson surface (raise to trim more); **crop scale** bounds the output mesh
+  to the point cloud's bounding box scaled by this factor, to cut Poisson's
+  characteristic ghost geometry outside the actual scan.
+- **Hole reduction** (checkbox) — a preset that loosens density trim, widens
+  crop scale, and raises normal max NN together, so sparsely sampled areas
+  (turntable rotation-axis poles, smooth/textureless surfaces) survive trimming
+  instead of becoming holes. Overrides the three fields above when enabled;
+  pair with hole filling below for whatever gaps remain.
+- **Hole filling** (checkbox) — after cleanup, triangulates leftover mesh
+  boundary loops to close remaining gaps directly. **Fill hole size ratio**
+  caps the max hole radius filled, as a fraction of the cloud's bounding-box
+  diagonal. **Fill hole passes** repeats the fill (closing one loop can free up
+  a neighbor) until a pass closes nothing new, up to this cap.
+- **Mesh cleanup** — **Component min ratio/min triangles** drop small
+  disconnected mesh pieces (by relative size and by absolute triangle count);
+  **Component max count** caps how many components survive; **Smooth
+  iterations** is post-cleanup Taubin smoothing; **Decimate target tris**
+  is the quadric-decimation triangle budget for the main output mesh (≤0
+  disables).
+- **Simplified export** — always also writes `<name>_simplified.glb`: a single
+  small vertex-colored binary glTF decimated to roughly **Simplified target
+  verts**, meant for dropping straight into a web viewer. Set to 0 to disable.
+- **Pose normalization** (checkbox, default off) — recenters the mesh at the
+  origin and rotates it (via PCA on the vertices) so its widest cross-section
+  lies in the XY plane and its thinnest axis (tablet thickness) lies along Z —
+  like a coin lying flat. Applied once, before decimation, so every exported
+  variant shares the same pose.
+
+### Alignment tab
+
+Controls `alignment/run.py`, Stage 3 (only runs when a Secondary side folder is
+set on the Inputs tab).
+
+- **Method** — `opening`/`fpfh`/`collapse`/`all`; `fpfh` (default) is FPFH
+  feature matching + RANSAC, refined with ICP.
+- **Voxel (0=auto)** — downsample voxel size used during alignment; 0 picks one
+  from the cloud scale automatically.
+- **Sample points** — how many points are sampled from each side's cloud for
+  feature matching.
+- **PLY overrides** — point the alignment step at specific PLY files instead of
+  the pipeline's own Stage 2 outputs, for re-running alignment in isolation
+  (e.g. after manually editing a cloud). Leave blank to use the normal
+  pipeline outputs.
+
 ## Structure
 
 ```

@@ -31,11 +31,29 @@ OPTIONS
   --output DIR          Output folder (default: ./output)
   --model NAME          rembg model (default: birefnet-general)
   --background          white | black | transparent (default: white)
+  --hard-mask           Threshold rembg's soft alpha matte to a hard binary mask
+                        (morphological open + blur + threshold at 127) instead of
+                        leaving it as a continuous confidence gradient (default: on;
+                        pass --no-hard-mask to keep the raw soft matte). The raw matte
+                        blends real tablet-edge colour with backdrop colour at partial
+                        alpha around the whole silhouette; since COLMAP has no notion of
+                        alpha and only ever sees RGB, that blended ring survives as
+                        photo-consistent (but wrong) content and can triangulate into
+                        speckled noise hugging the reconstructed mesh's edges. Hard-mask
+                        collapses that ring to a clean binary cut so background pixels
+                        are fully replaced by the chosen --background colour instead of
+                        blending with it.
   --black-threshold N   Zero out foreground pixels darker than N (0-255, default: 0 = off)
   --white-threshold N   Zero out foreground pixels brighter than N (0-255, default: 0 = off)
   --value-threshold N   Zero out foreground pixels whose HSV Value (max channel) exceeds
                         N (0-255, default: 0 = off) — catches bright/tinted bleed that
                         mean-brightness (--white-threshold) misses
+  --chroma-threshold N  Zero out foreground pixels whose chroma (max(R,G,B) - min(R,G,B))
+                        is below N (0-255, default: 0 = off) — removes neutral/grey
+                        backdrop bleed regardless of how bright or dark it is, as an
+                        alternative (or complement) to tuning --black/white-threshold.
+                        Only safe if the tablet itself has some real colour; a grey/
+                        monochrome tablet would get eaten too.
   --edge-band N         Only apply the thresholds above within N pixels of the mask
                         edge, leaving the interior of the foreground untouched
                         (0-255, default: 0 = apply to the whole mask)
@@ -138,6 +156,20 @@ def parse_args() -> argparse.Namespace:
         help="Replacement background colour (default: white).",
     )
     p.add_argument(
+        "--hard-mask",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Threshold rembg's soft alpha matte to a hard binary mask (morphological "
+             "open + blur + threshold at 127) instead of a continuous confidence "
+             "gradient (default: on). Pass --no-hard-mask to keep the raw soft matte. "
+             "The soft matte blends real edge colour with backdrop colour at partial "
+             "alpha around the whole silhouette; COLMAP has no notion of alpha and "
+             "only sees RGB, so that blended ring survives as photo-consistent (but "
+             "wrong) content and can triangulate into speckled noise at the "
+             "reconstructed mesh's edges. Hard-mask removes the blend so background "
+             "pixels are fully replaced by --background instead of blending with it.",
+    )
+    p.add_argument(
         "--black-threshold",
         type=int,
         default=0,
@@ -164,14 +196,25 @@ def parse_args() -> argparse.Namespace:
              "brightest channel instead of the RGB mean.",
     )
     p.add_argument(
+        "--chroma-threshold",
+        type=int,
+        default=0,
+        metavar="N",
+        help="Zero out foreground pixels whose chroma (max(R,G,B) - min(R,G,B)) is "
+             "below N (0-255). 0 = disabled (default). Removes neutral/grey backdrop "
+             "bleed regardless of brightness, which can be easier to dial in than "
+             "--black-threshold/--white-threshold separately. Only safe if the "
+             "tablet itself has some real colour. Try 15-30 to start.",
+    )
+    p.add_argument(
         "--edge-band",
         type=int,
         default=0,
         metavar="N",
-        help="Restrict --black/white/value-threshold to within N pixels of the mask "
-             "edge (default: 0 = apply across the whole foreground). Use this to stop "
-             "the thresholds from eating into the interior of the tablet while still "
-             "cleaning up background bleed at the mask boundary.",
+        help="Restrict --black/white/value/chroma-threshold to within N pixels of the "
+             "mask edge (default: 0 = apply across the whole foreground). Use this to "
+             "stop the thresholds from eating into the interior of the tablet while "
+             "still cleaning up background bleed at the mask boundary.",
     )
     p.add_argument(
         "--passes",
@@ -341,12 +384,20 @@ def _grow_mask_by_color(alpha: np.ndarray, src_rgb: np.ndarray, chroma_threshold
     return np.maximum(alpha, grown)
 
 
-def _apply_brightness_thresholds(rgba: Image.Image, src_rgb: np.ndarray,
-                                  black_threshold: int, white_threshold: int,
-                                  value_threshold: int, edge_band: int = 0) -> Image.Image:
+def _apply_pixel_thresholds(rgba: Image.Image, src_rgb: np.ndarray,
+                             black_threshold: int, white_threshold: int,
+                             value_threshold: int, chroma_threshold: int,
+                             edge_band: int = 0) -> Image.Image:
     """Zero out alpha for foreground pixels darker than black_threshold, brighter
-    (mean RGB) than white_threshold, or brighter (HSV Value = max channel) than
-    value_threshold. Any of the three may be 0/disabled.
+    (mean RGB) than white_threshold, brighter (HSV Value = max channel) than
+    value_threshold, or less colourful (chroma = max(R,G,B) - min(R,G,B)) than
+    chroma_threshold. Any of the four may be 0/disabled.
+
+    chroma_threshold targets the same neutral/grey backdrop bleed that
+    black/white_threshold do, but in one pass instead of two brightness bands —
+    it only assumes the tablet itself has some real colour, not a particular
+    tone. Only safe to use where that holds; a grey/monochrome tablet would be
+    zeroed out too.
 
     If edge_band > 0, the thresholds only affect pixels within that many pixels
     of the foreground mask's edge, so the tablet's interior is never touched —
@@ -364,13 +415,17 @@ def _apply_brightness_thresholds(rgba: Image.Image, src_rgb: np.ndarray,
     if value_threshold > 0:
         value = src_rgb.max(axis=2)
         alpha[band & (value > value_threshold)] = 0
+    if chroma_threshold > 0:
+        rgb16 = src_rgb.astype(np.int16)
+        chroma = rgb16.max(axis=2) - rgb16.min(axis=2)
+        alpha[band & (chroma < chroma_threshold)] = 0
     out = rgba.copy()
     out.putalpha(Image.fromarray(alpha))
     return out
 
 
 def _multi_pass_remove(src_img: Image.Image, session, passes: int,
-                       seg_scale: float = 1.0) -> Image.Image:
+                       seg_scale: float = 1.0, hard_mask: bool = True) -> Image.Image:
     """Run rembg `passes` times. After each non-final pass, flatten the pixels
     the pass classified as background to their own average colour and re-run
     rembg on the cleaner image — this can sharpen the mask against a noisy or
@@ -391,7 +446,7 @@ def _multi_pass_remove(src_img: Image.Image, session, passes: int,
 
     alpha = None
     for i in range(passes):
-        result = remove(current, session=session)
+        result = remove(current, session=session, post_process_mask=hard_mask)
         alpha = result.split()[3]
         if i < passes - 1:
             alpha_arr = np.array(alpha)
@@ -411,19 +466,21 @@ def _multi_pass_remove(src_img: Image.Image, session, passes: int,
 
 def remove_background(src: Path, dst: Path, session, background: str,
                       black_threshold: int = 0, white_threshold: int = 0,
-                      value_threshold: int = 0, edge_band: int = 0,
+                      value_threshold: int = 0, chroma_threshold: int = 0,
+                      edge_band: int = 0,
                       passes: int = 1, seg_scale_pct: int = 100,
                       erode_px: int = 0, grow_chroma: int = 0,
                       grow_close_px: int = 15, grow_feather_px: int = 3,
-                      grow_hull_fill: bool = False) -> None:
+                      grow_hull_fill: bool = False, hard_mask: bool = True) -> None:
     """Remove background from src and write to dst with the chosen fill."""
     dst.parent.mkdir(parents=True, exist_ok=True)
     src_img = Image.open(src)
     seg_scale = max(1, min(100, seg_scale_pct)) / 100.0
-    result = _multi_pass_remove(src_img, session, passes, seg_scale)
+    result = _multi_pass_remove(src_img, session, passes, seg_scale, hard_mask)
 
     need_src_rgb = (black_threshold > 0 or white_threshold > 0
-                     or value_threshold > 0 or grow_chroma > 0)
+                     or value_threshold > 0 or chroma_threshold > 0
+                     or grow_chroma > 0)
     src_rgb = np.array(src_img.convert("RGB")) if need_src_rgb else None
 
     if grow_chroma > 0:
@@ -433,9 +490,10 @@ def remove_background(src: Path, dst: Path, session, background: str,
         result = result.copy()
         result.putalpha(Image.fromarray(alpha))
 
-    if black_threshold > 0 or white_threshold > 0 or value_threshold > 0:
-        result = _apply_brightness_thresholds(result, src_rgb, black_threshold,
-                                               white_threshold, value_threshold, edge_band)
+    if black_threshold > 0 or white_threshold > 0 or value_threshold > 0 or chroma_threshold > 0:
+        result = _apply_pixel_thresholds(result, src_rgb, black_threshold,
+                                          white_threshold, value_threshold,
+                                          chroma_threshold, edge_band)
 
     if erode_px > 0:
         alpha = erode_alpha(np.array(result.split()[3]), erode_px)
@@ -444,7 +502,7 @@ def remove_background(src: Path, dst: Path, session, background: str,
 
     if background == "transparent":
         out = dst.with_suffix(".png")
-        result.save(out, "PNG")
+        result.save(out, "PNG", compress_level=1)
     else:
         bg_color = (255, 255, 255) if background == "white" else (0, 0, 0)
         bg = Image.new("RGB", result.size, bg_color)
@@ -484,10 +542,12 @@ def collect_images(input_dir: Path, stride: int = 1) -> list[tuple[Path, Path]]:
 
 def run_local(input_dir: Path, output_dir: Path, model: str, background: str,
               black_threshold: int = 0, white_threshold: int = 0,
-              value_threshold: int = 0, edge_band: int = 0, passes: int = 1,
+              value_threshold: int = 0, chroma_threshold: int = 0,
+              edge_band: int = 0, passes: int = 1,
               stride: int = 1, seg_scale_pct: int = 100, erode_px: int = 0,
               grow_chroma: int = 0, grow_close_px: int = 15,
-              grow_feather_px: int = 3, grow_hull_fill: bool = False) -> None:
+              grow_feather_px: int = 3, grow_hull_fill: bool = False,
+              hard_mask: bool = True) -> None:
     if not input_dir.exists():
         sys.exit(f"[error] Input folder not found: {input_dir}\n"
                  f"        Create it or pass --input <path>.")
@@ -509,6 +569,7 @@ def run_local(input_dir: Path, output_dir: Path, model: str, background: str,
     print(f"[info]  Input:   {input_dir}  ({len(pairs)} image(s))")
     print(f"[info]  Output:  {output_dir}")
     print(f"[info]  Background: {background}")
+    print(f"[info]  Hard mask: {'on' if hard_mask else 'off (raw soft matte)'}")
     if stride > 1:
         print(f"[info]  Stride: {stride} (keeping every {stride}th image per subfolder)")
     if black_threshold > 0:
@@ -517,6 +578,8 @@ def run_local(input_dir: Path, output_dir: Path, model: str, background: str,
         print(f"[info]  White threshold: {white_threshold}")
     if value_threshold > 0:
         print(f"[info]  Value threshold: {value_threshold}")
+    if chroma_threshold > 0:
+        print(f"[info]  Chroma threshold: {chroma_threshold}")
     if edge_band > 0:
         print(f"[info]  Edge band: {edge_band}px")
     if passes > 1:
@@ -540,10 +603,12 @@ def run_local(input_dir: Path, output_dir: Path, model: str, background: str,
         try:
             remove_background(src, dst, session, background,
                                black_threshold=black_threshold, white_threshold=white_threshold,
-                               value_threshold=value_threshold, edge_band=edge_band,
+                               value_threshold=value_threshold, chroma_threshold=chroma_threshold,
+                               edge_band=edge_band,
                                passes=passes, seg_scale_pct=seg_scale_pct, erode_px=erode_px,
                                grow_chroma=grow_chroma, grow_close_px=grow_close_px,
-                               grow_feather_px=grow_feather_px, grow_hull_fill=grow_hull_fill)
+                               grow_feather_px=grow_feather_px, grow_hull_fill=grow_hull_fill,
+                               hard_mask=hard_mask)
             print(f"  [{i}/{len(pairs)}] {rel}")
         except Exception as exc:
             errors += 1
@@ -602,9 +667,11 @@ def _copy_to_nas(src: Path, dst: Path) -> None:
 
 def run_nas(model: str, background: str, black_threshold: int = 0,
             white_threshold: int = 0, value_threshold: int = 0,
+            chroma_threshold: int = 0,
             edge_band: int = 0, passes: int = 1, seg_scale_pct: int = 100,
             erode_px: int = 0, grow_chroma: int = 0, grow_close_px: int = 15,
-            grow_feather_px: int = 3, grow_hull_fill: bool = False) -> None:
+            grow_feather_px: int = 3, grow_hull_fill: bool = False,
+            hard_mask: bool = True) -> None:
     LOCAL_DATA.mkdir(parents=True, exist_ok=True)
 
     source_folder = _most_recent_folder(NAS_DATA)
@@ -616,10 +683,12 @@ def run_nas(model: str, background: str, black_threshold: int = 0,
     local_masked = LOCAL_DATA / f"{folder_name}_masked"
     run_local(local_src, local_masked, model, background,
               black_threshold=black_threshold, white_threshold=white_threshold,
-              value_threshold=value_threshold, edge_band=edge_band, passes=passes,
+              value_threshold=value_threshold, chroma_threshold=chroma_threshold,
+              edge_band=edge_band, passes=passes,
               seg_scale_pct=seg_scale_pct, erode_px=erode_px,
               grow_chroma=grow_chroma, grow_close_px=grow_close_px,
-              grow_feather_px=grow_feather_px, grow_hull_fill=grow_hull_fill)
+              grow_feather_px=grow_feather_px, grow_hull_fill=grow_hull_fill,
+              hard_mask=hard_mask)
 
     nas_output = NAS_DATA / local_masked.name
     _copy_to_nas(local_masked, nas_output)
@@ -635,18 +704,21 @@ def main() -> None:
     if args.nas:
         run_nas(args.model, args.background, black_threshold=args.black_threshold,
                 white_threshold=args.white_threshold, value_threshold=args.value_threshold,
+                chroma_threshold=args.chroma_threshold,
                 edge_band=args.edge_band, passes=args.passes,
                 seg_scale_pct=args.seg_scale_pct, erode_px=args.erode_px,
                 grow_chroma=args.grow_chroma, grow_close_px=args.grow_close_px,
-                grow_feather_px=args.grow_feather_px, grow_hull_fill=args.grow_hull_fill)
+                grow_feather_px=args.grow_feather_px, grow_hull_fill=args.grow_hull_fill,
+                hard_mask=args.hard_mask)
     else:
         run_local(Path(args.input), Path(args.output), args.model, args.background,
                   black_threshold=args.black_threshold, white_threshold=args.white_threshold,
-                  value_threshold=args.value_threshold, edge_band=args.edge_band,
+                  value_threshold=args.value_threshold, chroma_threshold=args.chroma_threshold,
+                  edge_band=args.edge_band,
                   passes=args.passes, stride=args.stride, seg_scale_pct=args.seg_scale_pct,
                   erode_px=args.erode_px, grow_chroma=args.grow_chroma,
                   grow_close_px=args.grow_close_px, grow_feather_px=args.grow_feather_px,
-                  grow_hull_fill=args.grow_hull_fill)
+                  grow_hull_fill=args.grow_hull_fill, hard_mask=args.hard_mask)
 
 
 if __name__ == "__main__":

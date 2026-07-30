@@ -131,78 +131,152 @@ class PhotosParser:
 
 
 class ColmapParser:
+    # Sparse steps fire once, before any per-component dense work.
     # (pattern, frac_at_start, step_id, label)
-    _STEP_DEFS = [
+    _SPARSE_STEPS = [
         (r'\[step\] colmap feature_extractor',
          0.05, 'extract', "Feature extraction"),
         (r'\[step\] colmap (?:exhaustive_matcher|vocab_tree_matcher|sequential_matcher)',
          0.20, 'match', "Feature matching"),
         (r'\[step\] colmap mapper',
-         0.40, 'map', "Sparse mapping"),
-        (r'\[.*?\] colmap image_undistorter',
-         0.55, 'undistort', "Image undistortion"),
-        (r'\[.*?\] colmap patch_match_stereo',
-         0.62, 'pms', "Patch match stereo"),
-        (r'\[.*?\] colmap stereo_fusion',
-         0.82, 'fusion', "Stereo fusion"),
-        (r'dense cloud output:',
-         1.00, 'done', "Dense cloud complete"),
+         0.38, 'map', "Sparse mapping"),
     ]
+
+    # Dense work (undistort -> patch match stereo -> fusion) runs once per
+    # sparse-model component and occupies the [_DENSE_BASE, 1.0) fraction,
+    # split evenly across however many components run_colmap_mvs.py found.
+    # Within one component's share, these are the sub-step offsets (as a
+    # fraction of that component's own [0, 1) range), mirroring the ratios
+    # the flat single-pass version used to use.
+    _DENSE_BASE     = 0.40
+    _COMP_UNDISTORT = 0.25
+    _COMP_PMS       = 0.367
+    _COMP_FUSION    = 0.70
+    _COMP_END       = 1.0
+
+    _RE_N_COMPONENTS = re.compile(r'sparse models found:\s*(\d+)')
+    _RE_UNDISTORT = re.compile(r'\[.*?(?:component (\d+))?\] colmap image_undistorter')
+    _RE_PMS       = re.compile(r'\[.*?(?:component (\d+))?\] colmap patch_match_stereo')
+    _RE_FUSION    = re.compile(r'\[.*?(?:component (\d+))?\] colmap stereo_fusion')
+    _RE_DONE      = re.compile(r'dense cloud output:')
+    _RE_VIEW      = re.compile(r'Processing view\s+(\d+)\s*/\s*(\d+)')
+    _RE_FILE      = re.compile(r'Processing file \[(\d+)/(\d+)\]')
 
     def __init__(self, lo: int = 0, hi: int = 100):
         self._lo   = lo
         self._hi   = hi
         self._pct  = lo
         self._step = None
-        self._frac_start = 0.0
-        self._frac_end   = 1.0
-        # precompute per-step end fracs (= next step's start)
-        defs = self._STEP_DEFS
-        self._steps = [
-            (pat, frac_s, defs[i + 1][1] if i + 1 < len(defs) else 1.0, sid, lbl)
-            for i, (pat, frac_s, sid, lbl) in enumerate(defs)
-        ]
+        self._n_components = 1
+        self._comp_idx = 0
+        # patch_match_stereo (with the default geom_consistency=true) makes
+        # a photometric-only sweep over all views, then a second sweep that
+        # refines using geometric consistency -- both print the same
+        # "Processing view i/n" line. Track sweep boundaries via the view
+        # counter resetting, so each sweep gets its own slice + label
+        # instead of being lumped together as "Photometric".
+        self._pms_pass    = 0
+        self._pms_last_i  = 0
 
     def _scale(self, frac: float) -> int:
         return int(self._lo + (self._hi - self._lo) * frac)
 
-    def feed(self, line: str):
-        # Step keyword transitions
-        for pat, frac_s, frac_e, step_id, label in self._steps:
-            if re.search(pat, line):
-                self._step       = step_id
-                self._frac_start = frac_s
-                self._frac_end   = frac_e
-                pct = self._scale(frac_s)
-                if pct > self._pct:
-                    self._pct = pct
-                    return (self._pct, label)
-                return None
+    def _emit(self, frac: float, label: str):
+        pct = self._scale(frac)
+        if pct > self._pct:
+            self._pct = pct
+            return (pct, label)
+        return None
 
-        # "Processing view X/N" — photometric (pms) and geometric (fusion)
-        if self._step in ('pms', 'fusion'):
-            m = re.search(r'Processing view\s+(\d+)\s*/\s*(\d+)', line)
+    def _component_frac(self, offset: float) -> float:
+        """Map an offset within one component's [0, 1) range to a global frac."""
+        width = (1.0 - self._DENSE_BASE) / self._n_components
+        return self._DENSE_BASE + width * (self._comp_idx + offset)
+
+    def _part_suffix(self) -> str:
+        return f" (part {self._comp_idx + 1}/{self._n_components})" if self._n_components > 1 else ""
+
+    def feed(self, line: str):
+        m = self._RE_N_COMPONENTS.search(line)
+        if m:
+            self._n_components = max(1, int(m.group(1)))
+            return None
+
+        for pat, frac, step_id, label in self._SPARSE_STEPS:
+            if re.search(pat, line):
+                self._step = step_id
+                return self._emit(frac, label)
+
+        m = self._RE_UNDISTORT.search(line)
+        if m:
+            self._step = 'undistort'
+            if m.group(1) is not None:
+                self._comp_idx = int(m.group(1))
+                self._n_components = max(self._n_components, self._comp_idx + 1)
+            return self._emit(self._component_frac(0.0), f"Image undistortion{self._part_suffix()}")
+
+        m = self._RE_PMS.search(line)
+        if m:
+            self._step = 'pms'
+            if m.group(1) is not None:
+                self._comp_idx = int(m.group(1))
+                self._n_components = max(self._n_components, self._comp_idx + 1)
+            self._pms_pass   = 0
+            self._pms_last_i = 0
+            return self._emit(self._component_frac(self._COMP_UNDISTORT), f"Patch match stereo{self._part_suffix()}")
+
+        m = self._RE_FUSION.search(line)
+        if m:
+            self._step = 'fusion'
+            if m.group(1) is not None:
+                self._comp_idx = int(m.group(1))
+                self._n_components = max(self._n_components, self._comp_idx + 1)
+            return self._emit(self._component_frac(self._COMP_FUSION), f"Stereo fusion{self._part_suffix()}")
+
+        if self._RE_DONE.search(line):
+            self._step = 'done'
+            self._pct = self._hi
+            return (self._hi, "Dense cloud complete")
+
+        # "Processing view X/N" inside patch_match_stereo: alternates between
+        # a photometric sweep and a geometric-consistency sweep.
+        if self._step == 'pms':
+            m = self._RE_VIEW.search(line)
             if m:
                 i, n = int(m.group(1)), int(m.group(2))
                 if n > 0:
-                    frac = self._frac_start + (self._frac_end - self._frac_start) * i / n
-                    pct  = self._scale(frac)
-                    if pct > self._pct:
-                        self._pct = pct
-                        kind = "Photometric" if self._step == 'pms' else "Geometric"
-                        return (self._pct, f"{kind}: view {i}/{n}")
+                    if i < self._pms_last_i:
+                        self._pms_pass += 1
+                    elif self._pms_pass == 0:
+                        self._pms_pass = 1
+                    self._pms_last_i = i
+
+                    pass_start = self._COMP_UNDISTORT
+                    pass_width = self._COMP_PMS - self._COMP_UNDISTORT
+                    sub_idx    = min(self._pms_pass - 1, 1)  # cap at 2 sweeps' worth of range
+                    sub_start  = pass_start + pass_width * (sub_idx / 2)
+                    sub_end    = pass_start + pass_width * ((sub_idx + 1) / 2)
+                    offset     = sub_start + (sub_end - sub_start) * i / n
+                    kind = "Photometric" if self._pms_pass % 2 == 1 else "Geometric"
+                    return self._emit(self._component_frac(offset), f"{kind}: view {i}/{n}{self._part_suffix()}")
+
+        # "Processing view X/N" inside stereo_fusion
+        elif self._step == 'fusion':
+            m = self._RE_VIEW.search(line)
+            if m:
+                i, n = int(m.group(1)), int(m.group(2))
+                if n > 0:
+                    offset = self._COMP_FUSION + (self._COMP_END - self._COMP_FUSION) * i / n
+                    return self._emit(self._component_frac(offset), f"Fusion: view {i}/{n}{self._part_suffix()}")
 
         # "Processing file [N/M]" — feature extraction per-image
         if self._step == 'extract':
-            m = re.search(r'Processing file \[(\d+)/(\d+)\]', line)
+            m = self._RE_FILE.search(line)
             if m:
                 i, n = int(m.group(1)), int(m.group(2))
                 if n > 0:
-                    frac = self._frac_start + (self._frac_end - self._frac_start) * i / n
-                    pct  = self._scale(frac)
-                    if pct > self._pct:
-                        self._pct = pct
-                        return (self._pct, f"Feature extraction: {i}/{n}")
+                    frac = 0.05 + (0.20 - 0.05) * i / n
+                    return self._emit(frac, f"Feature extraction: {i}/{n}")
 
         return None
 
@@ -477,7 +551,8 @@ class ConfigPanel(ttk.Frame):
     # dirs, alignment PLY overrides) since those aren't tunable settings.
     _PERSISTED_VARS = [
         "side1_var", "side2_var",
-        "bg_var", "black_thresh_var", "white_thresh_var", "value_thresh_var",
+        "bg_var", "hard_mask_var", "black_thresh_var", "white_thresh_var", "value_thresh_var",
+        "chroma_thresh_var",
         "edge_band_var", "erode_px_var", "grow_chroma_var", "grow_hull_fill_var",
         "passes_var", "seg_scale_var", "model_var",
         "quality_var", "use_gpu_var", "gpu_index_var", "img_scale_var",
@@ -616,6 +691,20 @@ class ConfigPanel(ttk.Frame):
                      values=["white", "black", "transparent"],
                      state="readonly", width=12).pack(side=tk.LEFT)
 
+        rr1b = ttk.Frame(f); rr1b.pack(fill=tk.X, pady=2)
+        self.hard_mask_var = tk.BooleanVar(value=True)
+        ttk.Checkbutton(rr1b, text="Hard mask cutoff",
+                         variable=self.hard_mask_var).pack(side=tk.LEFT)
+        ttk.Label(
+            f,
+            text=("Thresholds rembg's soft alpha matte to a clean binary mask instead "
+                  "of a blended gradient at the silhouette edge. COLMAP never sees "
+                  "alpha, only RGB, so a soft edge leaves real background colour "
+                  "blended into the tablet's boundary pixels and can reconstruct as "
+                  "speckled noise along the mesh edges. Recommended on."),
+            foreground=PAL["subtext"], wraplength=360,
+        ).pack(anchor=tk.W, pady=(0, 4))
+
         rr2 = ttk.Frame(f); rr2.pack(fill=tk.X, pady=2)
         ttk.Label(rr2, text="Black threshold:", width=14).pack(side=tk.LEFT)
         self.black_thresh_var = tk.IntVar(value=0)
@@ -639,6 +728,14 @@ class ConfigPanel(ttk.Frame):
                     width=6).pack(side=tk.LEFT)
         ttk.Label(rr2c, text="(0=off)", foreground=PAL["subtext"]).pack(
             side=tk.LEFT, padx=4)
+
+        rr2c2 = ttk.Frame(f); rr2c2.pack(fill=tk.X, pady=2)
+        ttk.Label(rr2c2, text="Chroma threshold:", width=14).pack(side=tk.LEFT)
+        self.chroma_thresh_var = tk.IntVar(value=0)
+        ttk.Spinbox(rr2c2, from_=0, to=255, textvariable=self.chroma_thresh_var,
+                    width=6).pack(side=tk.LEFT)
+        ttk.Label(rr2c2, text="(0=off, removes low-colour bleed — try 15-30)",
+                  foreground=PAL["subtext"]).pack(side=tk.LEFT, padx=4)
 
         rr2d = ttk.Frame(f); rr2d.pack(fill=tk.X, pady=2)
         ttk.Label(rr2d, text="Edge band (px):", width=14).pack(side=tk.LEFT)
@@ -1599,6 +1696,8 @@ class App(tk.Tk):
             "--model",      self._cfg.model_var.get(),
             "--background", self._cfg.bg_var.get(),
         ]
+        if not self._cfg.hard_mask_var.get():
+            cmd += ["--no-hard-mask"]
         thresh = self._cfg.black_thresh_var.get()
         if thresh > 0:
             cmd += ["--black-threshold", str(thresh)]
@@ -1608,6 +1707,9 @@ class App(tk.Tk):
         value_thresh = self._cfg.value_thresh_var.get()
         if value_thresh > 0:
             cmd += ["--value-threshold", str(value_thresh)]
+        chroma_thresh = self._cfg.chroma_thresh_var.get()
+        if chroma_thresh > 0:
+            cmd += ["--chroma-threshold", str(chroma_thresh)]
         edge_band = self._cfg.edge_band_var.get()
         if edge_band > 0:
             cmd += ["--edge-band", str(edge_band)]

@@ -80,10 +80,14 @@ class CaptureApp:
         self.stop_btn.grid(row=0, column=1)
         self.test_btn = ttk.Button(ctrl, text="📷  Test Shot", command=self._test_shot, width=14)
         self.test_btn.grid(row=0, column=2, padx=(6, 0))
+        self.leds_on_btn = ttk.Button(ctrl, text="💡  LEDs On", command=self._leds_on, width=12)
+        self.leds_on_btn.grid(row=0, column=3, padx=(6, 0))
+        self.leds_off_btn = ttk.Button(ctrl, text="LEDs Off", command=self._leds_off, width=12)
+        self.leds_off_btn.grid(row=0, column=4, padx=(6, 0))
 
         self.status_var = tk.StringVar(value="Ready")
         ttk.Label(ctrl, textvariable=self.status_var, font=("", 10, "bold"), foreground="#1a6ea8").grid(
-            row=0, column=3, padx=20)
+            row=0, column=5, padx=20)
 
         # --- Progress ---
         prog = ttk.Frame(self.root, padding=(10, 0))
@@ -271,6 +275,8 @@ class CaptureApp:
         self.stop_event.clear()
         self.start_btn.configure(state="disabled")
         self.test_btn.configure(state="disabled")
+        self.leds_on_btn.configure(state="disabled")
+        self.leds_off_btn.configure(state="disabled")
         self.stop_btn.configure(state="normal")
         self._set_progress(0)
         self._set_status("Starting…")
@@ -286,6 +292,8 @@ class CaptureApp:
         def _do():
             self.start_btn.configure(state="normal")
             self.test_btn.configure(state="normal")
+            self.leds_on_btn.configure(state="normal")
+            self.leds_off_btn.configure(state="normal")
             self.stop_btn.configure(state="disabled")
             if success:
                 self.status_var.set("Complete!")
@@ -374,6 +382,50 @@ class CaptureApp:
         finally:
             self.root.after(0, lambda: (self.test_btn.configure(state="normal"),
                                         self.start_btn.configure(state="normal")))
+
+    # ------------------------------------------------------------------ LED control
+
+    def _leds_on(self):
+        self._send_led_command(True)
+
+    def _leds_off(self):
+        self._send_led_command(False)
+
+    def _send_led_command(self, on):
+        """Toggle the capture LEDs via a short-lived serial connection.
+
+        Independent of the turntable/scan flow, like _test_shot. Refused while
+        a scan is running since _run_capture holds the serial port for its
+        whole duration.
+        """
+        if self.capture_thread and self.capture_thread.is_alive():
+            messagebox.showinfo("Busy", "A scan is currently running. Stop it before controlling the LEDs.")
+            return
+        port = self.port_var.get()
+        if not port:
+            messagebox.showerror("Invalid Input", "Please select a serial port.")
+            return
+
+        self.start_btn.configure(state="disabled")
+        self.test_btn.configure(state="disabled")
+        self.leds_on_btn.configure(state="disabled")
+        self.leds_off_btn.configure(state="disabled")
+        threading.Thread(target=self._run_led_command, args=(port, on), daemon=True).start()
+
+    def _run_led_command(self, port, on):
+        try:
+            ser = serial.Serial(port, baudrate=115200, timeout=2)
+            ser.write(b'N' if on else b'F')
+            ser.read(1)  # wait for 'e' acknowledgement (or time out)
+            ser.close()
+            self._log(f"LEDs turned {'on' if on else 'off'}.")
+        except serial.SerialException as exc:
+            self._log(f"LED serial error: {exc}")
+        finally:
+            self.root.after(0, lambda: (self.start_btn.configure(state="normal"),
+                                        self.test_btn.configure(state="normal"),
+                                        self.leds_on_btn.configure(state="normal"),
+                                        self.leds_off_btn.configure(state="normal")))
 
     # ------------------------------------------------------------------ capture loop (background thread)
 

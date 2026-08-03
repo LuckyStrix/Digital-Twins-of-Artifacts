@@ -415,10 +415,21 @@ class CaptureApp:
     def _run_led_command(self, port, on):
         try:
             ser = serial.Serial(port, baudrate=115200, timeout=2)
+            # Opening the port toggles DTR and resets the Arduino, which takes
+            # a couple seconds to reboot into the sketch; _run_capture gets this
+            # for free while it spends that time detecting cameras, but this is
+            # a standalone command so it has to wait explicitly or the write
+            # below lands before the board is listening again.
+            time.sleep(2)
+            ser.reset_input_buffer()
             ser.write(b'N' if on else b'F')
-            ser.read(1)  # wait for 'e' acknowledgement (or time out)
+            ack = ser.read(1)  # wait for 'e' acknowledgement (or time out)
             ser.close()
-            self._log(f"LEDs turned {'on' if on else 'off'}.")
+            if ack == b'e':
+                self._log(f"LEDs turned {'on' if on else 'off'}.")
+            else:
+                self._log(f"⚠ LED command sent but no acknowledgement from Arduino "
+                          f"(got {ack!r}) — check the board is running the latest sketch.")
         except serial.SerialException as exc:
             self._log(f"LED serial error: {exc}")
         finally:

@@ -1,4 +1,7 @@
 # Digital-Twins-of-Artifacts
+
+**Live site:** https://www.cis.rit.edu/fip/efip2026/index.html — the deployed artifact gallery from `website/`, viewable without cloning anything.
+
 Digital Twins of Artifacts is a comprehensive system for creating 2D and 3D models/replicas of historical artifacts in order to help preserve them, as well as make them more accessible to the world, developed by RIT students in collaboration with the RIT Chester F. Carlson Center for Imaging Science and the RIT Cary Graphic Arts Collection, and sponsored in part by the Charles and Karin Hoffman Endowed Fund. 
 
 This system was built from work started during the 2025-26 Freshman Imaging Project class ("FIP"), a two-semester class where Imaging Science and Motion Picture Science freshmen are given an open-ended problem to solve, and spend the class researching and developing a solution. The group worked diligently to lay the foundation for the system. The summer after, Carter & Iris stayed to continue improving and integrating the systems during the 2026 Extended Freshman Imaging Project ("E-FIP"), a 10-week summer program funded by the Charles and Karin Hoffman Endowed Fund.

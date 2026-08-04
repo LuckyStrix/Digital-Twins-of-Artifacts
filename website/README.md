@@ -3,6 +3,10 @@
 The artifact gallery site. Static HTML/CSS/JS — no build tooling, no
 server-side code required to host it.
 
+**Live deployment:** https://www.cis.rit.edu/fip/efip2026/index.html —
+this folder's contents uploaded as-is (see "Deploying" below). The site
+itself links back to this repo from its header and footer.
+
 ## Structure
 
 ```

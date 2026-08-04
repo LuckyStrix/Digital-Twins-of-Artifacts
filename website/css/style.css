@@ -113,6 +113,21 @@ code {
   opacity: 0.85;
 }
 
+.source-link {
+  display: inline-block;
+  margin-top: 18px;
+  font-size: 0.9rem;
+  font-weight: 600;
+  text-decoration: none;
+  color: var(--burgundy);
+  border-bottom: 1.5px solid transparent;
+  transition: border-color 0.2s ease;
+}
+
+.source-link:hover {
+  border-color: var(--burgundy);
+}
+
 .placeholder-text {
   outline: 2px dashed rgba(128, 0, 32, 0.4);
   outline-offset: 6px;
@@ -417,6 +432,23 @@ main {
 .site-footer .placeholder-note {
   opacity: 0.7;
   font-size: 0.95rem;
+}
+
+.footer-meta {
+  margin-top: 20px;
+}
+
+.footer-meta a {
+  font-size: 0.85rem;
+  font-weight: 600;
+  text-decoration: none;
+  color: var(--burgundy);
+  opacity: 0.85;
+}
+
+.footer-meta a:hover {
+  opacity: 1;
+  text-decoration: underline;
 }
 
 /* ══════════════════════════════════════════════════════════

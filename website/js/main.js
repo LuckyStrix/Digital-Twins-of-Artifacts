@@ -2,6 +2,7 @@ const ICONS_BY_TYPE = {
   tablet: "assets/icons/ClayTablet1.svg",
   scroll: "assets/icons/PapyrusScroll1.svg",
   papyrus: "assets/icons/PapyrusScroll1.svg",
+  manuscript: "assets/icons/SpectralManuscript1.svg",
 };
 const FALLBACK_ICON = "assets/icons/Generic1.svg";
 

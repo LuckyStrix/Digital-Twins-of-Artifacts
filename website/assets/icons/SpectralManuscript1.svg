@@ -1,0 +1,22 @@
+<svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+  <!-- A manuscript leaf, tilted like the other artifact icons, with a
+       magnifying lens revealing a spectrum fan — the site's existing
+       "reveal detail through a lens" motif, tinted to match the wavelength
+       equalizer / MISHA-card accent so this reads as multispectral. -->
+  <g transform="rotate(-8 50 46)">
+    <rect x="24" y="10" width="52" height="70" rx="4" fill="#f3e7c6" stroke="#800020" stroke-width="3.5"/>
+    <line x1="32" y1="26" x2="64" y2="26" stroke="#800020" stroke-width="2.2" stroke-linecap="round"/>
+    <line x1="32" y1="36" x2="64" y2="36" stroke="#800020" stroke-width="2.2" stroke-linecap="round"/>
+    <line x1="32" y1="46" x2="58" y2="46" stroke="#800020" stroke-width="2.2" stroke-linecap="round"/>
+    <line x1="32" y1="56" x2="64" y2="56" stroke="#800020" stroke-width="2.2" stroke-linecap="round"/>
+    <line x1="32" y1="66" x2="50" y2="66" stroke="#800020" stroke-width="2.2" stroke-linecap="round"/>
+  </g>
+
+  <line x1="76" y1="70" x2="90" y2="84" stroke="#800020" stroke-width="5" stroke-linecap="round"/>
+  <circle cx="64" cy="58" r="17" fill="#fffaf0" fill-opacity="0.94" stroke="#800020" stroke-width="3.5"/>
+  <line x1="64" y1="58" x2="54" y2="48" stroke="#7a3ff2" stroke-width="2.4" stroke-linecap="round"/>
+  <line x1="64" y1="58" x2="57" y2="46" stroke="#2fa4e7" stroke-width="2.4" stroke-linecap="round"/>
+  <line x1="64" y1="58" x2="61" y2="45" stroke="#52c46b" stroke-width="2.4" stroke-linecap="round"/>
+  <line x1="64" y1="58" x2="66" y2="45" stroke="#e0b93a" stroke-width="2.4" stroke-linecap="round"/>
+  <line x1="64" y1="58" x2="70" y2="47" stroke="#d94f4f" stroke-width="2.4" stroke-linecap="round"/>
+</svg>

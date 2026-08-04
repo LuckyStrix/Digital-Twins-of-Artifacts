@@ -493,6 +493,23 @@ body.viewer-body canvas {
   white-space: pre-line;
 }
 
+.info-link {
+  display: none;
+  margin-top: 12px;
+  padding: 6px 14px;
+  border-radius: 999px;
+  background: var(--burgundy);
+  color: #fff;
+  font-size: 0.85rem;
+  font-weight: 600;
+  text-decoration: none;
+  text-align: center;
+}
+
+.info-link:hover {
+  filter: brightness(1.1);
+}
+
 #lightingPanelWrapper {
   position: fixed;
   bottom: 24px;

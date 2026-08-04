@@ -106,6 +106,7 @@ const infoPanel = document.getElementById("infoPanel");
 const infoName = document.getElementById("infoName");
 const infoType = document.getElementById("infoType");
 const infoDescription = document.getElementById("infoDescription");
+const infoLink = document.getElementById("infoLink");
 
 const lightingToggle = document.getElementById("lightingToggle");
 const lightingPanel = document.getElementById("lightingPanel");
@@ -873,6 +874,13 @@ async function init() {
   infoName.textContent = artifact.name;
   infoType.textContent = titleCase(artifact.type || "other");
   infoDescription.textContent = artifact.description || "";
+  if (artifact.link) {
+    infoLink.href = artifact.link;
+    infoLink.textContent = `${artifact.linkLabel || "View Source"} ↗`;
+    infoLink.style.display = "inline-block";
+  } else {
+    infoLink.style.display = "none";
+  }
 
   setStatus("Loading model…");
   loadScene(

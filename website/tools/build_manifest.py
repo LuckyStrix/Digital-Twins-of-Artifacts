@@ -39,9 +39,15 @@ The .txt file is written like this (field order doesn't matter):
     Description: A clay tablet bearing an
     administrative record from the
     Third Dynasty of Ur.
+    Link: https://example.edu/collection/tablet-12
+    Link Label: Cary Collection Link
 
 Everything after "Description:" up to end of file is captured as the
 description. A blank line starts a new paragraph.
+
+"Link" and "Link Label" are both optional. If "Link" is present, the
+viewer shows it as a clickable button in the info panel, labeled with
+"Link Label" (or a generic default if omitted).
 
 == backgrounds/ ==
 
@@ -58,7 +64,7 @@ from pathlib import Path
 
 ARTIFACTS_DIR = Path(__file__).resolve().parent.parent / "artifacts"
 MANIFEST_PATH = ARTIFACTS_DIR / "manifest.json"
-FIELD_RE = re.compile(r"^\s*(name|type|description)\s*:\s*(.*)$", re.IGNORECASE)
+FIELD_RE = re.compile(r"^\s*(name|type|description|link\s*label|link)\s*:\s*(.*)$", re.IGNORECASE)
 MODEL_PATTERNS = ["*.glb", "*.gltf", "*.obj"]
 
 BACKGROUNDS_DIR = Path(__file__).resolve().parent.parent / "backgrounds"
@@ -88,12 +94,12 @@ def is_two_sided(models):
 
 
 def parse_info_txt(text):
-    fields = {"name": [], "type": [], "description": []}
+    fields = {"name": [], "type": [], "description": [], "link": [], "linklabel": []}
     current = None
     for raw_line in text.splitlines():
         match = FIELD_RE.match(raw_line)
         if match:
-            current = match.group(1).lower()
+            current = re.sub(r"\s+", "", match.group(1).lower())
             rest = match.group(2).strip()
             if rest:
                 fields[current].append(rest)
@@ -113,7 +119,13 @@ def parse_info_txt(text):
             paragraphs.append(" ".join(buf))
         return "\n\n".join(paragraphs)
 
-    return {"name": join("name"), "type": join("type"), "description": join("description")}
+    return {
+        "name": join("name"),
+        "type": join("type"),
+        "description": join("description"),
+        "link": join("link"),
+        "linklabel": join("linklabel"),
+    }
 
 
 def build():
@@ -156,6 +168,11 @@ def build():
             "description": info["description"],
             "model": f"{folder.name}/{model_file.name}",
         }
+
+        if info["link"]:
+            entry["link"] = info["link"]
+            if info["linklabel"]:
+                entry["linkLabel"] = info["linklabel"]
 
         if two_sided:
             entry["back"] = f"{folder.name}/{models[1].name}"

@@ -19,9 +19,15 @@ Type: tablet
 Description: A clay tablet bearing an
 administrative record from the
 Third Dynasty of Ur.
+Link: https://example.edu/collection/tablet-12
+Link Label: Cary Collection Link
 ```
 
 Notes on the `.txt` format:
+
+- `Link` and `Link Label` are both optional. If `Link` is present, the
+  viewer shows a button in the info panel that opens that URL in a new
+  tab, labeled with `Link Label` (or "View Source" if omitted).
 
 - Field order doesn't matter, and field names are case-insensitive.
 - `Description:` captures everything after it through the end of the

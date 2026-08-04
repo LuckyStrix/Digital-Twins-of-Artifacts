@@ -59,6 +59,15 @@
       "model": "demoTablet2/demo2.glb"
     },
     {
+      "id": "realTablet",
+      "name": "Sumerian Cuneiform tablet",
+      "type": "tablet",
+      "description": "Clay tablet with text of an administrative nature. The tablet originated from the ancient city of Umma, which is now known as Tell Jokha. It is dated from the period of Ur III (ca. 2100-2000 BCE).  Rights: RIT Libraries makes materials from its collections available for educational and research purposes pursuant to U.S. Copyright Law. You are free to use this Item in any way that is permitted by the copyright and related rights legislation that applies to your use. It is your responsibility to obtain permission from the copyright holder to publish or reproduce images in print or electronic form.",
+      "model": "realTablet/model_simplified.glb",
+      "link": "https://digitalcollections.rit.edu/luna/servlet/detail/RIT~1~1~952~8814:Sumerian-Cuneiform-tablet?sort=title%2Ccreator%2Cdate&mi=1&trs=3&qvq=w4s:/what%2FCuneiform;sort:title%2Ccreator%2Cdate;lc:RIT~1~1",
+      "linkLabel": "Cary Collection Link"
+    },
+    {
       "id": "misaligned_tablet",
       "name": "Tablet (bad model) (Demo Artifact)",
       "type": "tablet",

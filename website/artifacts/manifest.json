@@ -22,19 +22,19 @@
       "model": "foil/28-07-26_13-47-31.glb"
     },
     {
+      "id": "realPapyrus2Sides",
+      "name": "Hieratic Fragment of the Book of the Dead",
+      "type": "papyrus",
+      "description": "Papyrus roll in the RIT Cary Graphic Arts Collection. Egypt, c. 323-30 BCE. Rights: RIT Libraries makes materials from its collections available for educational and research purposes pursuant to U.S. Copyright Law. You are free to use this Item in any way that is permitted by the copyright and related rights legislation that applies to your use. It is your responsibility to obtain permission from the copyright holder to publish or reproduce images in print or electronic form.",
+      "model": "realPapyrus2Sides/side1.glb",
+      "back": "realPapyrus2Sides/side2.glb"
+    },
+    {
       "id": "paper",
       "name": "Paper",
       "type": "papyrus",
       "description": "A piece of paper",
       "model": "paper/28-07-26_16-01-19.glb"
-    },
-    {
-      "id": "realPapyrus2Sides",
-      "name": "Placeholder text",
-      "type": "papyrus",
-      "description": "Placeholder text",
-      "model": "realPapyrus2Sides/side1.glb",
-      "back": "realPapyrus2Sides/side2.glb"
     },
     {
       "id": "mainDemotablet",

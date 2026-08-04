@@ -29,6 +29,14 @@
       "model": "paper/28-07-26_16-01-19.glb"
     },
     {
+      "id": "realPapyrus2Sides",
+      "name": "Placeholder text",
+      "type": "papyrus",
+      "description": "Placeholder text",
+      "model": "realPapyrus2Sides/side1.glb",
+      "back": "realPapyrus2Sides/side2.glb"
+    },
+    {
       "id": "mainDemotablet",
       "name": "Sample Cuneiform Tablet Replica",
       "type": "tablet",
@@ -69,7 +77,7 @@
       "name": "Wax Seal 1",
       "type": "papyrus",
       "description": "A wax seal provided to us for testing",
-      "model": "waxSeal1_papyrus/29-07-26_12-07-08.glb"
+      "model": "waxSeal1_papyrus/31-07-26_13-05-13.glb"
     },
     {
       "id": "waxSeal2_papyrus",

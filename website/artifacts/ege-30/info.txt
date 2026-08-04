@@ -1,0 +1,11 @@
+Name: Ege 30
+Type: manuscript
+Description: A 15th-century manuscript leaf (Book of Hours) from the Otto
+Ege collection in the RIT Cary Graphic Arts Collection. Imaged across 16
+wavelengths from UV through near-infrared by MISHA (Multispectral Imaging
+System for Historical Artifacts), an independent project of RIT's Cultural
+Heritage Imaging, Preservation, and Research program (rit.edu/chipr/misha)
+— not one of this project's own capture systems. Preliminary review found
+probable undertext visible under UV, indicating this leaf is a palimpsest.
+Link: https://www.rit.edu/chipr/misha
+Link Label: About MISHA

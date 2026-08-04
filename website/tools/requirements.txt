@@ -1,0 +1,14 @@
+# Python dependencies for build_msi_assets.py
+#
+# Install with:
+#   pip install -r requirements.txt
+#
+# Kept separate from the rest of website/tools/ (build_manifest.py is
+# deliberately stdlib-only) so editing an info.txt and rerunning the
+# manifest builder never requires installing an imaging stack.
+
+numpy<2.0
+pillow
+tifffile
+imagecodecs   # required: MISHA's raw TIFFs may be LZW-compressed, and
+              # tifffile needs imagecodecs to decode LZW TIFFs

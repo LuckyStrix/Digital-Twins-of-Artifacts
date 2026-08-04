@@ -49,6 +49,32 @@ description. A blank line starts a new paragraph.
 viewer shows it as a clickable button in the info panel, labeled with
 "Link Label" (or a generic default if omitted).
 
+== msi/ ==
+
+An artifact folder may also (or instead — see below) contain an msi/
+subfolder holding multispectral band data. This data comes from MISHA
+(Multispectral Imaging System for Historical Artifacts), an EXTERNAL,
+independent imaging project at RIT's Cultural Heritage Imaging,
+Preservation, and Research program (https://www.rit.edu/chipr/misha) — not
+one of this repo's own 2D/3D capture systems. See website/tools/
+build_msi_assets.py, which generates this subfolder from a raw MISHA
+export:
+
+    msi/bands/<wavelength>nm.webp   one downsampled, contrast-stretched
+                                     image per captured wavelength
+    msi/msi_manifest.json           band list + wavelengths, machine-written
+                                     by build_msi_assets.py (never hand-edit)
+    msi/recipes.json                optional, hand-authored curator presets
+                                     for the web equalizer viewer (never
+                                     touched by build_msi_assets.py)
+
+If msi/msi_manifest.json exists, this script adds an "msi" pointer (a path
+to that file) to the artifact's manifest entry, the same way "model"/
+"back"/"mtl" point at model files. An artifact with msi/ data and no
+.glb/.gltf/.obj at all is valid — it's MSI-only, and the homepage/viewer
+route it to the "MISHA-Imaged Artifacts" section instead of the regular
+model viewer.
+
 == backgrounds/ ==
 
 Each background folder must contain exactly six images, named for the
@@ -80,6 +106,12 @@ def find_model_file(folder):
         if matches:
             return matches
     return []
+
+
+def find_msi_manifest(folder):
+    """Return the folder's msi/msi_manifest.json path if it exists, else None."""
+    path = folder / "msi" / "msi_manifest.json"
+    return path if path.exists() else None
 
 
 def is_two_sided(models):
@@ -140,20 +172,19 @@ def build():
 
         models = find_model_file(folder)
         txts = sorted(folder.glob("*.txt"))
+        msi_manifest = find_msi_manifest(folder)
 
-        if not models:
-            print(f"skip '{folder.name}': no .glb/.gltf/.obj model file found", file=sys.stderr)
+        if not models and not msi_manifest:
+            print(f"skip '{folder.name}': no model file and no msi/ data found", file=sys.stderr)
             continue
         if not txts:
             print(f"skip '{folder.name}': no .txt file found", file=sys.stderr)
             continue
-        two_sided = is_two_sided(models)
+        two_sided = is_two_sided(models) if models else False
         if len(models) > 1 and not two_sided:
             print(f"warn '{folder.name}': multiple model files found, using '{models[0].name}'", file=sys.stderr)
         if len(txts) > 1:
             print(f"warn '{folder.name}': multiple .txt files found, using '{txts[0].name}'", file=sys.stderr)
-
-        model_file = models[0]
 
         info = parse_info_txt(txts[0].read_text(encoding="utf-8"))
         if not info["name"]:
@@ -166,25 +197,34 @@ def build():
             "name": info["name"],
             "type": info["type"],
             "description": info["description"],
-            "model": f"{folder.name}/{model_file.name}",
         }
+
+        if models:
+            model_file = models[0]
+            entry["model"] = f"{folder.name}/{model_file.name}"
+
+            if two_sided:
+                entry["back"] = f"{folder.name}/{models[1].name}"
+
+            if model_file.suffix.lower() == ".obj":
+                mtls = sorted(folder.glob("*.mtl"))
+                if mtls:
+                    entry["mtl"] = f"{folder.name}/{mtls[0].name}"
+                    if len(mtls) > 1:
+                        print(f"warn '{folder.name}': multiple .mtl files found, using '{mtls[0].name}'", file=sys.stderr)
+                else:
+                    print(f"note '{folder.name}': .obj with no .mtl — will load with a default material", file=sys.stderr)
 
         if info["link"]:
             entry["link"] = info["link"]
             if info["linklabel"]:
                 entry["linkLabel"] = info["linklabel"]
 
-        if two_sided:
-            entry["back"] = f"{folder.name}/{models[1].name}"
-
-        if model_file.suffix.lower() == ".obj":
-            mtls = sorted(folder.glob("*.mtl"))
-            if mtls:
-                entry["mtl"] = f"{folder.name}/{mtls[0].name}"
-                if len(mtls) > 1:
-                    print(f"warn '{folder.name}': multiple .mtl files found, using '{mtls[0].name}'", file=sys.stderr)
-            else:
-                print(f"note '{folder.name}': .obj with no .mtl — will load with a default material", file=sys.stderr)
+        # msi is an EXTERNAL data source (MISHA, RIT CHIPR — see the == msi/ ==
+        # section above) — this pointer just lets the site find it, it doesn't
+        # imply the data was captured by this project's own pipelines.
+        if msi_manifest:
+            entry["msi"] = f"{folder.name}/msi/msi_manifest.json"
 
         artifacts.append(entry)
 

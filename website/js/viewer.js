@@ -6,6 +6,7 @@ import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { TrackballControls } from "three/examples/jsm/controls/TrackballControls.js";
 import { RoomEnvironment } from "three/examples/jsm/environments/RoomEnvironment.js";
 import { FilesetResolver, HandLandmarker } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14";
+import { fetchArtifact, initInfoToggle, populateInfoPanel, populateCrossLink } from "./artifactInfo.js";
 
 // .glb and loose .gltf (+ .bin + textures) both go through GLTFLoader.
 // .obj goes through OBJLoader, picking up its companion .mtl if the
@@ -101,12 +102,6 @@ const params = new URLSearchParams(window.location.search);
 const artifactId = params.get("id");
 
 const statusEl = document.getElementById("status");
-const infoToggle = document.getElementById("infoToggle");
-const infoPanel = document.getElementById("infoPanel");
-const infoName = document.getElementById("infoName");
-const infoType = document.getElementById("infoType");
-const infoDescription = document.getElementById("infoDescription");
-const infoLink = document.getElementById("infoLink");
 
 const lightingToggle = document.getElementById("lightingToggle");
 const lightingPanel = document.getElementById("lightingPanel");
@@ -181,10 +176,7 @@ function isAnimating() {
   return false;
 }
 
-infoToggle.addEventListener("click", () => {
-  const open = infoPanel.classList.toggle("open");
-  infoToggle.innerHTML = open ? "Artifact Info &#x25B2;" : "Artifact Info &#x25BC;";
-});
+initInfoToggle();
 
 // Lighting/Background/Hand Tracking all stack in the same bottom-right
 // corner, so an open panel can grow tall enough to run behind the
@@ -843,10 +835,6 @@ function fadeStatus() {
   }, 1800);
 }
 
-function titleCase(str) {
-  return str.replace(/\w\S*/g, (w) => w[0].toUpperCase() + w.slice(1).toLowerCase());
-}
-
 async function init() {
   if (!artifactId) {
     setStatus("No artifact specified.");
@@ -855,10 +843,7 @@ async function init() {
 
   let artifact;
   try {
-    const res = await fetch("artifacts/manifest.json", { cache: "no-store" });
-    if (!res.ok) throw new Error(`manifest request failed: ${res.status}`);
-    const data = await res.json();
-    artifact = (data.artifacts || []).find((a) => a.id === artifactId);
+    artifact = await fetchArtifact(artifactId);
   } catch (err) {
     console.error(err);
     setStatus("Couldn't load artifact manifest.");
@@ -870,17 +855,23 @@ async function init() {
     return;
   }
 
-  document.title = `${artifact.name} — Artifact Viewer`;
-  infoName.textContent = artifact.name;
-  infoType.textContent = titleCase(artifact.type || "other");
-  infoDescription.textContent = artifact.description || "";
-  if (artifact.link) {
-    infoLink.href = artifact.link;
-    infoLink.textContent = `${artifact.linkLabel || "View Source"} ↗`;
-    infoLink.style.display = "inline-block";
-  } else {
-    infoLink.style.display = "none";
+  if (!artifact.model) {
+    if (artifact.msi) {
+      // MSI-only artifacts (MISHA multispectral data, no 3D scan) have
+      // nothing for this page to show — send visitors straight to the
+      // band viewer instead of landing on an empty "no model" page.
+      // replace() so the dead-end viewer.html?id=... doesn't sit in
+      // history between the gallery and the band viewer.
+      window.location.replace(`msi.html?id=${encodeURIComponent(artifact.id)}`);
+      return;
+    }
+    populateInfoPanel(artifact, "Artifact Viewer");
+    setStatus("This artifact has no 3D model.");
+    return;
   }
+
+  populateInfoPanel(artifact, "Artifact Viewer");
+  populateCrossLink(artifact, "msi");
 
   setStatus("Loading model…");
   loadScene(

@@ -250,6 +250,31 @@ main {
   color: var(--cream-light);
 }
 
+.card-links {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+}
+
+/* ── MISHA-Imaged Artifacts section ──
+   A visually distinct accent (independent of the copy) so it reads at a
+   glance as a separate, external-collaboration section, not one of our
+   own two capture systems below. */
+.misha-section {
+  border: 1px solid rgba(128, 0, 32, 0.18);
+}
+
+.misha-section-badge {
+  margin-bottom: 10px;
+}
+
+.misha-card {
+  border-top: 3px solid;
+  border-image: linear-gradient(90deg, #7a3ff2, #2fa4e7, #52c46b, #e0b93a, #d94f4f) 1;
+}
+
 /* ── Systems section ── */
 .placeholder-block {
   border: 2px dashed rgba(128, 0, 32, 0.35);
@@ -802,5 +827,214 @@ body.viewer-body canvas {
   .systems-grid {
     grid-template-columns: 1fr;
     max-width: 100%;
+  }
+}
+
+/* ══════════════════════════════════════════════════════════
+   MSI (MISHA spectral band) viewer
+   ══════════════════════════════════════════════════════════ */
+
+body.msi-body {
+  margin: 0;
+  height: 100vh;
+  overflow: hidden;
+  background: #14110d;
+  color: #fff;
+  display: flex;
+  flex-direction: column;
+  touch-action: none;
+}
+
+/* The floating info panel would otherwise sit at the bottom of the
+   viewport (see #infoPanelWrapper above) and collide with the docked
+   equalizer controls, so on this page it lives under the top bar instead. */
+body.msi-body #infoPanelWrapper {
+  bottom: auto;
+  top: 54px;
+  left: 12px;
+}
+
+body.msi-body #infoPanel {
+  bottom: auto;
+  top: 44px;
+}
+
+.misha-credit-banner {
+  position: fixed;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(0, 0, 0, 0.65);
+  color: #fff;
+  padding: 8px 16px;
+  border-radius: 10px;
+  font-size: 11.5px;
+  line-height: 1.4;
+  z-index: 45;
+  text-align: center;
+  max-width: min(560px, 70vw);
+}
+
+.misha-credit-banner a {
+  color: #f0d9a0;
+  font-weight: 600;
+}
+
+#msiStage {
+  flex: 1;
+  min-height: 0;
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  padding: 76px 16px 12px;
+}
+
+#msiCanvas {
+  max-width: 100%;
+  max-height: 100%;
+  border-radius: 8px;
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.5);
+  background: #000;
+}
+
+#msiControls {
+  flex-shrink: 0;
+  background: rgba(240, 217, 160, 0.97);
+  color: #1a1a1a;
+  padding: 14px 20px 18px;
+  box-shadow: 0 -6px 20px rgba(0, 0, 0, 0.35);
+  z-index: 40;
+  max-height: 46vh;
+  overflow-y: auto;
+}
+
+.recipe-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.recipe-row:empty {
+  display: none;
+  margin-bottom: 0;
+}
+
+.recipe-chip {
+  border: 1.5px solid var(--burgundy);
+  background: transparent;
+  color: var(--burgundy);
+  padding: 5px 14px;
+  border-radius: 999px;
+  font-family: var(--font-body);
+  font-size: 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.2s ease, color 0.2s ease;
+}
+
+.recipe-chip:hover,
+.recipe-chip.active {
+  background: var(--burgundy);
+  color: var(--cream-light);
+}
+
+.msi-panel-body {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 24px;
+  align-items: flex-end;
+}
+
+.eq-row {
+  display: flex;
+  gap: 10px;
+  align-items: flex-end;
+  overflow-x: auto;
+  padding-bottom: 4px;
+  flex: 1;
+  min-width: 240px;
+}
+
+.eq-fader {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 5px;
+  min-width: 32px;
+}
+
+.eq-fader input[type="range"] {
+  -webkit-appearance: slider-vertical;
+  writing-mode: vertical-lr;
+  direction: rtl;
+  width: 8px;
+  height: 110px;
+  cursor: pointer;
+}
+
+.eq-fader .eq-region {
+  font-size: 0.58rem;
+  opacity: 0.75;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.eq-fader .eq-label {
+  font-size: 0.66rem;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.eq-fader .eq-value {
+  font-size: 0.62rem;
+  opacity: 0.65;
+}
+
+.global-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  align-items: flex-end;
+  min-width: 200px;
+}
+
+.global-controls .slider-row {
+  width: 180px;
+  margin-bottom: 0;
+}
+
+.recipe-caption {
+  margin: 12px 0 0;
+  font-size: 0.85rem;
+  font-style: italic;
+  opacity: 0.85;
+  max-width: 720px;
+}
+
+.recipe-caption:empty {
+  display: none;
+  margin-top: 0;
+}
+
+@media (max-width: 700px) {
+  .misha-credit-banner {
+    max-width: 90vw;
+    font-size: 10.5px;
+  }
+
+  #msiControls {
+    padding: 12px 14px 16px;
+  }
+
+  .eq-fader input[type="range"] {
+    height: 80px;
+  }
+
+  .global-controls .slider-row {
+    width: 140px;
   }
 }

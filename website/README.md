@@ -6,16 +6,24 @@ server-side code required to host it.
 ## Structure
 
 ```
-index.html          Homepage: header, artifact gallery, "Our Systems", contact footer
+index.html          Homepage: header, artifact gallery, MISHA-Imaged Artifacts, "Our Systems", contact footer
 viewer.html          Generic 3D viewer for a single artifact (?id=<artifact-folder-name>)
-css/style.css         All styles for both pages
+msi.html             Multispectral band viewer for a single artifact (?id=<artifact-folder-name>)
+css/style.css         All styles for all pages
 js/main.js            Loads artifacts/manifest.json and renders the gallery cards
 js/viewer.js          Loads a model + its metadata, lighting, optional background, and a webcam hand-tracked magnifying lens
+js/msi.js             Loads a MISHA band stack + its metadata into the wavelength-equalizer viewer
+js/artifactInfo.js    Shared info-panel logic (manifest fetch, populate panel, cross-links) used by viewer.js and msi.js
 assets/               Fonts, icons
-artifacts/            One folder per artifact (model + txt) — see artifacts/README.md
+artifacts/            One folder per artifact (model and/or msi/ + txt) — see artifacts/README.md
 backgrounds/          One folder per cube-map background — see backgrounds/README.md
-tools/build_manifest.py   Scans artifacts/ and backgrounds/, writes their manifest.json files
+tools/build_manifest.py     Scans artifacts/ and backgrounds/, writes their manifest.json files
+tools/build_msi_assets.py   Converts a raw MISHA multispectral export into an artifact's msi/ folder — see tools/requirements.txt
 ```
+
+`msi.html`/`js/msi.js` display data from **MISHA**, an external, independent
+imaging project (see `artifacts/README.md`'s `== msi/ ==` section) — not
+something captured by this repo's own 2D/3D rigs.
 
 ## Adding artifacts
 
@@ -31,6 +39,29 @@ This rewrites `artifacts/manifest.json` and `backgrounds/manifest.json`,
 which the homepage and viewer read at load time. Re-run it any time
 artifacts or backgrounds are added, removed, or edited, and before
 deploying.
+
+## Adding MISHA multispectral data
+
+MISHA is an **external, independent project** (see the top-level
+[`README.md`](../README.md) and `artifacts/README.md`'s `== msi/ ==`
+section) — this only covers turning a raw MISHA export you've been given
+into web assets, not capturing new data yourselves.
+
+Install `tools/requirements.txt` (a separate, small imaging-library stack —
+`build_manifest.py` itself stays dependency-free), then run:
+
+```
+pip install -r tools/requirements.txt
+python3 tools/build_msi_assets.py <raw-export-dir> <artifact-id>
+```
+
+This writes `artifacts/<artifact-id>/msi/bands/*.webp` +
+`msi_manifest.json`. Keep the raw export itself out of the repo — put it
+under the gitignored `data/` folder (e.g. `data/msi/<artifact-id>-raw/`),
+the same convention the 2D/3D pipelines use for their own raw captures.
+Then, optionally, hand-write `artifacts/<artifact-id>/msi/recipes.json`
+with curator-picked equalizer presets, and rerun `tools/build_manifest.py`
+as above.
 
 ## Adding backgrounds
 

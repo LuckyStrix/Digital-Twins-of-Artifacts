@@ -18,9 +18,11 @@ function truncate(text, max) {
   return text.slice(0, max - 1).trimEnd() + "…";
 }
 
-function renderCard(artifact) {
+// Shared by both the "Artifacts" grid (our own digital twins) and the
+// "MISHA-Imaged Artifacts" grid — only the link list differs between them.
+function renderCard(artifact, links, extraClass) {
   const card = document.createElement("article");
-  card.className = "artifact-card";
+  card.className = extraClass ? `artifact-card ${extraClass}` : "artifact-card";
 
   const icon = document.createElement("img");
   icon.className = "card-icon";
@@ -39,18 +41,34 @@ function renderCard(artifact) {
   desc.className = "card-description";
   desc.textContent = truncate(artifact.description || "", 160);
 
-  const link = document.createElement("a");
-  link.className = "card-link";
-  link.href = `viewer.html?id=${encodeURIComponent(artifact.id)}`;
-  link.textContent = "View in 3D →";
+  const linksWrap = document.createElement("div");
+  linksWrap.className = "card-links";
+  for (const { href, text } of links) {
+    const link = document.createElement("a");
+    link.className = "card-link";
+    link.href = href;
+    link.textContent = text;
+    linksWrap.appendChild(link);
+  }
 
-  card.append(icon, title, badge, desc, link);
+  card.append(icon, title, badge, desc, linksWrap);
   return card;
+}
+
+function viewerLink(artifact) {
+  return { href: `viewer.html?id=${encodeURIComponent(artifact.id)}`, text: "View in 3D →" };
+}
+
+function msiLink(artifact) {
+  return { href: `msi.html?id=${encodeURIComponent(artifact.id)}`, text: "Explore Spectral Bands →" };
 }
 
 async function loadArtifacts() {
   const container = document.getElementById("artifact-groups");
   const status = document.getElementById("artifact-status");
+  const mishaSection = document.getElementById("misha-artifacts");
+  const mishaContainer = document.getElementById("misha-artifact-groups");
+  const mishaStatus = document.getElementById("misha-artifact-status");
 
   let data;
   try {
@@ -60,15 +78,26 @@ async function loadArtifacts() {
   } catch (err) {
     console.error(err);
     status.textContent = "Couldn't load artifacts. Make sure artifacts/manifest.json exists (run tools/build_manifest.py).";
+    mishaSection.style.display = "none";
     return;
   }
 
-  const artifacts = data.artifacts || [];
+  const allArtifacts = data.artifacts || [];
+  // MISHA data comes from an external collaborator (see the section intro)
+  // and gets its own section rather than being folded into our own
+  // type-grouped digital-twin gallery below.
+  const mishaArtifacts = allArtifacts.filter((a) => a.msi);
+  const ownArtifacts = allArtifacts.filter((a) => !a.msi);
+
+  renderOwnArtifacts(ownArtifacts, container, status);
+  renderMishaArtifacts(mishaArtifacts, mishaContainer, mishaStatus, mishaSection);
+}
+
+function renderOwnArtifacts(artifacts, container, status) {
   if (artifacts.length === 0) {
     status.textContent = "No artifacts yet — add a folder to artifacts/ and rerun tools/build_manifest.py.";
     return;
   }
-
   status.remove();
 
   const groups = new Map();
@@ -91,12 +120,32 @@ async function loadArtifacts() {
     const grid = document.createElement("div");
     grid.className = "card-grid";
     for (const artifact of groups.get(type)) {
-      grid.appendChild(renderCard(artifact));
+      grid.appendChild(renderCard(artifact, [viewerLink(artifact)]));
     }
 
     section.append(heading, grid);
     container.appendChild(section);
   }
+}
+
+function renderMishaArtifacts(artifacts, container, status, section) {
+  if (artifacts.length === 0) {
+    // No MISHA-imaged artifacts yet (e.g. a fresh clone of this repo) —
+    // hide the whole section rather than show an empty external-collaboration
+    // callout with nothing under it.
+    section.style.display = "none";
+    return;
+  }
+  status.remove();
+
+  const grid = document.createElement("div");
+  grid.className = "card-grid";
+  for (const artifact of artifacts) {
+    const links = [msiLink(artifact)];
+    if (artifact.model) links.push(viewerLink(artifact));
+    grid.appendChild(renderCard(artifact, links, "misha-card"));
+  }
+  container.appendChild(grid);
 }
 
 loadArtifacts();

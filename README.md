@@ -9,6 +9,8 @@ This system was built from work started during the 2025-26 Freshman Imaging Proj
 3D/ is primarily for scanning Cuneiform Tablets, but can be used for any 3D object placed on it.
 2D/ is primarily for Papyrus Manuscripts, but can be used for any object that doesn't need thickness or height in the output, just detail
 
+The website also displays multispectral scans from **MISHA** (Multispectral Imaging System for Historical Artifacts), an **independent project** at RIT's Cultural Heritage Imaging, Preservation, and Research (CHIPR) program (https://www.rit.edu/chipr/misha). MISHA is **not** one of this project's own 2D/3D capture systems above — it's an external collaborator whose data we display, shown in its own "MISHA-Imaged Artifacts" section on the site. See [`website/artifacts/README.md`](website/artifacts/README.md) for how that data is integrated.
+
 ## System overview
 
 Which rig an artifact uses depends on whether its shape carries meaning in

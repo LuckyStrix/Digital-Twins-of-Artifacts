@@ -81,3 +81,30 @@ This applies to exactly two `.glb` files. A folder with three or more,
 or with a loose `.gltf`/`.obj`, still resolves to a single model — the
 companion `.bin`/`.mtl` files of those formats can't be distinguished
 from a second side. Both sides must be `.glb`.
+
+## `msi/` — data from the external MISHA system
+
+An artifact folder may also contain an `msi/` subfolder holding
+multispectral band data. **This data comes from MISHA (Multispectral
+Imaging System for Historical Artifacts), an independent project at RIT's
+Cultural Heritage Imaging, Preservation, and Research program
+(https://www.rit.edu/chipr/misha) — it is not one of this repo's own
+2D/3D capture systems.** Artifacts with `msi/` data show up in the
+homepage's separate "MISHA-Imaged Artifacts" section, not the regular
+type-grouped gallery, and link to `msi.html` instead of `viewer.html`. An
+artifact can have `msi/` data with no 3D model at all (e.g. `ege-30`).
+
+```
+artifacts/<id>/msi/
+  bands/<wavelength>nm.webp   one downsampled, contrast-stretched image
+                               per captured wavelength
+  msi_manifest.json           band list + wavelengths — machine-written by
+                               tools/build_msi_assets.py, never hand-edit
+  recipes.json                optional, hand-authored curator presets (band
+                               weights + exposure/contrast) for the web
+                               equalizer viewer — build_msi_assets.py never
+                               touches this file
+```
+
+To add MISHA data for an artifact, see "Adding MISHA multispectral data"
+in [`../README.md`](../README.md).

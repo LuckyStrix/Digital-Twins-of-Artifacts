@@ -121,9 +121,3 @@ Output is pixel-for-pixel identical to the draw-every-tick viewer on both
 call `requestRender()`, or a continuously-changing thing must be added to
 `isAnimating()`. A missing call looks like a frozen viewer; a spurious one
 costs a single redraw. When unsure, call it.
-
-## To fill in
-
-- `backgrounds/demo-colors/` is a placeholder cube map (six flat
-  colors) so the Background panel has something to show — delete it
-  once you've added real cube maps, then rerun the build script.

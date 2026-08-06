@@ -87,6 +87,31 @@ def parse_args() -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--prune-fill-color",
+        choices=("white", "black", "none"),
+        default=os.environ.get("FIPMESH_RECON_PRUNE_FILL_COLOR", "white"),
+        help=(
+            "Drop fused points whose colour sits within --prune-fill-threshold "
+            "of this flat background fill colour (matching process_photos.py's "
+            "--background white/black; use 'none' for --background transparent, "
+            "which has no single fill colour to prune by). Runs first, before "
+            "any other cleanup (default: white). Targets background bleed that "
+            "triangulated as fake surface, as a lower-risk alternative to "
+            "masking upstream in COLMAP — this can only ever delete points from "
+            "the already-fused cloud, so it can't affect pose estimation."
+        ),
+    )
+    parser.add_argument(
+        "--prune-fill-threshold",
+        type=float,
+        default=float(os.environ.get("FIPMESH_RECON_PRUNE_FILL_THRESHOLD", "16")),
+        help=(
+            "Max per-channel deviation (0-255 scale) from --prune-fill-color "
+            "to still count as background bleed (default: 16). Only matters "
+            "when --prune-fill-color is not 'none'."
+        ),
+    )
+    parser.add_argument(
         "--outlier-nb-neighbors",
         type=int,
         default=24,
@@ -493,6 +518,48 @@ def pcd_from_points(points: np.ndarray) -> o3d.geometry.PointCloud:
 
 def pcd_has_colors(pcd: o3d.geometry.PointCloud) -> bool:
     return pcd.has_colors() and len(pcd.colors) == len(pcd.points) and len(pcd.points) > 0
+
+
+def prune_fill_color(
+    pcd: o3d.geometry.PointCloud,
+    fill_color: str,
+    threshold: float,
+) -> tuple[o3d.geometry.PointCloud, int]:
+    """Drop points whose fused RGB colour sits within `threshold` (0-255 scale,
+    max per-channel deviation) of a known flat background fill colour
+    ("white" -> (255,255,255), "black" -> (0,0,0); "none" disables and returns
+    pcd unchanged), matching process_photos.py's --background option.
+
+    stereo_fusion carries per-point colour sampled/averaged from the
+    contributing source images. A point that's actually background bleed
+    triangulated as fake surface converges tightly on the exact fill colour,
+    since that region is genuinely flat in every contributing photo — unlike
+    real tablet surface (even dark/light surface), which shows natural
+    variation across viewpoints/lighting. This is a lower-risk alternative to
+    masking upstream in COLMAP: it only ever deletes points from an
+    already-fused cloud, after poses and fusion are already decided, so unlike
+    ImageReader.mask_path/StereoFusion.mask_path it cannot affect camera pose
+    estimation or fusion's consistency checks.
+
+    Does not catch soft-matte blend pixels (a genuine partial mix of real edge
+    colour and fill colour) unless that blend happens to still land within
+    `threshold` of the pure fill colour — it targets the confirmed "points
+    coloured like the exact background fill" failure mode, not partial-alpha
+    contamination."""
+    if fill_color == "none" or not pcd_has_colors(pcd):
+        return pcd, 0
+    target = {"white": (1.0, 1.0, 1.0), "black": (0.0, 0.0, 0.0)}.get(fill_color)
+    if target is None:
+        return pcd, 0
+
+    colors = np.asarray(pcd.colors, dtype=np.float64)
+    deviation = np.abs(colors - np.array(target)).max(axis=1)
+    keep_mask = deviation > (threshold / 255.0)
+    if keep_mask.all():
+        return pcd, 0
+    removed = int(len(colors) - int(keep_mask.sum()))
+    pcd2 = pcd.select_by_index(np.nonzero(keep_mask)[0].tolist())
+    return pcd2, removed
 
 
 def sanitize_points(points: np.ndarray, quant_eps: float = 1e-7) -> np.ndarray:
@@ -1496,6 +1563,19 @@ def main() -> int:
     print(f"input colors:        {'yes' if input_has_colors else 'no'}")
     if removed_sanitize > 0:
         print(f"sanitize removed:    {removed_sanitize}")
+
+    if args.prune_fill_color != "none":
+        _step("prune background-colour points")
+        pcd, removed_fill = prune_fill_color(
+            pcd, args.prune_fill_color, float(args.prune_fill_threshold)
+        )
+        print(f"prune fill colour:   {args.prune_fill_color} (threshold={args.prune_fill_threshold:g})")
+        print(f"points removed:      {removed_fill}")
+        print(f"points after prune:  {len(pcd.points)}")
+        if len(pcd.points) < 10:
+            print("error: too few points after fill-colour pruning", file=sys.stderr)
+            return 3
+        save_snapshot(output_path, "00_fill_color_pruned", pcd)
 
     if args.voxel_size > 0:
         _step("voxel downsample")

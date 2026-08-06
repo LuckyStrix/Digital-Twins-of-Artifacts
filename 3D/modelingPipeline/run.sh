@@ -32,7 +32,7 @@ fi
 # helper functions
 # -------------------------------
 usage() {
-    printf "usage: %s [-i <primary_image_dir>] [-s <secondary_image_dir>] [-o <output_dir>] [-v]\n" "$0" >&2
+    printf "usage: %s [-i <primary_image_dir>] [-s <secondary_image_dir>] [-o <output_dir>] [-m <primary_mask_dir>] [-n <secondary_mask_dir>] [-v]\n" "$0" >&2
     exit 1
 }
 
@@ -61,25 +61,35 @@ S_IMGDIR=
 EXTFILE=
 CAL_DIR=
 OUT_DIR=${SCRIPT_DIR}/out
+P_MASKDIR=
+S_MASKDIR=
 SDIR_IS_NEEDED=
 VERBOSE=
-while getopts "hi:s:o:v" o; do
+while getopts "hi:s:o:m:n:v" o; do
     case "${o}" in
         h)
             usage
             ;;
         i)
-            [ -z "${OPTARG}" ] && usage 
+            [ -z "${OPTARG}" ] && usage
             P_IMGDIR="${SCRIPT_DIR}/${OPTARG}"
             ;;
         s)
-            [ -z "${OPTARG}" ] && usage 
+            [ -z "${OPTARG}" ] && usage
             S_IMGDIR="${SCRIPT_DIR}/${OPTARG}"
             SDIR_IS_NEEDED=true
             ;;
         o)
-            [ -z "${OPTARG}" ] && usage 
+            [ -z "${OPTARG}" ] && usage
             OUT_DIR="${SCRIPT_DIR}/${OPTARG}"
+            ;;
+        m)
+            [ -z "${OPTARG}" ] && usage
+            P_MASKDIR="${SCRIPT_DIR}/${OPTARG}"
+            ;;
+        n)
+            [ -z "${OPTARG}" ] && usage
+            S_MASKDIR="${SCRIPT_DIR}/${OPTARG}"
             ;;
         v)
             VERBOSE=true
@@ -89,7 +99,7 @@ while getopts "hi:s:o:v" o; do
             ;;
     esac
 done
-shift $((OPTIND-1)) 
+shift $((OPTIND-1))
 
 echo "3"
 
@@ -106,6 +116,27 @@ if [ -n "$SDIR_IS_NEEDED" ]; then
   if [ ! -d "$S_IMGDIR" ] || [ -z "${S_IMGDIR}" ]; then
     die "invalid secondary image directory \"$S_IMGDIR\""
   fi
+fi
+
+# -m/-n take the exact mask directory for -i/-s respectively (same convention
+# as -i/-s themselves — no path derivation/guessing here). A mask dir is
+# optional and only needs to exist for the side that's actually in use;
+# run_colmap_mvs.py treats an unset/missing mask path as "no masking" rather
+# than erroring, so masking degrades gracefully instead of blocking a run.
+if [ -n "$P_MASKDIR" ]; then
+  if [ ! -d "$P_MASKDIR" ]; then
+    die "invalid primary mask directory \"$P_MASKDIR\""
+  fi
+  export FIPMESH_COLMAP_MASK_PATH="$P_MASKDIR"
+fi
+if [ -n "$S_MASKDIR" ]; then
+  if [ -z "$SDIR_IS_NEEDED" ]; then
+    die "-n given without -s"
+  fi
+  if [ ! -d "$S_MASKDIR" ]; then
+    die "invalid secondary mask directory \"$S_MASKDIR\""
+  fi
+  export FIPMESH_COLMAP_MASK_PATH_SECONDARY="$S_MASKDIR"
 fi
 
 echo "3.1"
@@ -283,6 +314,12 @@ fi
 status "primary image directory: %s" "$P_IMGDIR"
 if [ -n "${FIPMESH_COLMAP_IMAGES_SECONDARY:-}" ]; then
     status "secondary image directory: %s" "${FIPMESH_COLMAP_IMAGES_SECONDARY}"
+fi
+if [ -n "${FIPMESH_COLMAP_MASK_PATH:-}" ]; then
+    status "primary mask directory: %s" "${FIPMESH_COLMAP_MASK_PATH}"
+fi
+if [ -n "${FIPMESH_COLMAP_MASK_PATH_SECONDARY:-}" ]; then
+    status "secondary mask directory: %s" "${FIPMESH_COLMAP_MASK_PATH_SECONDARY}"
 fi
 status "output directory: %s" "$OUT_DIR"
 

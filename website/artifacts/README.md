@@ -23,6 +23,12 @@ Link: https://example.edu/collection/tablet-12
 Link Label: Cary Collection Link
 ```
 
+This `.txt` file can be generated automatically by
+[`3D/modelingPipeline`](../../3D/modelingPipeline/README.md#inputs-tab) — fill
+in the Inputs tab's Artifact info fields (Name/Type/Description/Link/Link
+Label) and Stage 4 writes it alongside the model, or run
+`python3 -m src.artifact_info` standalone.
+
 Notes on the `.txt` format:
 
 - `Link` and `Link Label` are both optional. If `Link` is present, the

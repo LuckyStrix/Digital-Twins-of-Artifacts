@@ -105,6 +105,24 @@ OPTIONS
                         board shape would bridge across real concavities too.
                         Only matters when --grow-chroma > 0.
   --nas                 Run legacy NAS workflow instead of local mode
+  --save-masks           Also write each image's final binary mask as its own PNG,
+                        alongside the background-composited output (default: off;
+                        pass --save-masks to enable). Feed the resulting directory
+                        to run_colmap_mvs.py's --mask-path so feature_extractor and
+                        stereo_fusion can use it directly instead of COLMAP
+                        guessing from RGB alone. NOTE: this was found to be able to
+                        destabilize camera pose estimation on low-texture images
+                        (starving them of real keypoints), producing badly wrong
+                        geometry on an otherwise-clean side. reconstruct_mesh.py's
+                        --prune-fill-color is the current preferred fix for
+                        background bleed — it only removes points from the
+                        already-fused cloud, so it can't affect pose estimation.
+                        Left in for further experimentation, off by default.
+  --mask-dir DIR        Where to write masks from --save-masks (default:
+                        <output>_masks, a sibling of --output). Mirrors the output
+                        folder's structure; each mask is named <image-filename>.png
+                        per COLMAP's mask_path convention (e.g. output/side1/foo.jpg
+                        -> mask_dir/side1/foo.jpg.png).
 """
 
 import argparse
@@ -296,6 +314,27 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Run legacy NAS workflow (pull → process → push).",
     )
+    p.add_argument(
+        "--save-masks",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Write each image's final binary mask as its own PNG (default: off "
+             "— COLMAP-side masking via run_colmap_mvs.py's --mask-path was found "
+             "to be able to destabilize camera pose estimation on low-texture "
+             "images, producing wildly wrong geometry; --prune-fill-color in "
+             "reconstruct_mesh.py is the current preferred fix for background "
+             "bleed instead. Pass --save-masks to re-enable for further "
+             "experimentation. Feed the resulting directory to "
+             "run_colmap_mvs.py's --mask-path so COLMAP can actually use the mask "
+             "(it never reads alpha from the composited image itself).",
+    )
+    p.add_argument(
+        "--mask-dir",
+        default=None,
+        metavar="DIR",
+        help="Where to write masks from --save-masks (default: <output>_masks, a "
+             "sibling of --output). Ignored if --no-save-masks.",
+    )
     return p.parse_args()
 
 
@@ -471,8 +510,15 @@ def remove_background(src: Path, dst: Path, session, background: str,
                       passes: int = 1, seg_scale_pct: int = 100,
                       erode_px: int = 0, grow_chroma: int = 0,
                       grow_close_px: int = 15, grow_feather_px: int = 3,
-                      grow_hull_fill: bool = False, hard_mask: bool = True) -> None:
-    """Remove background from src and write to dst with the chosen fill."""
+                      grow_hull_fill: bool = False, hard_mask: bool = True,
+                      mask_dst: Path | None = None) -> None:
+    """Remove background from src and write to dst with the chosen fill.
+
+    If mask_dst is given, also write the final binary mask (after every cleanup
+    step below has run) as its own PNG at mask_dst.parent / "<output-filename>.png"
+    — COLMAP's mask_path convention. This is the only way COLMAP ever sees the
+    mask: it drops the alpha channel on load regardless of --background, so
+    without this the mask never reaches COLMAP at all."""
     dst.parent.mkdir(parents=True, exist_ok=True)
     src_img = Image.open(src)
     seg_scale = max(1, min(100, seg_scale_pct)) / 100.0
@@ -511,6 +557,15 @@ def remove_background(src: Path, dst: Path, session, background: str,
         out = dst.with_suffix(".jpg")
         bg.save(out, "JPEG", quality=95)
 
+    if mask_dst is not None:
+        # Binarize (COLMAP treats mask intensity as black=ignore, not a soft
+        # weight) even though --hard-mask already makes this mostly a no-op.
+        final_alpha = np.array(result.split()[3])
+        binary = ((final_alpha > 127).astype(np.uint8)) * 255
+        mask_out = mask_dst.parent / f"{out.name}.png"
+        mask_out.parent.mkdir(parents=True, exist_ok=True)
+        Image.fromarray(binary, mode="L").save(mask_out, "PNG")
+
 
 # ── local mode ────────────────────────────────────────────────────────────────
 
@@ -547,7 +602,8 @@ def run_local(input_dir: Path, output_dir: Path, model: str, background: str,
               stride: int = 1, seg_scale_pct: int = 100, erode_px: int = 0,
               grow_chroma: int = 0, grow_close_px: int = 15,
               grow_feather_px: int = 3, grow_hull_fill: bool = False,
-              hard_mask: bool = True) -> None:
+              hard_mask: bool = True, save_masks: bool = True,
+              mask_dir: Path | None = None) -> None:
     if not input_dir.exists():
         sys.exit(f"[error] Input folder not found: {input_dir}\n"
                  f"        Create it or pass --input <path>.")
@@ -559,6 +615,13 @@ def run_local(input_dir: Path, output_dir: Path, model: str, background: str,
 
     output_dir.mkdir(parents=True, exist_ok=True)
 
+    if save_masks:
+        mask_dir = mask_dir if mask_dir is not None \
+            else output_dir.parent / f"{output_dir.name}_masks"
+        mask_dir.mkdir(parents=True, exist_ok=True)
+    else:
+        mask_dir = None
+
     # summarise structure
     subdirs = sorted({rel.parts[0] for _, rel in pairs if len(rel.parts) > 1})
     if subdirs:
@@ -568,6 +631,8 @@ def run_local(input_dir: Path, output_dir: Path, model: str, background: str,
 
     print(f"[info]  Input:   {input_dir}  ({len(pairs)} image(s))")
     print(f"[info]  Output:  {output_dir}")
+    if mask_dir is not None:
+        print(f"[info]  Masks:   {mask_dir}")
     print(f"[info]  Background: {background}")
     print(f"[info]  Hard mask: {'on' if hard_mask else 'off (raw soft matte)'}")
     if stride > 1:
@@ -600,6 +665,7 @@ def run_local(input_dir: Path, output_dir: Path, model: str, background: str,
     errors = 0
     for i, (src, rel) in enumerate(pairs, 1):
         dst = output_dir / rel
+        mask_dst = (mask_dir / rel) if mask_dir is not None else None
         try:
             remove_background(src, dst, session, background,
                                black_threshold=black_threshold, white_threshold=white_threshold,
@@ -608,7 +674,7 @@ def run_local(input_dir: Path, output_dir: Path, model: str, background: str,
                                passes=passes, seg_scale_pct=seg_scale_pct, erode_px=erode_px,
                                grow_chroma=grow_chroma, grow_close_px=grow_close_px,
                                grow_feather_px=grow_feather_px, grow_hull_fill=grow_hull_fill,
-                               hard_mask=hard_mask)
+                               hard_mask=hard_mask, mask_dst=mask_dst)
             print(f"  [{i}/{len(pairs)}] {rel}")
         except Exception as exc:
             errors += 1
@@ -623,11 +689,15 @@ def run_local(input_dir: Path, output_dir: Path, model: str, background: str,
     if subdirs:
         print()
         print("Next step — run the COLMAP pipeline:")
+        # run.sh's -m/-n take the exact mask directory for -i/-s respectively
+        # (same convention as -i/-s themselves), not a root to derive from.
         if len(subdirs) >= 2:
             s1, s2 = subdirs[0], subdirs[1]
-            print(f"  bash run.sh -i {output_dir}/{s1} -s {output_dir}/{s2} -o results/")
+            mask_arg = f" -m {mask_dir}/{s1} -n {mask_dir}/{s2}" if mask_dir is not None else ""
+            print(f"  bash run.sh -i {output_dir}/{s1} -s {output_dir}/{s2} -o results/{mask_arg}")
         else:
-            print(f"  bash run.sh -i {output_dir}/{subdirs[0]} -o results/")
+            mask_arg = f" -m {mask_dir}/{subdirs[0]}" if mask_dir is not None else ""
+            print(f"  bash run.sh -i {output_dir}/{subdirs[0]} -o results/{mask_arg}")
 
 
 # ── NAS mode (legacy) ─────────────────────────────────────────────────────────
@@ -671,7 +741,8 @@ def run_nas(model: str, background: str, black_threshold: int = 0,
             edge_band: int = 0, passes: int = 1, seg_scale_pct: int = 100,
             erode_px: int = 0, grow_chroma: int = 0, grow_close_px: int = 15,
             grow_feather_px: int = 3, grow_hull_fill: bool = False,
-            hard_mask: bool = True) -> None:
+            hard_mask: bool = True, save_masks: bool = True,
+            mask_dir: Path | None = None) -> None:
     LOCAL_DATA.mkdir(parents=True, exist_ok=True)
 
     source_folder = _most_recent_folder(NAS_DATA)
@@ -688,7 +759,7 @@ def run_nas(model: str, background: str, black_threshold: int = 0,
               seg_scale_pct=seg_scale_pct, erode_px=erode_px,
               grow_chroma=grow_chroma, grow_close_px=grow_close_px,
               grow_feather_px=grow_feather_px, grow_hull_fill=grow_hull_fill,
-              hard_mask=hard_mask)
+              hard_mask=hard_mask, save_masks=save_masks, mask_dir=mask_dir)
 
     nas_output = NAS_DATA / local_masked.name
     _copy_to_nas(local_masked, nas_output)
@@ -701,6 +772,7 @@ def run_nas(model: str, background: str, black_threshold: int = 0,
 
 def main() -> None:
     args = parse_args()
+    mask_dir = Path(args.mask_dir) if args.mask_dir else None
     if args.nas:
         run_nas(args.model, args.background, black_threshold=args.black_threshold,
                 white_threshold=args.white_threshold, value_threshold=args.value_threshold,
@@ -709,7 +781,7 @@ def main() -> None:
                 seg_scale_pct=args.seg_scale_pct, erode_px=args.erode_px,
                 grow_chroma=args.grow_chroma, grow_close_px=args.grow_close_px,
                 grow_feather_px=args.grow_feather_px, grow_hull_fill=args.grow_hull_fill,
-                hard_mask=args.hard_mask)
+                hard_mask=args.hard_mask, save_masks=args.save_masks, mask_dir=mask_dir)
     else:
         run_local(Path(args.input), Path(args.output), args.model, args.background,
                   black_threshold=args.black_threshold, white_threshold=args.white_threshold,
@@ -718,7 +790,8 @@ def main() -> None:
                   passes=args.passes, stride=args.stride, seg_scale_pct=args.seg_scale_pct,
                   erode_px=args.erode_px, grow_chroma=args.grow_chroma,
                   grow_close_px=args.grow_close_px, grow_feather_px=args.grow_feather_px,
-                  grow_hull_fill=args.grow_hull_fill, hard_mask=args.hard_mask)
+                  grow_hull_fill=args.grow_hull_fill, hard_mask=args.hard_mask,
+                  save_masks=args.save_masks, mask_dir=mask_dir)
 
 
 if __name__ == "__main__":

@@ -32,6 +32,9 @@ SCRIPT_DIR = Path(__file__).parent.resolve()
 ALIGN_DIR  = SCRIPT_DIR / "alignment"
 DEFAULTS_PATH = SCRIPT_DIR / "app_defaults.json"
 
+sys.path.insert(0, str(SCRIPT_DIR))
+from src.artifact_info import write_info_txt
+
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".tiff", ".tif", ".bmp", ".webp"}
 
 STAGE_NAMES = [
@@ -633,7 +636,7 @@ class ConfigPanel(ttk.Frame):
         nb.add(recon_tab,  text="Reconstruct")
         nb.add(align_tab,  text="Alignment")
 
-        self._build_io(io_tab)
+        self._build_io(_scroll_frame(io_tab))
         self._build_colmap(_scroll_frame(colmap_tab))
         self._build_recon(_scroll_frame(recon_tab))
         self._build_align(align_tab)
@@ -664,6 +667,37 @@ class ConfigPanel(ttk.Frame):
         self._struct_var = tk.StringVar(value="")
         ttk.Label(f, textvariable=self._struct_var, foreground=PAL["subtext"],
                   wraplength=360).pack(anchor=tk.W, pady=(2, 0))
+
+        ttk.Separator(f, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=8)
+        ttk.Label(f, text="Artifact info (for info.txt, optional):",
+                  font=("Segoe UI", 9, "bold")).pack(anchor=tk.W)
+
+        def entry_row(parent, label, var, width=11):
+            r = ttk.Frame(parent)
+            r.pack(fill=tk.X, pady=2)
+            ttk.Label(r, text=label, width=width, anchor=tk.W).pack(side=tk.LEFT)
+            ttk.Entry(r, textvariable=var).pack(side=tk.LEFT, fill=tk.X,
+                                                 expand=True, padx=(2, 2))
+
+        self.meta_name_var = tk.StringVar()
+        entry_row(f, "Name:", self.meta_name_var)
+
+        rtype = ttk.Frame(f); rtype.pack(fill=tk.X, pady=2)
+        ttk.Label(rtype, text="Type:", width=11, anchor=tk.W).pack(side=tk.LEFT)
+        self.meta_type_var = tk.StringVar(value="tablet")
+        ttk.Combobox(rtype, textvariable=self.meta_type_var,
+                     values=["tablet", "papyrus"], width=14).pack(side=tk.LEFT)
+
+        ttk.Label(f, text="Description:").pack(anchor=tk.W, pady=(4, 0))
+        self.meta_desc_text = tk.Text(f, height=4, wrap=tk.WORD)
+        self.meta_desc_text.pack(fill=tk.X, pady=(0, 2))
+
+        self.meta_link_var = tk.StringVar()
+        entry_row(f, "Link:", self.meta_link_var)
+        self.meta_link_label_var = tk.StringVar()
+        entry_row(f, "Link Label:", self.meta_link_label_var)
+        ttk.Label(f, text="Leave Name blank to skip writing info.txt.",
+                  foreground=PAL["subtext"], wraplength=360).pack(anchor=tk.W, pady=(0, 2))
 
         ttk.Separator(f, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=8)
 
@@ -1227,6 +1261,11 @@ class ConfigPanel(ttk.Frame):
                       clean_cloud: str, decimated: str,
                       side1_camera_centers: str = "") -> list[str]:
         py = _find_python(SCRIPT_DIR / "venv" / "bin" / "python3")
+        # --background transparent has no single flat fill colour to prune by
+        # (the "background" there is the real original backdrop photo, not a
+        # flat fill) — only white/black produce a colour worth pruning against.
+        bg = self.bg_var.get()
+        prune_fill_color = bg if bg in ("white", "black") else "none"
         cmd = [
             py,
             str(SCRIPT_DIR / "src" / "reconstruct_mesh.py"),
@@ -1234,6 +1273,7 @@ class ConfigPanel(ttk.Frame):
             "--output",                   out_obj,
             "--output-clean-cloud",       clean_cloud,
             "--output-decimated",         decimated,
+            "--prune-fill-color",         prune_fill_color,
             "--max-input-points",         str(self.r_max_input_pts.get()),
             "--dbscan-max-points",        str(self.r_dbscan_max_pts.get()),
             "--outlier-nb-neighbors",     str(self.r_outlier_nn.get()),
@@ -1508,6 +1548,11 @@ class App(tk.Tk):
 
     def _processed_dir(self) -> Path:
         return self._session_dir() / "processed"
+
+    def _masks_dir(self) -> Path:
+        # Matches process_photos.py's default --mask-dir (<output>_masks,
+        # a sibling of --output) when --output is _processed_dir().
+        return self._session_dir() / "processed_masks"
 
     def _colmap_dir(self, side: str | None = None) -> Path:
         if side:
@@ -1803,11 +1848,18 @@ class App(tk.Tk):
         img_dir = processed_root / side
         out_dir = self._colmap_dir(side)
         out_dir.mkdir(parents=True, exist_ok=True)
-        # run.sh prepends its own SCRIPT_DIR to -i/-o, so pass relative paths
+        # run.sh prepends its own SCRIPT_DIR to -i/-o/-m, so pass relative paths
         rel_img = os.path.relpath(img_dir, SCRIPT_DIR)
         rel_out = os.path.relpath(out_dir, SCRIPT_DIR)
         cmd = ["bash", str(SCRIPT_DIR / "run.sh"),
                "-i", rel_img, "-o", rel_out, "-v"]
+        # Each side is run through run.sh independently (as its own -i, no
+        # -s), so only -m (primary mask) applies here, pointed at this side's
+        # mask subfolder — not the shared mask root, which mirrors processed/'s
+        # side1/side2 layout.
+        side_mask_dir = self._masks_dir() / side
+        if side_mask_dir.is_dir():
+            cmd += ["-m", os.path.relpath(side_mask_dir, SCRIPT_DIR)]
         rc = self._run_proc(cmd, cwd=SCRIPT_DIR, env=env, on_line=on_line)
         return rc == 0
 
@@ -1819,6 +1871,8 @@ class App(tk.Tk):
         rel_out = os.path.relpath(out_dir, SCRIPT_DIR)
         cmd = ["bash", str(SCRIPT_DIR / "run.sh"),
                "-i", rel_img, "-o", rel_out, "-v"]
+        if self._masks_dir().is_dir():
+            cmd += ["-m", os.path.relpath(self._masks_dir(), SCRIPT_DIR)]
         rc = self._run_proc(cmd, cwd=SCRIPT_DIR, env=env, on_line=on_line)
         return rc == 0
 
@@ -1918,6 +1972,24 @@ class App(tk.Tk):
         if src_simplified_glb.exists():
             shutil.copy2(src_simplified_glb, dest_simplified_glb)
             self.log(f"[stage 4] Simplified GLB → {dest_simplified_glb}")
+
+        # Write the website's info.txt metadata file, if a name was given
+        name = self._cfg.meta_name_var.get().strip()
+        if name:
+            try:
+                info_path = write_info_txt(
+                    self._session_dir(),
+                    name=name,
+                    type_=self._cfg.meta_type_var.get().strip() or "tablet",
+                    description=self._cfg.meta_desc_text.get("1.0", "end-1c").strip(),
+                    link=self._cfg.meta_link_var.get().strip(),
+                    link_label=self._cfg.meta_link_label_var.get().strip(),
+                )
+                self.log(f"[stage 4] info.txt → {info_path}")
+            except ValueError as e:
+                self.log(f"[stage 4] Warning: skipped info.txt ({e})")
+        else:
+            self.log("[stage 4] No artifact name set — skipping info.txt")
 
         on_progress(100, "Reconstruction complete")
         return True

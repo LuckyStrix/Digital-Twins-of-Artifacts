@@ -217,6 +217,22 @@ def parse_args() -> argparse.Namespace:
     cpu_threads_default = _cpu_threads_default()
     p = argparse.ArgumentParser(description="Run COLMAP dense MVS and export fused cloud.")
     p.add_argument("--images", required=True, help="Input image directory.")
+    p.add_argument(
+        "--mask-path",
+        default=os.environ.get("FIPMESH_COLMAP_MASK_PATH", ""),
+        help=(
+            "Optional root of per-image binary masks (e.g. from process_photos.py's "
+            "--save-masks), mirroring --images's structure with each mask named "
+            "<image-filename>.png (COLMAP's mask_path convention). Wired into both "
+            "feature_extractor (ImageReader.mask_path, so SIFT skips background) and "
+            "stereo_fusion (StereoFusion.mask_path, so fused points in background never "
+            "reach the output cloud). patch_match_stereo itself has no mask support in "
+            "COLMAP, so depth right at the true silhouette is still computed poorly — "
+            "this only keeps that band's bad points out of the final cloud, it doesn't "
+            "fix the underlying depth estimate. Unset/empty disables masking entirely "
+            "(default), matching prior behaviour."
+        ),
+    )
     p.add_argument("--workspace", required=True, help="COLMAP workspace directory.")
     p.add_argument("--dense-cloud-out", required=True, help="Output fused dense cloud path (PLY).")
     p.add_argument(
@@ -457,6 +473,12 @@ def parse_args() -> argparse.Namespace:
             "Optional second image directory. If set, this script runs two independent "
             "reconstructions and merges them before output."
         ),
+    )
+    p.add_argument(
+        "--mask-path-secondary",
+        default=os.environ.get("FIPMESH_COLMAP_MASK_PATH_SECONDARY", ""),
+        help="Same as --mask-path, but for --images-secondary. Unset/empty disables "
+             "masking for the secondary set.",
     )
     p.add_argument(
         "--secondary-pre-rotate-deg",
@@ -948,6 +970,197 @@ def _prepare_input_images(
     return dst_root
 
 
+def _prepare_input_masks(images_for_colmap: Path, mask_src_root: Path,
+                          dst_root: Path, scale: float) -> Path | None:
+    """Build a mask directory mirroring images_for_colmap 1:1, for use as
+    --ImageReader.mask_path (feature_extractor) and as the source for the
+    dense-side undistortion pass (see _prepare_dense_masks).
+
+    images_for_colmap has already had stride/scale applied by
+    _prepare_input_images (or is the original --images dir untouched), but
+    either way its relative paths and filenames match the original images
+    exactly — only content and (optionally) resolution differ. So each kept
+    image's mask is looked up at mask_src_root/<relpath>.png (process_photos.py's
+    <image-filename>.png convention) and resized to match if scale < 1.
+
+    Uses nearest-neighbour resizing (not Lanczos) to avoid softening the binary
+    mask into grey values, then re-thresholds anyway as a safety net. Returns
+    None (and prints a warning) if no masks were found at all, since a mask
+    directory containing zero usable masks would otherwise make COLMAP treat
+    every image as fully masked out."""
+    image_exts = {".jpg", ".jpeg", ".png", ".tif", ".tiff", ".bmp", ".webp", ".ppm", ".pgm", ".pnm"}
+    image_files = sorted(
+        f for f in images_for_colmap.rglob("*")
+        if f.is_file() and f.suffix.lower() in image_exts
+    )
+    if dst_root.exists():
+        shutil.rmtree(dst_root)
+    dst_root.mkdir(parents=True, exist_ok=True)
+
+    import numpy as np
+    from PIL import Image as PILImage
+
+    found = 0
+    missing = 0
+    for img in image_files:
+        rel = img.relative_to(images_for_colmap)
+        mask_src = mask_src_root / rel.parent / f"{rel.name}.png"
+        if not mask_src.is_file():
+            missing += 1
+            continue
+        with PILImage.open(mask_src) as m:
+            mask = m.convert("L")
+            if scale < 1.0:
+                with PILImage.open(img) as im:
+                    target_size = im.size
+                if mask.size != target_size:
+                    mask = mask.resize(target_size, PILImage.Resampling.NEAREST)
+            arr = np.array(mask)
+            arr = ((arr > 127).astype(np.uint8)) * 255
+        dst = dst_root / rel.parent / f"{rel.name}.png"
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        PILImage.fromarray(arr, mode="L").save(dst, "PNG")
+        found += 1
+
+    print(f"prepared masks: found={found} missing={missing} (root={mask_src_root})")
+    if found == 0:
+        print(
+            f"warning: no masks found under {mask_src_root} matching images in "
+            f"{images_for_colmap} — proceeding WITHOUT masking",
+            file=sys.stderr,
+        )
+        return None
+    if missing > 0:
+        print(
+            f"warning: {missing} image(s) had no matching mask under {mask_src_root} — "
+            "those images will be reconstructed unmasked while the rest use masks",
+            file=sys.stderr,
+        )
+    return dst_root
+
+
+def _prepare_dense_masks(colmap_bin: str, images_for_colmap: Path, mask_root: Path,
+                          sparse_model_dir: Path, dense_workspace_dir: Path,
+                          patch_max_image_size: int) -> Path | None:
+    """Undistort mask_root through the same sparse model/camera params used for
+    the real images, so the result lines up pixel-for-pixel with
+    dense_workspace_dir/images (what patch_match_stereo/stereo_fusion actually
+    operate on). image_undistorter has no built-in way to undistort a sidecar
+    mask alongside its images, so this runs it a second time treating the masks
+    themselves as the "images" being undistorted, into a scratch workspace.
+
+    image_undistorter looks up each image by the filename registered in the
+    sparse model (e.g. "side1/foo.jpg"), not by whatever's in --image_path —
+    so mask_root's own "<real-filename>.png"-appended files (built for
+    --ImageReader.mask_path, e.g. "side1/foo.jpg.png") won't be found under
+    those names and every lookup would fail. This first rebuilds a throwaway
+    "masks as images" directory using the real images' exact filenames/
+    extensions instead, re-encoding each mask to match (JPEG for .jpg/.jpeg,
+    PNG otherwise). JPEG's lossy compression can fray the mask's hard edge by
+    a pixel or two; the post-undistortion re-threshold below cleans that back
+    up into a clean binary mask.
+
+    Returns None (and prints a warning) if no masks were found or the
+    undistort pass produced no output, in which case the caller should
+    proceed without a StereoFusion mask rather than fail.
+
+    Assumes image_undistorter preserves input filenames verbatim under
+    <output>/images/<relpath> for COLMAP output_type — true in the versions
+    this was checked against, but not verified against every COLMAP build. If
+    that assumption is wrong for a given build, masks would land under the
+    wrong filename and stereo_fusion would silently reconstruct that image
+    unmasked rather than erroring — worth spot-checking dense_workspace_dir/masks
+    against dense_workspace_dir/images by filename after a first run."""
+    import numpy as np
+    from PIL import Image as PILImage
+
+    image_exts = {".jpg", ".jpeg", ".png", ".tif", ".tiff", ".bmp", ".webp", ".ppm", ".pgm", ".pnm"}
+    image_files = sorted(
+        f for f in images_for_colmap.rglob("*")
+        if f.is_file() and f.suffix.lower() in image_exts
+    )
+
+    mask_as_image_root = dense_workspace_dir.parent / f"{dense_workspace_dir.name}_mask_as_image_tmp"
+    if mask_as_image_root.exists():
+        shutil.rmtree(mask_as_image_root)
+    mask_as_image_root.mkdir(parents=True, exist_ok=True)
+
+    built = 0
+    for img in image_files:
+        rel = img.relative_to(images_for_colmap)
+        mask_src = mask_root / rel.parent / f"{rel.name}.png"
+        if not mask_src.is_file():
+            continue
+        with PILImage.open(mask_src) as m:
+            mask = m.convert("L")
+        dst = mask_as_image_root / rel
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        if rel.suffix.lower() in (".jpg", ".jpeg"):
+            mask.save(dst, "JPEG", quality=100)
+        else:
+            mask.save(dst, "PNG")
+        built += 1
+
+    if built == 0:
+        print(
+            f"warning: no masks under {mask_root} matched images in {images_for_colmap} — "
+            "proceeding WITHOUT a StereoFusion mask",
+            file=sys.stderr,
+        )
+        shutil.rmtree(mask_as_image_root, ignore_errors=True)
+        return None
+
+    scratch = dense_workspace_dir.parent / f"{dense_workspace_dir.name}_mask_undistort_tmp"
+    if scratch.exists():
+        shutil.rmtree(scratch)
+    scratch.mkdir(parents=True, exist_ok=True)
+
+    subprocess.run([
+        colmap_bin, "image_undistorter",
+        "--image_path", str(mask_as_image_root),
+        "--input_path", str(sparse_model_dir),
+        "--output_path", str(scratch),
+        "--output_type", "COLMAP",
+        "--max_image_size", str(patch_max_image_size),
+    ], check=True)
+    shutil.rmtree(mask_as_image_root, ignore_errors=True)
+
+    undistorted_masks_dir = scratch / "images"
+    mask_files = sorted(f for f in undistorted_masks_dir.rglob("*") if f.is_file())
+    if not mask_files:
+        print(
+            f"warning: mask undistortion produced no output under {undistorted_masks_dir} — "
+            "proceeding WITHOUT a StereoFusion mask",
+            file=sys.stderr,
+        )
+        shutil.rmtree(scratch, ignore_errors=True)
+        return None
+
+    dense_masks_dir = dense_workspace_dir / "masks"
+    if dense_masks_dir.exists():
+        shutil.rmtree(dense_masks_dir)
+    dense_masks_dir.mkdir(parents=True, exist_ok=True)
+
+    # image_undistorter preserves the input filename verbatim under
+    # <output>/images/<same-relpath>, for both this pass (mask_as_image_root)
+    # and the real-image undistort pass that already populated
+    # dense_workspace_dir/images. So the relative path here already matches
+    # dense_workspace_dir/images's — StereoFusion.mask_path just needs that
+    # same relpath with ".png" appended.
+    for f in mask_files:
+        rel = f.relative_to(undistorted_masks_dir)
+        with PILImage.open(f) as m:
+            arr = np.array(m.convert("L"))
+        binary = ((arr > 127).astype(np.uint8)) * 255
+        dst = dense_masks_dir / rel.parent / f"{rel.name}.png"
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        PILImage.fromarray(binary, mode="L").save(dst, "PNG")
+
+    shutil.rmtree(scratch, ignore_errors=True)
+    print(f"prepared dense masks: {len(mask_files)} file(s) -> {dense_masks_dir}")
+    return dense_masks_dir
+
+
 def _build_image_undistorter_cmd(
     colmap_bin: str,
     image_path: Path,
@@ -1052,8 +1265,17 @@ def run_dense_for_model(
     fusion_cache_size: int,
     fusion_use_cache: bool,
     model_label: str,
+    mask_root: Path | None = None,
 ) -> None:
-    """Run COLMAP dense reconstruction (undistort, stereo, fusion)."""
+    """Run COLMAP dense reconstruction (undistort, stereo, fusion).
+
+    If mask_root is given (a mask directory mirroring `images`, e.g. from
+    _prepare_input_masks), it's undistorted through the same sparse model
+    (see _prepare_dense_masks) and wired into stereo_fusion so fused points
+    falling in background are dropped before they reach cloud_out.
+    patch_match_stereo has no mask support in COLMAP, so its depth estimate
+    right at the true silhouette is unaffected — this only keeps that noisy
+    band out of the final output, not out of the intermediate depth maps."""
     dense_workspace_dir.mkdir(parents=True, exist_ok=True)
 
     # 1. Undistort
@@ -1066,6 +1288,22 @@ def run_dense_for_model(
         "--output_type", "COLMAP",
         "--max_image_size", str(patch_max_image_size),
     ], check=True)
+
+    dense_mask_dir: Path | None = None
+    if mask_root is not None:
+        print(f"[{model_label}] undistorting masks for stereo_fusion")
+        try:
+            dense_mask_dir = _prepare_dense_masks(
+                colmap_bin, images, mask_root, sparse_model_dir, dense_workspace_dir,
+                patch_max_image_size,
+            )
+        except subprocess.CalledProcessError as exc:
+            print(
+                f"[{model_label}] warning: mask undistortion failed ({exc}) — "
+                "proceeding WITHOUT a StereoFusion mask",
+                file=sys.stderr,
+            )
+            dense_mask_dir = None
 
     # 2. Patch Match Stereo
     print(f"[{model_label}] colmap patch_match_stereo")
@@ -1082,8 +1320,9 @@ def run_dense_for_model(
     ], check=True)
 
     # 3. Stereo Fusion
-    print(f"[{model_label}] colmap stereo_fusion")
-    subprocess.run([
+    print(f"[{model_label}] colmap stereo_fusion"
+          + (" (masked)" if dense_mask_dir is not None else ""))
+    fusion_cmd = [
         colmap_bin, "stereo_fusion",
         "--workspace_path", str(dense_workspace_dir),
         "--output_path", str(cloud_out),
@@ -1095,7 +1334,10 @@ def run_dense_for_model(
         "--StereoFusion.cache_size", str(fusion_cache_size),
         "--StereoFusion.use_cache", "1" if fusion_use_cache else "0",
         "--StereoFusion.num_threads", str(fusion_threads),
-    ], check=True)
+    ]
+    if dense_mask_dir is not None:
+        fusion_cmd += ["--StereoFusion.mask_path", str(dense_mask_dir)]
+    subprocess.run(fusion_cmd, check=True)
 
 
 def try_align_cloud_to_base(source, target):
@@ -2706,6 +2948,7 @@ def run_pipeline_for_image_set(
     camera_model: str = "",
     focal_length_px: float = 0.0,
     single_camera_per_folder: bool = False,
+    mask_path: Path | None = None,
 ) -> int:
     if clean_workspace and workspace.exists():
         shutil.rmtree(workspace)
@@ -2726,6 +2969,16 @@ def run_pipeline_for_image_set(
         )
     sparse_root.mkdir(parents=True, exist_ok=True)
     dense_root.mkdir(parents=True, exist_ok=True)
+
+    masks_for_colmap: Path | None = None
+    if mask_path is not None:
+        print(f"[set] {set_label} mask_path={mask_path}")
+        masks_for_colmap = _prepare_input_masks(
+            images_for_colmap,
+            mask_path,
+            workspace / "_input_masks",
+            scale=input_image_scale,
+        )
 
     if option_style == "modern":
         fx_use_gpu = "--FeatureExtraction.use_gpu"
@@ -2801,6 +3054,8 @@ def run_pipeline_for_image_set(
         "--SiftExtraction.estimate_affine_shape",
         "1" if sift_estimate_affine_shape else "0",
     ]
+    if masks_for_colmap is not None:
+        base_fx_args += ["--ImageReader.mask_path", str(masks_for_colmap)]
 
     image_exts = {".jpg", ".jpeg", ".png", ".tif", ".tiff", ".bmp", ".webp", ".ppm", ".pgm", ".pnm"}
 
@@ -3040,6 +3295,7 @@ def run_pipeline_for_image_set(
             fusion_cache_size=fusion_cache_size,
             fusion_use_cache=fusion_use_cache,
             model_label=f"{set_label} component {idx}",
+            mask_root=masks_for_colmap,
         )
 
         if not cloud_out.exists():
@@ -3071,11 +3327,22 @@ def main() -> int:
     workspace = Path(args.workspace)
     dense_cloud_out = Path(args.dense_cloud_out)
 
+    mask_path_raw = str(args.mask_path).strip()
+    mask_path = Path(mask_path_raw) if mask_path_raw else None
+    mask_path_secondary_raw = str(args.mask_path_secondary).strip()
+    mask_path_secondary = Path(mask_path_secondary_raw) if mask_path_secondary_raw else None
+
     if not images.is_dir():
         print(f"error: image dir not found: {images}", file=sys.stderr)
         return 2
     if images_secondary is not None and not images_secondary.is_dir():
         print(f"error: secondary image dir not found: {images_secondary}", file=sys.stderr)
+        return 2
+    if mask_path is not None and not mask_path.is_dir():
+        print(f"error: mask dir not found: {mask_path}", file=sys.stderr)
+        return 2
+    if mask_path_secondary is not None and not mask_path_secondary.is_dir():
+        print(f"error: secondary mask dir not found: {mask_path_secondary}", file=sys.stderr)
         return 2
 
     secondary_pre_rotate_axis = str(args.secondary_pre_rotate_axis).strip().lower() or "y"
@@ -3226,6 +3493,12 @@ def main() -> int:
             shutil.rmtree(workspace)
         workspace.mkdir(parents=True, exist_ok=True)
 
+    mask_path_by_label: dict[str, Path] = {}
+    if mask_path is not None:
+        mask_path_by_label["primary"] = mask_path
+    if mask_path_secondary is not None:
+        mask_path_by_label["secondary"] = mask_path_secondary
+
     set_clouds: list[Path] = []
     set_pre_transforms: list[dict[str, float | str] | None] = []
     multi_set = len(image_sets) > 1
@@ -3283,6 +3556,7 @@ def main() -> int:
             camera_model=camera_model,
             focal_length_px=focal_length_px,
             single_camera_per_folder=single_camera_per_folder,
+            mask_path=mask_path_by_label.get(set_label),
         )
         return rc, set_dense_cloud
 

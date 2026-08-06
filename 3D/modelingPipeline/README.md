@@ -71,7 +71,8 @@ Mirrors the `app.py` module docstring:
    existing reconstruction), which calls `src/main.sh` → `src/run_colmap_mvs.py`
 3. **FPFH alignment** — `alignment/run.py` → `output/aligned_cloud/merged_fpfh.ply`
 4. **Mesh reconstruction** — `src/reconstruct_mesh.py` → `output/recon/` and
-   `output/model.gltf`
+   `output/model.gltf` (plus `output/model_simplified.glb` and, if the Inputs
+   tab's Artifact info Name is set, `output/info.txt`)
 
 ## GUI reference
 
@@ -92,6 +93,18 @@ replacement for those.
   subfolder names under the input dir holding each side's photos. Leave
   Secondary blank to skip Stage 3 (alignment) and reconstruct a single side.
   Auto-detected from the input dir's structure when you browse to it.
+
+**Artifact info** (optional, not persisted in `app_defaults.json` — specific
+to one artifact, unlike the rest of this tab) — **Name**, **Type**,
+**Description**, **Link**, **Link Label**. If Name is set, Stage 4 writes an
+`info.txt` next to `model.gltf`/`model_simplified.glb` in the website's
+artifact-metadata format (see
+[`../../website/artifacts/README.md`](../../website/artifacts/README.md)),
+ready to drop straight into `website/artifacts/<id>/`. Link and Link Label are
+each independently optional. Leave Name blank to skip writing it. Can also be
+generated standalone, without the GUI: `python3 -m src.artifact_info
+--output-dir ... --name ... --type ... --description ... [--link ...]
+[--link-label ...]`.
 
 **Background removal** (`process_photos.py`, Stage 1)
 - **Background** — `white` / `black` / `transparent` composite color for the
@@ -131,6 +144,18 @@ replacement for those.
   (default `birefnet-general`). Swap to a specialized model (e.g.
   `isnet-general-use`) if the default mis-segments a particular material.
 
+**Experimental: COLMAP-side masking** — `process_photos.py --save-masks`
+writes each photo's final binary mask as its own PNG (default `--mask-dir
+<output>_masks`). If Stage 2 finds a matching `<processed-dir>_masks` folder
+it passes it to `run.sh -m`/`-n` automatically, which feeds
+`run_colmap_mvs.py --mask-path`/`--mask-path-secondary` so `feature_extractor`
+and `stereo_fusion` ignore background pixels directly, instead of COLMAP
+guessing from RGB alone. No GUI toggle for this — it's CLI/env-only
+(`--save-masks`) and off by default, because it was found to be able to
+destabilize camera pose estimation on low-texture images. **Prune fill
+colour** below is the preferred, lower-risk fix for background bleed; masking
+is left in for further experimentation.
+
 ### COLMAP tab
 
 Mirrors `run_colmap_mvs.py`'s CLI/env options; see that script's `--help` for
@@ -166,6 +191,16 @@ full detail on any field.
 Mirrors `src/reconstruct_mesh.py`'s CLI options (`python3 src/reconstruct_mesh.py
 --help` for the authoritative descriptions and defaults).
 
+- **Prune fill colour** — runs first, before any other cleanup. Drops fused
+  points whose colour sits within a threshold of a flat background fill
+  (`white`/`black`, matching Stage 1's **Background** setting; `none` for
+  `transparent`, which has no single fill colour to prune by). Not a GUI
+  field itself — the app derives it automatically from the Inputs tab's
+  **Background** choice on every Stage 4 run (`reconstruct_mesh.py
+  --prune-fill-color`/`--prune-fill-threshold`, default threshold 16). Targets
+  background bleed that triangulated as fake surface; since it only ever
+  deletes points from the already-fused cloud, it can't affect pose
+  estimation the way COLMAP-side masking (above) can.
 - **Point cloud filtering** — **Max input points** randomly downsamples before
   reconstruction (0 disables). **Outlier neighbors/std ratio** and **Radius
   outlier NB pts/factor** are Open3D's statistical and radius outlier removal
@@ -239,6 +274,7 @@ src/check_config.sh     Dependency checker (invoked by run.sh)
 src/main.sh             COLMAP MVS + meshing driver
 src/run_colmap_mvs.py   COLMAP MVS stage
 src/reconstruct_mesh.py Open3D Poisson meshing stage
+src/artifact_info.py    Writes info.txt (website artifact metadata); also runnable standalone
 alignment/              FPFH point-cloud alignment (align.py, run.py)
 viewer.py               Local model viewer
 requirements.txt        Python dependencies

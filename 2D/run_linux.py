@@ -127,6 +127,13 @@ CAPTURE_TIFFS = [
 # the images are assumed to be BT.709 (the historic dcraw default).
 CAPTURE_INFO_NAME = "capture_info.json"
 
+# Calibration lives beside the scan set it belongs to (<working>/cal/), with the
+# colour-chart shot in <working>/cal/chart/ and the fitted matrix at
+# <working>/cal/ccm.json. Kept in sync with backend/modeling/color_correction.py.
+CAL_SUBDIR   = "cal"
+CHART_SUBDIR = "chart"
+CCM_NAME     = "ccm.json"
+
 # Per-working-folder layout. The scroll scans live directly in the working
 # folder and the pipeline writes its render-ready maps into <folder>/maps/, so
 # each scan set is self-contained. The built model is saved *next to* the folder
@@ -277,7 +284,9 @@ class PipelineApp:
 
         add_button("Check / Install Dependencies", self.on_install_deps)
         add_button("Open Focus Viewer (set camera focus)", self.on_open_focus_viewer)
-        add_button("Step 0 — Capture Calibration (flat copy paper)", self.on_capture_calibration)
+        add_button("Step 0a — Capture Calibration (flat copy paper)", self.on_capture_calibration)
+        add_button("Step 0b — Capture Colour Chart (24-patch ColorChecker)",
+                   self.on_capture_chart)
         tk.Frame(button_frame, height=1, bg="#cccccc").pack(fill=tk.X, pady=6)
         add_button("Step 1 — Capture Scroll (needs camera + Arduino)", self.on_run_capture)
         add_button("Step 2 — Run Modeling Pipeline", self.on_run_modeling)
@@ -432,6 +441,9 @@ class PipelineApp:
 
     def on_capture_calibration(self):
         self.run_in_background(self.step_capture_calibration, "capture calibration")
+
+    def on_capture_chart(self):
+        self.run_in_background(self.step_capture_chart, "capture colour chart")
 
     def on_run_modeling(self):
         self.run_in_background(self.step_run_modeling, "modeling pipeline")
@@ -651,6 +663,36 @@ class PipelineApp:
     def _txt_path(self, side: Path = None) -> Path:
         return (side or self.active_dir) / TXT_NAME
 
+    # ── Calibration folders ──────────────────────────────────────────────────
+    # Calibration is zoom-specific: the flat-field envelope is a per-pixel
+    # spatial fit and the modeling pipeline hard-errors if its shape does not
+    # match the scan. So each scan set carries the calibration it was shot with,
+    # and only falls back to the shared global folder when it has none.
+    def _cal_capture_dir(self) -> Path:
+        """Where a NEW calibration capture goes: <working>/cal/."""
+        return self.active_dir / CAL_SUBDIR
+
+    def _cal_dir(self, side: Path = None) -> Path:
+        """Which calibration set applies to `side`. Mirrors the resolution order
+        in backend/modeling/color_correction.py: the scan's own cal/, else the
+        shared parent cal/ (so side1/ and side2/ share one set), else global."""
+        d = side or self.active_dir
+        for candidate in (d / CAL_SUBDIR, d.parent / CAL_SUBDIR):
+            if candidate.is_dir():
+                return candidate
+        return CALIBRATION_IMAGES
+
+    def _has_cal(self, d: Path = None) -> bool:
+        """True when a calibration set has the full flat-field paper series."""
+        cal = self._cal_dir(d)
+        return all((cal / name).exists() for name in CAPTURE_TIFFS)
+
+    def _has_chart(self, d: Path = None) -> bool:
+        return (self._cal_dir(d) / CHART_SUBDIR / "allLight.tiff").exists()
+
+    def _has_ccm(self, d: Path = None) -> bool:
+        return (self._cal_dir(d) / CCM_NAME).exists()
+
     def _set_active_dir(self, path):
         """Set the active working folder and refresh its on-screen display.
 
@@ -833,24 +875,111 @@ class PipelineApp:
                   "calibration images exist (Step 0 — Capture Calibration), then "
                   "run the modeling pipeline.")
 
+    def _check_exposure(self, folder: Path, label: str) -> None:
+        """Report per-channel saturation in a freshly captured set.
+
+        Worth doing at the rig rather than hours later in the pipeline: a
+        saturated channel cannot be recovered by any amount of colour
+        correction, and red saturates long before an image looks bright.
+        """
+        try:
+            import numpy as np
+            import tifffile
+        except ImportError:
+            return
+        self.log(f"Checking {label} exposure...")
+        worst = 0.0
+        for name in CAPTURE_TIFFS:
+            p = folder / name
+            if not p.exists():
+                continue
+            try:
+                a = tifffile.imread(str(p))
+            except Exception:
+                continue
+            if a.ndim == 3:
+                fr = {c: float((a[:, :, i] >= 65000).mean())
+                      for i, c in enumerate("RGB")}     # tifffile -> RGB order
+            else:
+                fr = {"grey": float((a >= 65000).mean())}
+            hot = {c: v for c, v in fr.items() if v > 0.001}
+            worst = max(worst, max(fr.values()))
+            if hot:
+                self.log(f"  {name}: " + ", ".join(
+                    f"{c} {v * 100:.1f}% saturated" for c, v in hot.items()))
+        if worst > 0.001:
+            self.log(f"  WARNING: up to {worst * 100:.1f}% of pixels are pinned at "
+                     "full scale. Reduce exposure by roughly "
+                     f"{max(1, round(np.log2(1 / max(1 - worst, 0.25)))):.0f}-2 stops "
+                     "and re-shoot — clipped channels cannot be colour-corrected.")
+        else:
+            self.log("  Exposure looks good — nothing significant is clipping.")
+
     def step_capture_calibration(self):
         self.log("CALIBRATION CAPTURE — place a sheet of flat copy paper (no "
                   "scroll) on the stage before continuing. The same lighting "
                   "sequence is used as for the scroll.")
-        latest = self._new_capture_dir()
-        rc = self._run_capture_script(capture_dir=latest)
+        self.log("Set the exposure so the paper does NOT clip (brightest pixel "
+                  "below ~92% of full scale), and do not change it again until "
+                  "the chart and the artifact are both shot.")
+        dest = self._cal_capture_dir()
+        rc = self._run_capture_script(capture_dir=dest)
         if rc != 0:
             return
-        if not latest.is_dir():
-            self.log("Capture reported success but no output folder was found in "
-                      f"{self.active_dir}.")
+        if not self._has_scans(dest):
+            missing = [n for n in CAPTURE_TIFFS if not (dest / n).exists()]
+            self.log("WARNING: calibration capture is missing: " + ", ".join(missing))
             return
-        self.log("Capture finished.")
-        copied = self._import_capture_into(
-            latest, CALIBRATION_IMAGES, "backend/calibration/")
-        if copied:
-            self.log("Calibration images are in place. Capture the scroll next "
-                      "(Step 0 — Capture Scroll), then run the modeling pipeline.")
+        self.log(f"Calibration captured into {dest}")
+        self._check_exposure(dest, "calibration")
+        # Also refresh the global set so a scan folder without its own cal/ still
+        # has something to fall back on.
+        self._import_capture_into(dest, CALIBRATION_IMAGES, "backend/calibration/")
+        self.log("Next: Step 0b — Capture Colour Chart, at this same exposure.")
+
+    def step_capture_chart(self):
+        """Shoot the 24-patch ColorChecker for the active working folder.
+
+        Reuses the normal capture sequence unchanged and simply points it at
+        cal/chart/. That gives allLight.tiff shot CROSS-POLARISED (the lighting
+        sequence shoots allLight and the four cross frames before rotating the
+        polariser), which is exactly what colorimetry wants: even illumination
+        from all four lights with the chart's surface glare suppressed. It also
+        matches how the diffuse map is built, and cross-polarised measurement is
+        what the chart's published reference values represent.
+        """
+        cal = self._cal_capture_dir()
+        if not self._has_cal(self.active_dir):
+            self.log("WARNING: no flat-field copy-paper set found for this "
+                     "working folder. Shoot Step 0a FIRST — the colour fit "
+                     "divides the chart by the paper envelope, and both must "
+                     "share one exposure setting.")
+        if not self._ask_continue(
+                "Capture colour chart",
+                "Place the 24-patch ColorChecker flat on the stage, centred, "
+                "filling roughly a third of the frame, at the same height as "
+                "the artifact.\n\n"
+                "Do NOT change exposure, aperture, ISO or focus from the "
+                "copy-paper shot — the fit assumes they match.\n\n"
+                "OK to capture, Cancel to stop."):
+            self.log("Colour-chart capture cancelled.")
+            return
+
+        dest = cal / CHART_SUBDIR
+        self.log(f"COLOUR CHART CAPTURE -> {dest}")
+        rc = self._run_capture_script(capture_dir=dest)
+        if rc != 0:
+            return
+        if not (dest / "allLight.tiff").exists():
+            self.log("WARNING: chart capture produced no allLight.tiff — that is "
+                     "the frame the fit uses. Check the camera and re-run.")
+            return
+        self.log(f"Colour chart captured into {dest}")
+        self._check_exposure(dest, "colour chart")
+        self.log("A clipped patch biases the whole matrix, so the white patch in "
+                 "particular must not be at full scale.")
+        self.log("Next: fit the matrix (Step 0c) to produce "
+                 f"{cal / CCM_NAME}.")
 
     def step_run_modeling(self):
         sides = self._side_dirs()
@@ -875,14 +1004,26 @@ class PipelineApp:
         maps_dir.mkdir(parents=True, exist_ok=True)
 
         # Point the modeling pipeline at this side's scans and have it write its
-        # render-ready maps straight into <side>/maps/.
+        # render-ready maps straight into <side>/maps/, using the calibration
+        # set that belongs to this scan rather than whatever was shot last.
+        cal_dir = self._cal_dir(side)
         env = dict(os.environ)
         env["PAPYRUS_SCROLL_DIR"] = str(side)
         env["PAPYRUS_RENDER_OUT"] = str(maps_dir)
+        env["PAPYRUS_CAL_DIR"]    = str(cal_dir)
 
         self.log(f"Running modeling pipeline on {side} "
                   "(this can take several minutes)...")
         self.log(f"Render-ready maps -> {maps_dir}")
+        if cal_dir == CALIBRATION_IMAGES:
+            self.log(f"Calibration      -> {cal_dir} (shared global set — this scan "
+                     "has no cal/ of its own, so the flat-field may not match "
+                     "its zoom)")
+        else:
+            self.log(f"Calibration      -> {cal_dir}")
+        if not self._has_ccm(side):
+            self.log("No ccm.json for this calibration set — running without "
+                     "colour correction. Shoot Step 0b and fit to enable it.")
         rc = self.run_command([sys.executable, "-u", script], cwd=MODELING_DIR, env=env)
         if rc == 0:
             self.log("Modeling pipeline finished successfully.")

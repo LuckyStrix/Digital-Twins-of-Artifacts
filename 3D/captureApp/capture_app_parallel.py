@@ -18,6 +18,9 @@ except ImportError:
 
 CAMERA_FOLDER = "/store_00020001/DCIM/100CANON/"
 PREVIEW_SIZE = (320, 240)
+# Opening the serial port toggles DTR, which resets the Arduino; the sketch
+# needs about this long to reboot before it will listen for commands again.
+ARDUINO_RESET_S = 2.0
 
 
 class CaptureApp:
@@ -29,6 +32,7 @@ class CaptureApp:
         self.stop_event = threading.Event()
         self._photo_refs = []  # keep Tk image refs alive
         self.detected_cam_ports = []  # last camera ports found by the Refresh button
+        self.leds_on = False  # desired LED state, re-asserted after every board reset
         self._build_ui()
 
     # ------------------------------------------------------------------ UI build
@@ -412,20 +416,47 @@ class CaptureApp:
         self.leds_off_btn.configure(state="disabled")
         threading.Thread(target=self._run_led_command, args=(port, on), daemon=True).start()
 
+    def _wait_for_reboot(self, opened_at):
+        """Block until the reset caused by opening the port at <opened_at> has finished."""
+        remaining = ARDUINO_RESET_S - (time.monotonic() - opened_at)
+        if remaining > 0:
+            time.sleep(remaining)
+
+    def _restore_leds(self, ser, opened_at):
+        """Re-send the desired LED state on a freshly opened port.
+
+        The sketch boots with the LEDs off, so the reset that opening the port
+        causes would otherwise leave a scan running in the dark even though the
+        user turned the lights on beforehand.
+        """
+        if not self.leds_on:
+            return
+        self._wait_for_reboot(opened_at)
+        prev_timeout = ser.timeout
+        ser.timeout = 2
+        ser.reset_input_buffer()
+        ser.write(b'N')
+        ack = ser.read(1)
+        ser.timeout = prev_timeout
+        if ack == b'e':
+            self._log("LEDs re-enabled after Arduino reset.")
+        else:
+            self._log(f"⚠ Could not restore LEDs after the Arduino reset (got {ack!r}) — "
+                      f"the scan may run with the lights off.")
+
     def _run_led_command(self, port, on):
         try:
             ser = serial.Serial(port, baudrate=115200, timeout=2)
-            # Opening the port toggles DTR and resets the Arduino, which takes
-            # a couple seconds to reboot into the sketch; _run_capture gets this
-            # for free while it spends that time detecting cameras, but this is
-            # a standalone command so it has to wait explicitly or the write
-            # below lands before the board is listening again.
-            time.sleep(2)
+            opened_at = time.monotonic()
+            # Opening the port resets the Arduino, so wait for it to boot or the
+            # write below lands before the board is listening again.
+            self._wait_for_reboot(opened_at)
             ser.reset_input_buffer()
             ser.write(b'N' if on else b'F')
             ack = ser.read(1)  # wait for 'e' acknowledgement (or time out)
             ser.close()
             if ack == b'e':
+                self.leds_on = on
                 self._log(f"LEDs turned {'on' if on else 'off'}.")
             else:
                 self._log(f"⚠ LED command sent but no acknowledgement from Arduino "
@@ -449,6 +480,7 @@ class CaptureApp:
         # Open serial
         try:
             ser = serial.Serial(port, baudrate=115200, timeout=1)
+            opened_at = time.monotonic()
         except serial.SerialException as exc:
             self._log(f"Serial port error: {exc}")
             self._set_status("Serial error")
@@ -471,6 +503,10 @@ class CaptureApp:
         for name, port in zip(cam_names, cam_ports):
             self._log(f"  {name}: {port}")
         self._build_preview_slots(n_cams)
+
+        # Opening the port above reset the board and killed the lights; put them
+        # back before any photo is taken.
+        self._restore_leds(ser, opened_at)
 
         # Create output folder tree
         run_name = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")

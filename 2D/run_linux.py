@@ -121,6 +121,12 @@ CAPTURE_TIFFS = [
     "nco.tiff", "eco.tiff", "sco.tiff", "wco.tiff",
 ]
 
+# Sidecar the capture script drops beside the TIFFs recording the dcraw flags
+# used, and in particular whether the images are linear or BT.709-encoded. The
+# modeling pipeline reads it to decide whether to linearise; when it is absent
+# the images are assumed to be BT.709 (the historic dcraw default).
+CAPTURE_INFO_NAME = "capture_info.json"
+
 # Per-working-folder layout. The scroll scans live directly in the working
 # folder and the pipeline writes its render-ready maps into <folder>/maps/, so
 # each scan set is self-contained. The built model is saved *next to* the folder
@@ -725,6 +731,19 @@ class PipelineApp:
             else:
                 missing.append(name)
 
+        # The sidecar records which transfer curve the TIFFs carry (linear vs
+        # BT.709). It has to travel with them: this is the exact moment a
+        # capture becomes a calibration set, and if the encoding metadata is
+        # dropped here the modeling pipeline falls back to assuming BT.709 and
+        # will mis-linearise a linear set without ever saying so.
+        info_src = latest / CAPTURE_INFO_NAME
+        if info_src.exists():
+            shutil.copy2(info_src, dest / CAPTURE_INFO_NAME)
+            self.log(f"  {CAPTURE_INFO_NAME} -> {label}")
+        else:
+            self.log(f"  NOTE: no {CAPTURE_INFO_NAME} in {latest} — the pipeline "
+                     "will assume these images are BT.709-encoded.")
+
         if missing:
             self.log("WARNING: capture folder is missing these expected files: "
                       + ", ".join(missing))
@@ -889,11 +908,20 @@ class PipelineApp:
         build. Mirrors backend/delete-tmp-tiff.ps1 (the Windows path used by
         run.py) but done natively in Python so it works on Linux. The 9 capture
         TIFFs are kept, and the working data/ folders (outside backend/) — where
-        the copied render.glb, maps/ and info.txt live — are never touched."""
+        the copied render.glb, maps/ and info.txt live — are never touched.
+
+        backend/calibration/ is skipped wholesale. Its flat-field TIFFs happen
+        to share the 9 capture filenames and so used to survive by coincidence,
+        but the colour-chart shot in calibration/chart/ does not — deleting the
+        chart would silently destroy the reference the colour matrix is fitted
+        from. Exclude the whole tree rather than rely on filenames."""
         keep = set(CAPTURE_TIFFS)
+        protected_dir = CALIBRATION_IMAGES.resolve()
         removed = 0
         for pattern in ("*.tmp", "*.tiff", "*.glb"):
             for f in BACKEND.rglob(pattern):
+                if protected_dir in f.resolve().parents:
+                    continue
                 if f.name in keep or not f.is_file():
                     continue
                 try:

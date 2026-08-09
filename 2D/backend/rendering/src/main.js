@@ -128,7 +128,14 @@ scene.add(plane);
 // Texture loader
 let diffuseMap, normalMap, specularMap, roughnessMap, alphaMap;
 
-async function loadTiffTexture(url, { alphaFromRed = false, boostFactor = 1.0 } = {}) {
+// colorSpace is declared explicitly at every call site rather than left to the
+// default. Only genuine COLOUR belongs in sRGB — the diffuse/base-colour map
+// and the specular tint. Normals, height, roughness and alpha are data and must
+// stay linear, or three will decode them and quietly corrupt the values.
+// Note this affects the live preview only: GLTFExporter writes the base-colour
+// bytes verbatim, so export correctness comes from Stage 4 encoding the TIFF.
+async function loadTiffTexture(url, { alphaFromRed = false, boostFactor = 1.0,
+                                      colorSpace = THREE.NoColorSpace } = {}) {
   const res = await fetch(url);
   if (!res.ok) throw new Error(`${url} failed (${res.status})`);
   const buf = await res.arrayBuffer();
@@ -155,6 +162,7 @@ async function loadTiffTexture(url, { alphaFromRed = false, boostFactor = 1.0 } 
     { imageOrientation: 'flipY', premultiplyAlpha: 'none' }
   );
   const tex = new THREE.Texture(bitmap);
+  tex.colorSpace = colorSpace;
   tex.needsUpdate = true;
   return tex;
 }
@@ -194,6 +202,12 @@ function updateMaterial() {
   const planeHeight = aspectRatio >= 1 ? 5 / aspectRatio : 5;
 
   const specTintTex = new THREE.CanvasTexture(makeSpecularTintCanvas(diffuseMap.image));
+  // KHR_materials_specular defines specularColorTexture as sRGB, and this is
+  // built from the (already sRGB-encoded) diffuse map, so tag it to match.
+  // makeSpecularTintCanvas itself needs no change: it scales all three channels
+  // by one per-pixel scalar, and enc(k*x) = k^gamma * enc(x), so the hue it
+  // produces is the same either side of the encoding.
+  specTintTex.colorSpace = THREE.SRGBColorSpace;
   specTintTex.needsUpdate = true;
 
   const material = new THREE.MeshPhysicalMaterial({
@@ -315,19 +329,27 @@ function buildExportMesh() {
   const potRough = padToSquarePOT(croppedRough);
   const potSpec  = padToSquarePOT(croppedSpec);
 
-  const mkTex = c => { const t = new THREE.CanvasTexture(c); t.needsUpdate = true; return t; };
+  // Colour space is explicit per map. NEVER tag roughness sRGB: the exporter's
+  // buildMetalRoughTextureAsync linearises anything so tagged when packing the
+  // metallicRoughness texture, which would silently alter the values.
+  const mkTex = (c, colorSpace = THREE.NoColorSpace) => {
+    const t = new THREE.CanvasTexture(c);
+    t.colorSpace = colorSpace;
+    t.needsUpdate = true;
+    return t;
+  };
 
   // See makeSpecularTintCanvas: tints the specular reflectance toward the
   // diffuse hue without lowering its peak magnitude.
   const potSpecTint = makeSpecularTintCanvas(potDiff);
 
   const material = new THREE.MeshPhysicalMaterial({
-    map:                  mkTex(potDiff),
+    map:                  mkTex(potDiff, THREE.SRGBColorSpace),
     normalMap:            mkTex(potNorm),
     roughnessMap:         mkTex(potRough),
     specularIntensityMap: mkTex(potSpec),
     specularIntensity:    specularIntensityValue,
-    specularColorMap:     mkTex(potSpecTint),
+    specularColorMap:     mkTex(potSpecTint, THREE.SRGBColorSpace),
     roughness: roughnessValue,
     metalness: 0.0,
     side: THREE.FrontSide,
@@ -378,11 +400,13 @@ window.exportGLB = async () => {
   return btoa(binary);
 };
 
-loadTiffTexture('textures/DiffuseMap_render.tiff').then(t    => { diffuseMap   = t; updateMaterial(); }).catch(console.error);
-loadTiffTexture('textures/NormalMap_render.tiff').then(t    => { normalMap    = t; updateMaterial(); }).catch(console.error);
-loadTiffTexture('textures/SpecularMap_render.tiff', { alphaFromRed: true, boostFactor: specularBoostFactor }).then(t  => { specularMap  = t; updateMaterial(); }).catch(console.error);
-loadTiffTexture('textures/RoughnessMap_render.tiff').then(t => { roughnessMap = t; updateMaterial(); }).catch(console.error);
-loadTiffTexture('textures/AlphaMask_render.tiff').then(t    => { alphaMap     = t; updateMaterial(); }).catch(console.error);
+// Diffuse is the only COLOUR here, and Stage 4 sRGB-encodes it to match what
+// glTF expects of a base-colour texture. The rest are data and stay linear.
+loadTiffTexture('textures/DiffuseMap_render.tiff', { colorSpace: THREE.SRGBColorSpace }).then(t    => { diffuseMap   = t; updateMaterial(); }).catch(console.error);
+loadTiffTexture('textures/NormalMap_render.tiff',  { colorSpace: THREE.NoColorSpace }).then(t    => { normalMap    = t; updateMaterial(); }).catch(console.error);
+loadTiffTexture('textures/SpecularMap_render.tiff', { alphaFromRed: true, boostFactor: specularBoostFactor, colorSpace: THREE.NoColorSpace }).then(t  => { specularMap  = t; updateMaterial(); }).catch(console.error);
+loadTiffTexture('textures/RoughnessMap_render.tiff', { colorSpace: THREE.NoColorSpace }).then(t => { roughnessMap = t; updateMaterial(); }).catch(console.error);
+loadTiffTexture('textures/AlphaMask_render.tiff',  { colorSpace: THREE.NoColorSpace }).then(t    => { alphaMap     = t; updateMaterial(); }).catch(console.error);
 
 // Cubemap
 const cubeTexture = new THREE.CubeTextureLoader().load(

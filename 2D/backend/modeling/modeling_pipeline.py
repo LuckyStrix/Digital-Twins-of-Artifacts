@@ -1206,12 +1206,27 @@ def pad_to_pot(img: np.ndarray) -> np.ndarray:
     return np.pad(img, pad_width, mode="constant", constant_values=0)
 
 
-def _process_render_file(in_path: Path, out_path: Path) -> None:
-    """Rotate 180° CCW (two 90° passes) + pad to power-of-two, then write to render-ready folder."""
+def _process_render_file(in_path: Path, out_path: Path, srgb: bool = False) -> None:
+    """Encode if it is colour, pad to power-of-two, write to the render folder.
+
+    `srgb` applies the sRGB transfer curve, and is set for the DIFFUSE MAP ONLY.
+    glTF defines baseColorTexture as sRGB-encoded and every viewer decodes it on
+    load, so a linear diffuse map would come out roughly twice too dark. Every
+    other map is data, not colour - normals, height, roughness, specular
+    intensity and alpha are all sampled linearly - so encoding them would
+    corrupt the values.
+    """
     img = tifffile.imread(str(in_path))
 
     row_ax, col_ax = spatial_axes(img)
     h_in, w_in     = img.shape[row_ax], img.shape[col_ax]
+
+    if srgb:
+        if img.dtype != np.uint16:
+            raise ValueError(f"{in_path.name}: expected uint16 for sRGB encoding, "
+                             f"got {img.dtype}")
+        img = (np.clip(cc.srgb_encode(img.astype(np.float64) / 65535.0), 0.0, 1.0)
+               * 65535).astype(np.uint16)
 
     #img = rotate_ccw90(img)   # first 90° CCW
     #img = rotate_ccw90(img)   # second 90° CCW -> 180° total
@@ -1223,7 +1238,8 @@ def _process_render_file(in_path: Path, out_path: Path) -> None:
 
     tifffile.imwrite(str(out_path), img)
     print(f"  {in_path.name:<55} ->  {out_path.name:<25} "
-          f"({w_in}×{h_in}  ->  {w_out}×{h_out})  dtype={img.dtype}")
+          f"({w_in}×{h_in}  ->  {w_out}×{h_out})  dtype={img.dtype}"
+          + ("  [sRGB-encoded]" if srgb else ""))
 
 
 def run_prep_for_rendering() -> None:
@@ -1252,20 +1268,21 @@ def run_prep_for_rendering() -> None:
     hmap_stem = Path(f"combined_8light_theta{THETA}_weighted_frankot").stem
     hmap_name = hmap_stem + "_u16.tiff"
 
+    # (source, destination, sRGB-encode?) - only the diffuse map is colour.
     render_files = [
-        (MASKS_DIR / "AlphaMask.tiff",         RENDER_OUT / "AlphaMask_render.tiff"),
-        (HM_OUT    / hmap_name,                RENDER_OUT / "HeightMap_render.tiff"),
-        (MAPS_OUT  / "DiffuseMap_Cal.tiff",    RENDER_OUT / "DiffuseMap_render.tiff"),
-        (MAPS_OUT  / "NormalMap_Cal.tiff",     RENDER_OUT / "NormalMap_render.tiff"),
-        (MAPS_OUT  / "SpecularMap_Cal.tiff",   RENDER_OUT / "SpecularMap_render.tiff"),
-        (MAPS_OUT  / "RoughnessMap_Cal.tiff",  RENDER_OUT / "RoughnessMap_render.tiff"),
+        (MASKS_DIR / "AlphaMask.tiff",         RENDER_OUT / "AlphaMask_render.tiff",   False),
+        (HM_OUT    / hmap_name,                RENDER_OUT / "HeightMap_render.tiff",   False),
+        (MAPS_OUT  / "DiffuseMap_Cal.tiff",    RENDER_OUT / "DiffuseMap_render.tiff",  True),
+        (MAPS_OUT  / "NormalMap_Cal.tiff",     RENDER_OUT / "NormalMap_render.tiff",   False),
+        (MAPS_OUT  / "SpecularMap_Cal.tiff",   RENDER_OUT / "SpecularMap_render.tiff", False),
+        (MAPS_OUT  / "RoughnessMap_Cal.tiff",  RENDER_OUT / "RoughnessMap_render.tiff",False),
     ]
 
-    for in_path, out_path in render_files:
+    for in_path, out_path, srgb in render_files:
         if not in_path.exists():
             print(f"  WARNING: {in_path.name} not found - skipping.")
             continue
-        _process_render_file(in_path, out_path)
+        _process_render_file(in_path, out_path, srgb=srgb)
 
     print("\nStage 4 complete.")
 

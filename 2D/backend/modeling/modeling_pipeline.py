@@ -693,22 +693,33 @@ def run_core_maps() -> None:
 #   integration.  Weighting by the z-component of the normal down-weights
 #   grazing-angle normals that are geometrically less reliable.
 
+# NOTE: these loaders read through tifffile, NOT PIL.  PIL opens a 16-bit RGB
+# TIFF as mode "RGB" and silently returns the HIGH BYTE only (verified:
+# PIL_array == tifffile_array >> 8), so every one of these used to hand
+# photometric stereo an 8-bit truncation of 16-bit data.  tifffile returns the
+# file's channels in stored order, which is the same RGB order PIL gave, so the
+# luminance weights and channel indices below are unchanged - only precision is.
+
 def _load_gray(path: Path) -> np.ndarray:
     """Load image as float32 luminance in [0, 1]."""
-    img = np.array(Image.open(path)).astype(np.float32)
+    img = tifffile.imread(str(path)).astype(np.float32)
     if img.ndim == 3:
         img = 0.2126 * img[..., 0] + 0.7152 * img[..., 1] + 0.0722 * img[..., 2]
-    return img / 255.0
+    return img / 65535.0
 
 
 def _load_rgb(path: Path) -> np.ndarray:
     """Load RGB image as float32 in [0, 1]."""
-    return np.array(Image.open(path)).astype(np.float32) / 255.0
+    return tifffile.imread(str(path)).astype(np.float32) / 65535.0
 
 
 def _load_mask(path: Path) -> np.ndarray:
-    """Load alpha mask as a boolean array (True = scroll pixel)."""
-    return np.array(Image.open(path)) > 128
+    """Load alpha mask as a boolean array (True = scroll pixel).
+
+    AlphaMask.tiff is written by Stage 0 as uint8 0/255, so this threshold is
+    against 8-bit levels and needs no rescaling.
+    """
+    return tifffile.imread(str(path)) > 128
 
 
 def _save_u16(height: np.ndarray, path: Path, mask: np.ndarray | None = None) -> None:
@@ -734,9 +745,14 @@ def _save_u16(height: np.ndarray, path: Path, mask: np.ndarray | None = None) ->
     print(f"    Saved {out_path.name}")
 
 
-def decode_normal_map(rgb: np.ndarray) -> np.ndarray:
-    """Convert uint8-range RGB normal map encoding to unit normals (H, W, 3)."""
-    n  = rgb.astype(np.float32) * (2.0 / 255.0) - 1.0
+def decode_normal_map(rgb01: np.ndarray) -> np.ndarray:
+    """Convert an RGB normal-map encoding in [0, 1] to unit normals (H, W, 3).
+
+    Takes [0, 1] rather than uint8 levels so it is independent of the source
+    bit depth: it previously hardcoded 2.0/255.0 and only survived the 16-bit
+    switch because the caller scaled back up by 255 first.
+    """
+    n  = rgb01.astype(np.float32) * 2.0 - 1.0
     nz = np.clip(n[..., 2], 1e-6, 1.0)
     return n / nz[..., None]
 
@@ -847,7 +863,7 @@ def run_height_maps() -> None:
     # Provides a baseline to compare against the photometric stereo results.
     print("Method 1: Integrate from NormalMap_Cal.tiff (Stage 2 output)")
     nm_rgb       = _load_rgb(MAPS_OUT / "NormalMap_Cal.tiff")
-    normals_cal  = decode_normal_map(nm_rgb * 255.0)
+    normals_cal  = decode_normal_map(nm_rgb)
     p_cal, q_cal = normals_to_gradients(normals_cal)
     nz_cal       = np.clip(nm_rgb[..., 2] * 2.0 - 1.0, 1e-6, 1.0)
     print("  Integrating [normalmap_cal]...")
@@ -902,7 +918,9 @@ def run_height_maps() -> None:
     # reveals ink layer geometry that averages out in luminance-based methods.
     print("\nMethod 6: Per-channel RGB photometric stereo (cross-polarised)")
     def _load_channel(path: Path, ch: int) -> np.ndarray:
-        return np.array(Image.open(path)).astype(np.float32)[..., ch] / 255.0
+        # tifffile, not PIL - see the note above _load_gray.  Channel order on
+        # disk is RGB, so ch 0/1/2 are R/G/B as the loop below assumes.
+        return tifffile.imread(str(path)).astype(np.float32)[..., ch] / 65535.0
 
     for ch_idx, ch_name in enumerate(["R", "G", "B"]):
         I_ch = np.stack([

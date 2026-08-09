@@ -134,6 +134,13 @@ CAL_SUBDIR   = "cal"
 CHART_SUBDIR = "chart"
 CCM_NAME     = "ccm.json"
 
+# Virtualenv holding color_fit.py's dependencies, looked for beside the repo
+# root and then beside 2D/. Separate from the pipeline's environment because
+# cv2.mcc needs opencv-contrib while rembg needs plain opencv-python-headless,
+# and the two overwrite each other's cv2/ directory. See
+# backend/modeling/requirements-colorfit.txt.
+COLORFIT_VENV = ".venv-colorfit"
+
 # Per-working-folder layout. The scroll scans live directly in the working
 # folder and the pipeline writes its render-ready maps into <folder>/maps/, so
 # each scan set is self-contained. The built model is saved *next to* the folder
@@ -287,6 +294,8 @@ class PipelineApp:
         add_button("Step 0a — Capture Calibration (flat copy paper)", self.on_capture_calibration)
         add_button("Step 0b — Capture Colour Chart (24-patch ColorChecker)",
                    self.on_capture_chart)
+        add_button("Step 0c — Fit Colour Matrix (re-run without re-shooting)",
+                   self.on_fit_color)
         tk.Frame(button_frame, height=1, bg="#cccccc").pack(fill=tk.X, pady=6)
         add_button("Step 1 — Capture Scroll (needs camera + Arduino)", self.on_run_capture)
         add_button("Step 2 — Run Modeling Pipeline", self.on_run_modeling)
@@ -444,6 +453,9 @@ class PipelineApp:
 
     def on_capture_chart(self):
         self.run_in_background(self.step_capture_chart, "capture colour chart")
+
+    def on_fit_color(self):
+        self.run_in_background(self.step_fit_color, "fit colour matrix")
 
     def on_run_modeling(self):
         self.run_in_background(self.step_run_modeling, "modeling pipeline")
@@ -978,8 +990,82 @@ class PipelineApp:
         self._check_exposure(dest, "colour chart")
         self.log("A clipped patch biases the whole matrix, so the white patch in "
                  "particular must not be at full scale.")
-        self.log("Next: fit the matrix (Step 0c) to produce "
-                 f"{cal / CCM_NAME}.")
+        self.log("Fitting the colour matrix...")
+        self.step_fit_color()
+
+    # ── Colour matrix fit ────────────────────────────────────────────────────
+    def _colorfit_python(self) -> Path | None:
+        """Interpreter for color_fit.py, or None if its environment is missing.
+
+        The fit needs opencv-contrib (for cv2.mcc) and colour-science, which the
+        pipeline does not — and rembg depends on plain opencv-python-headless,
+        so installing contrib beside it is a silent last-writer-wins race over
+        the same cv2/ directory. It therefore lives in its own virtualenv.
+        Falls back to this interpreter if it happens to have cv2.mcc already.
+        """
+        for base in (ROOTER, ROOT):
+            candidate = base / COLORFIT_VENV / "bin" / "python"
+            if candidate.is_file():
+                return candidate
+        if self._cv2_mcc_present(sys.executable):
+            return Path(sys.executable)
+        return None
+
+    def _cv2_mcc_present(self, python: str) -> bool:
+        """Whether `python` can do chart detection.
+
+        Deliberately not _module_present: that uses importlib.find_spec, which
+        cannot see cv2.mcc because it is a C-extension attribute of cv2 rather
+        than an importable submodule.
+        """
+        try:
+            return subprocess.run(
+                [str(python), "-c", "import cv2, sys; sys.exit(0 if hasattr(cv2,'mcc') else 1)"],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            ).returncode == 0
+        except Exception:
+            return False
+
+    def step_fit_color(self):
+        """Fit ccm.json from the captured chart. Safe to re-run."""
+        cal = self._cal_dir()
+        chart = cal / CHART_SUBDIR / "allLight.tiff"
+        if not chart.exists():
+            self.log(f"No colour chart found at {chart}.")
+            self.log("Capture one with 'Step 0b — Capture Colour Chart' first.")
+            return
+        if not self._has_cal(self.active_dir):
+            self.log(f"WARNING: {cal} has no copy-paper set, so the chart cannot "
+                     "be flat-fielded the way the pipeline flat-fields the "
+                     "artifact. The fit will still run but will be less accurate.")
+
+        python = self._colorfit_python()
+        if python is None:
+            self.log("Cannot fit: the colour-fit environment is missing.")
+            self.log("Create it once with:")
+            self.log(f"    python3 -m venv {ROOTER / COLORFIT_VENV}")
+            self.log(f"    {ROOTER / COLORFIT_VENV}/bin/pip install -r "
+                     f"{MODELING_DIR / 'requirements-colorfit.txt'}")
+            self.log("It is kept separate from the pipeline on purpose — see the "
+                     "notes in requirements-colorfit.txt.")
+            return
+
+        self.log(f"Using {python}")
+        rc = self.run_command([str(python), "-u", str(MODELING_DIR / "color_fit.py"),
+                               "fit", "--cal-dir", str(cal)], cwd=MODELING_DIR)
+        overlay = cal / "chart_detect_overlay.png"
+        if rc == 0:
+            self.log(f"Wrote {cal / CCM_NAME}. The modeling pipeline will apply it "
+                     "automatically to every scan using this calibration set.")
+            if overlay.exists():
+                self.log(f"Open {overlay} and confirm the red squares sit inside "
+                         "the patches before trusting the numbers.")
+        else:
+            self.log("Colour fit FAILED — see the log above.")
+            self.log("If the chart could not be detected, re-run the command "
+                     "shown above by hand adding --box with the chart's four "
+                     "corners, which you can read off the overlay image.")
+            self.log("Until this succeeds the pipeline runs UNCORRECTED.")
 
     def step_run_modeling(self):
         sides = self._side_dirs()

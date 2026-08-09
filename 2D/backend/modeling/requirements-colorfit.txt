@@ -1,0 +1,40 @@
+# Dependencies for color_fit.py ONLY (the ColorChecker fit), not the pipeline.
+#
+# Install these into their OWN virtualenv, not alongside the pipeline's
+# requirements.txt:
+#
+#     python3 -m venv .venv-colorfit
+#     ./.venv-colorfit/bin/pip install -r requirements-colorfit.txt
+#
+# WHY A SEPARATE ENVIRONMENT
+# --------------------------
+# cv2.mcc (chart detection) lives in opencv-contrib, while rembg -- which the
+# modeling pipeline needs for Stage 0 -- depends on plain opencv-python-headless.
+# Both distributions install into the same cv2/ directory, so pip will happily
+# put both there and whichever lands last wins. That failure is silent,
+# machine-dependent, and shows up as cv2.mcc vanishing.
+#
+# Keeping the fit in its own venv sidesteps it entirely: the pipeline never
+# needs contrib OpenCV or colour-science, because it only reads ccm.json and
+# multiplies a 3x3. This is the main practical reason the fit is a separate CLI
+# rather than a stage of the pipeline.
+
+# numpy<2 matches the pipeline's pin; colour-science 0.4.x requires it too.
+numpy<2.0
+
+# cv2.mcc chart detection. Pin to match the pipeline's OpenCV version so the
+# two agree on behaviour if they ever share a machine.
+opencv-contrib-python-headless==4.11.0.86
+
+# Reference colorimetry (ColorChecker24 - Before November 2014, for pre-2014
+# charts), CIE Lab, and dE2000. 0.4.x supports Python 3.9-3.12 and numpy<2.
+colour-science>=0.4.4,<0.5
+
+# TIFF I/O. imagecodecs is required to read the LZW-compressed TIFFs that
+# cv2.imwrite produces; without it tifffile raises on any pipeline-written file.
+tifffile
+imagecodecs
+
+# Used for the flat-field envelope, which must match the pipeline's
+# gaussian_filter(sigma=SMOOTH_SIGMA).
+scipy

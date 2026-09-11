@@ -32,20 +32,22 @@ its outputs inside that same folder, so each scan set is self-contained:
   <active folder>/
     allLight.tiff, ncross.tiff, ... wco.tiff   (the 9 scroll scans)
     maps/        *_render.tiff                  (modeling output)
-    model/       render.glb                     (rendering output)
+  <active folder>.glb                           (rendering output, alongside it)
 
-It defaults to the top-level data/ folder (where captures land); a fresh capture
-makes its own data/<timestamp>/ folder active, and "Select working image set"
-points it at any other scan folder.
+Capture always mints a fresh timestamped folder inside the active folder and
+makes it active, so it starts out as the top-level data/ folder and "Select
+working image set" points it at any other scan folder.
 
 Optionally you can tick "Scan both sides of the object". Capture then shoots two
 scan sets (pausing so you can flip the object) into side1/ and side2/ subfolders
 of one working folder, and the modeling and rendering steps run once per side,
-each producing its own maps/ and model/ inside that side's folder:
+each producing its own maps/ and its own .glb next to that side's folder:
 
   <active folder>/
-    side1/  allLight.tiff ... wco.tiff   maps/   model/render.glb
-    side2/  allLight.tiff ... wco.tiff   maps/   model/render.glb
+    side1/  allLight.tiff ... wco.tiff   maps/
+    side1.glb
+    side2/  allLight.tiff ... wco.tiff   maps/
+    side2.glb
 
 When the box is left unticked everything behaves exactly as before (a single
 flat scan set with its own maps/ and model/ directly in the working folder).
@@ -67,7 +69,9 @@ Then click the buttons top to bottom:
                               (needs the camera + Arduino attached) and stores
                               them in the active working folder.
   2. Run Modeling Pipeline  - generates the texture maps into <active>/maps/.
-  3. Build 3D Model (.glb)  - bakes the maps into <active>/model/render.glb.
+  3. Build 3D Model (.glb)  - bakes the maps into <active>.glb, next to the
+                              working folder (side1.glb / side2.glb when both
+                              sides were scanned).
   4. Generate Artifact Description (.txt) - prompts for the artifact's name,
                               type and description and writes info.txt into the
                               active working folder.
@@ -86,7 +90,6 @@ import sys
 import threading
 import time
 import urllib.request
-import webbrowser
 import textwrap
 from datetime import datetime
 from pathlib import Path
@@ -103,7 +106,6 @@ BACKEND       = ROOT / "backend"
 CAPTURE_DIR   = BACKEND / "capture"
 MODELING_DIR  = BACKEND / "modeling"
 RENDERING_DIR = BACKEND / "rendering"
-#WEBSITE_DIR   = BACKEND / "website"
 
 CAPTURE_SCRIPT     = CAPTURE_DIR / "arduinoIntegration_linux.py"
 FOCUS_SCRIPT       = CAPTURE_DIR / "focusViewer_linux.py"
@@ -120,10 +122,13 @@ CAPTURE_TIFFS = [
 ]
 
 # Per-working-folder layout. The scroll scans live directly in the working
-# folder; the pipeline writes its render-ready maps and the built model into
-# these subfolders inside that same folder, so each scan set is self-contained.
+# folder and the pipeline writes its render-ready maps into <folder>/maps/, so
+# each scan set is self-contained. The built model is saved *next to* the folder
+# as <folder>.glb, which is how the website's artifact manifest refers to models
+# (e.g. side1.glb / side2.glb, 28-07-26_13-36-25.glb).
 MAPS_SUBDIR  = "maps"
-MODEL_SUBDIR = "model"
+# Name the renderer gives its own export inside backend/rendering/ before it is
+# copied out to <folder>.glb.
 GLB_NAME     = "render.glb"
 
 # Optional two-sided capture. When the user opts to scan both sides of the
@@ -166,8 +171,8 @@ PYTHON_DEPS = [
     ("onnxruntime",             "onnxruntime",  "modeling (alpha mask)"),
 ]
 
-# Optional helper script and the per-side artifact-description file the
-# "Generate Artifact Description" step writes into <side>/model/.
+# Optional helper script and the artifact-description file the "Generate
+# Artifact Description" step writes into the active working folder.
 TXT_SCRIPT = BACKEND / "create_artifact_info.py"
 TXT_NAME = "info.txt"
 
@@ -392,7 +397,7 @@ class PipelineApp:
         if self.busy:
             self.log("Busy — please wait for the current step to finish.")
             return
-        start = CAPTURE_DATA_DIR if CAPTURE_DATA_DIR.exists() else ROOT
+        start = self.active_dir if self.active_dir.exists() else ROOT
         folder = filedialog.askdirectory(
             initialdir=str(start), title="Select the image set to work with")
         if not folder:
@@ -408,10 +413,9 @@ class PipelineApp:
                 "scans" if self._has_scans(side) else "no scans",
                 "maps" if self._has_maps(side) else "no maps",
             ]
-            glbs = [".glb" if self._has_glb(side, side) else "no .glb"]
-            self.log(prefix + ", ".join(have) + ", " + " ".join(glbs) + ".")
-        txt = ".txt" if self._has_txt() else "no .txt"
-        self.log(txt)
+            have.append(".glb" if self._has_glb(side) else "no .glb")
+            self.log(prefix + ", ".join(have) + ".")
+        self.log("  Description: " + (TXT_NAME if self._has_txt() else "no " + TXT_NAME))
         self.log("Click a step or 'Run Everything' to process it.")
 
     def on_open_focus_viewer(self):
@@ -590,14 +594,16 @@ class PipelineApp:
         self.log("\nDone. Re-run this any time to re-check. See SETUP.md for the full guide.")
         self.log("=" * 64)
 
-    def _latest_capture_dir(self):
-        """Most recently modified subfolder of the top-level data/, or None."""
-        if not CAPTURE_DATA_DIR.exists():
-            return None
-        subdirs = [d for d in CAPTURE_DATA_DIR.iterdir() if d.is_dir()]
-        if not subdirs:
-            return None
-        return max(subdirs, key=lambda d: d.stat().st_mtime)
+    def _new_capture_dir(self) -> Path:
+        """A fresh timestamped scan folder inside the active working folder.
+
+        The Linux capture script writes straight into the folder it is handed
+        (PAPYRUS_CAPTURE_DIR), unlike the Windows one which mints a timestamped
+        subfolder of its own, so the launcher names the folder here. Capturing
+        into the *active* folder (rather than always into the top-level data/)
+        means selecting e.g. data/realPapyrus and hitting Capture keeps the new
+        scan set with the rest of that artifact's sets."""
+        return self.active_dir / datetime.now().strftime("%d-%m-%y_%H-%M-%S")
 
     # ── Active working folder ────────────────────────────────────────────────────
     @property
@@ -630,7 +636,11 @@ class PipelineApp:
         return (side or self.active_dir) / MAPS_SUBDIR
 
     def _glb_path(self, side: Path = None) -> Path:
-        return (side or self.active_dir) / MODEL_SUBDIR / GLB_NAME
+        """Where the built model for `side` is saved: <side>.glb, alongside the
+        folder rather than inside it (side1/ -> side1.glb), matching the naming
+        the website's artifact manifest expects."""
+        side = side or self.active_dir
+        return side.parent / f"{side.name}.glb"
 
     def _txt_path(self, side: Path = None) -> Path:
         return (side or self.active_dir) / TXT_NAME
@@ -652,14 +662,12 @@ class PipelineApp:
         maps = d / MAPS_SUBDIR
         return all((maps / name).exists() for name in RENDER_MAPS)
 
-    def _has_glb(self, glb, d: Path = None) -> bool:
-        d = d or self.active_dir
-        return (d / f"{glb}.glb").exists()
+    def _has_glb(self, side: Path = None) -> bool:
+        return self._glb_path(side).exists()
 
     def _has_txt(self, d: Path = None) -> bool:
         d = d or self.active_dir
-        txt = TXT_NAME
-        return (d / f"{txt}").exists()
+        return (d / TXT_NAME).exists()
 
     def _ask_continue(self, title: str, message: str) -> bool:
         """Pop a modal OK/Cancel dialog from a background thread; return True on OK.
@@ -744,17 +752,17 @@ class PipelineApp:
 
         self.log("SCROLL CAPTURE — place the scroll on the stage before "
                   "continuing.")
-        rc = self._run_capture_script()
+        latest = self._new_capture_dir()
+        rc = self._run_capture_script(capture_dir=latest)
         if rc != 0:
             return
-        latest = self._latest_capture_dir()
-        if latest is None:
+        if not latest.is_dir():
             self.log("Capture reported success but no output folder was found in "
-                      f"{CAPTURE_DATA_DIR}.")
+                      f"{self.active_dir}.")
             return
-        # The capture script already wrote the scans into data/<timestamp>/,
-        # which is a self-contained working folder — make it the active one
-        # instead of copying the images somewhere else.
+        # The capture script wrote the scans into <active>/<timestamp>/, which
+        # is a self-contained working folder — make it the active one instead
+        # of copying the images somewhere else.
         self._set_active_dir(latest)
         self.log(f"Capture finished. Active working folder set to: {latest}")
         if self._has_scans(latest):
@@ -769,7 +777,7 @@ class PipelineApp:
         """Capture both sides of the object into side1/ and side2/ subfolders of
         one fresh working folder, pausing between them so the user can flip the
         object over."""
-        working = CAPTURE_DATA_DIR / datetime.now().strftime("%d-%m-%y_%H-%M-%S")
+        working = self._new_capture_dir()
         self.log("TWO-SIDED SCROLL CAPTURE")
         self.log(f"Working folder: {working}")
 
@@ -810,13 +818,13 @@ class PipelineApp:
         self.log("CALIBRATION CAPTURE — place a sheet of flat copy paper (no "
                   "scroll) on the stage before continuing. The same lighting "
                   "sequence is used as for the scroll.")
-        rc = self._run_capture_script()
+        latest = self._new_capture_dir()
+        rc = self._run_capture_script(capture_dir=latest)
         if rc != 0:
             return
-        latest = self._latest_capture_dir()
-        if latest is None:
+        if not latest.is_dir():
             self.log("Capture reported success but no output folder was found in "
-                      f"{CAPTURE_DATA_DIR}.")
+                      f"{self.active_dir}.")
             return
         self.log("Capture finished.")
         copied = self._import_capture_into(
@@ -952,42 +960,21 @@ class PipelineApp:
             self.log("Export failed — see log above for details.")
             return
 
-        glb = RENDERING_DIR / "render.glb"
+        glb = RENDERING_DIR / GLB_NAME
         if glb.exists():
             dest = self._glb_path(side)
             dest.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(glb, dest)
-            #shutil.copy2(glb, WEBSITE_DIR / "render.glb")
             self.log(f"Saved model -> {dest}.")
-            #self.log(f"Saved model -> {dest} and copied it into the viewer.")
-            #self.log("Click 'Step 4 — Open 3D Viewer' to see the result.")
         else:
-            self.log("render.glb was not created — see log above for details.")
-    """
-    def step_open_viewer(self):
-        # Make sure the viewer shows the active folder's model.
-        active_glb = self._glb_path()
-        if active_glb.exists():
-            shutil.copy2(active_glb, WEBSITE_DIR / "render.glb")
-            self.log(f"Loading {active_glb} into the viewer.")
-        elif not (WEBSITE_DIR / "render.glb").exists():
-            self.log("No render.glb found for the active folder — build the model "
-                      "first (Step 3).")
-            return
+            self.log(f"{GLB_NAME} was not created — see log above for details.")
 
-        if self.http_proc is None or self.http_proc.poll() is not None:
-            self.log(f"Starting local web server on port {HTTP_PORT}...")
-            self.http_proc = subprocess.Popen(
-                [sys.executable, "-m", "http.server", str(HTTP_PORT)],
-                cwd=str(WEBSITE_DIR), stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-            )
-            time.sleep(0.5)
+        # Drop the intermediates this build left under backend/ (the copy above
+        # is already safe in the working folder). Done here as well as in
+        # step_build_model so "Run Everything", which calls this directly, also
+        # cleans up.
+        self._cleanup_intermediates()
 
-        url = f"http://localhost:{HTTP_PORT}/infoboxesweb2.html"
-        self.log(f"Opening {url}")
-        webbrowser.open(url)
-    """
     def step_generate_desc(self):
         done = threading.Event()
 
@@ -1049,6 +1036,7 @@ class PipelineApp:
                 return
 
         # ── Modeling + build, per side ────────────────────────────────────────
+        tag = ""
         for side in sides:
             label = self._side_label(side)
             tag = f" [{label}]" if label else ""

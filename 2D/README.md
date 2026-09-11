@@ -21,10 +21,10 @@ code and differ only in how they drive the capture rig:
   bottom: select a working image set → (optional) Open Focus Viewer → Capture
   Calibration (once per rig setup) → Capture Scroll → Run Modeling Pipeline →
   Build 3D Model → Open Viewer.
-- The **active working folder** holds one scan set; the pipeline reads and
-  writes only inside it (`maps/` from modeling, `model/render.glb` from
-  rendering), so each scan set is self-contained and a fresh capture just
-  starts its own timestamped folder under `data/`.
+- The **active working folder** holds one scan set; the pipeline reads it and
+  writes `maps/` inside it from modeling plus `<folder>.glb` alongside it from
+  rendering, so each scan set is self-contained and a fresh capture just starts
+  its own timestamped folder inside the active folder.
 - Ticking **"Scan both sides of the object"** shoots two scan sets (pausing
   for you to flip the object) into `side1/`/`side2/` subfolders, and modeling
   + rendering then run once per side. Leaving it unticked keeps the older

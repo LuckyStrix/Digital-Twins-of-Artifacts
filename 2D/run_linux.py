@@ -981,7 +981,7 @@ class PipelineApp:
         def build_popup():
             popup = tk.Toplevel(self.root)
             popup.title("New Artifact Info")
-            popup.geometry("420x360")
+            popup.geometry("420x440")
             popup.resizable(False, False)
 
             padding = {"padx": 12, "pady": 6}

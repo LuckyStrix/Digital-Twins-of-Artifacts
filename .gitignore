@@ -6,3 +6,8 @@ data/
 # 3D: locally built CUDA COLMAP binary + its source/build tree (see 3D/modelingPipeline/BUILDING_COLMAP.md)
 3D/modelingPipeline/colmap_local
 3D/modelingPipeline/colmap-src/
+
+# KiCad: local history (nested git repo), auto-backups, lock files
+.history/
+*-backups/
+~*.lck

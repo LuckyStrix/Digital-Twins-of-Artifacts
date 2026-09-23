@@ -278,7 +278,7 @@ set on the Inputs tab).
   histogram. If RMSE plateaus while the seam still looks doubled, the leftover
   error is non-rigid and more ICP won't fix it. CLI: `python3 alignment/run.py
   A.ply B.ply -o out.ply --refine [--refine-thresholds ... --report ...]`.
-- **Seam resolution** (checkbox, default off; `--resolve-seam` on the CLI) —
+- **Seam resolution** (checkbox, default **on** in the GUI; `--resolve-seam` on the CLI) —
   where both sides cover a surface but appear as separate sheets, drops the
   points of the less confident side. Confidence per point is COLMAP's view count
   (from each side's `dense/fused_component_00.ply.vis`) times how head-on the
@@ -286,8 +286,11 @@ set on the Inputs tab).
   are only dropped, never moved, and only where the other side has >= **Min.
   other pts** nearby. **Mode** `point` drops any conflicting point below the
   other side's local mean confidence (stronger); `patch` compares whole
-  competing sheets (gentler). **Conflict gap**, **Window** and **Passes** tune
-  it. Outputs `merged_fpfh_seam_audit.ply` (dropped points black/orange) and
+  competing sheets (gentler). Defaults: mode `point`, conflict gap 0.3 vox,
+  confidence floor 0.35 (applied only to the less confident side of each patch,
+  so coverage is kept), window 10, min other points 20, 3 passes. Density trim
+  0.003 with the hole-reduction preset pairs well with it; higher trims leave
+  holes where points were dropped. Outputs `merged_fpfh_seam_audit.ply` (dropped points black/orange) and
   `merged_fpfh_seam_report.json`. Needs point-cloud inputs with the `.vis`
   files present; otherwise it is skipped with a message.
 - **PLY overrides** — point the alignment step at specific PLY files instead of

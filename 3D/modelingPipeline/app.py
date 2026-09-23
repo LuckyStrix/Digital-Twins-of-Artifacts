@@ -592,6 +592,7 @@ class ConfigPanel(ttk.Frame):
         "align_points_var", "align_tol_var", "align_band_var", "align_robust_var",
         "align_seam_var", "align_seam_mode_var", "align_seam_tau_var",
         "align_seam_window_var", "align_seam_minc_var", "align_seam_passes_var",
+        "align_seam_minconf_var",
     ]
 
     def __init__(self, parent, app: "App"):
@@ -1078,7 +1079,7 @@ class ConfigPanel(ttk.Frame):
         # feature matching), hurting geometry there. The hole-filling pass below now
         # picks up the remaining true gaps, so this preset can stay more conservative.
         HOLE_REDUCTION_OFF = {"density_trim": 0.02, "poisson_crop_scale": 1.05, "normal_max_nn": 96}
-        HOLE_REDUCTION_ON  = {"density_trim": 0.012, "poisson_crop_scale": 1.08, "normal_max_nn": 80}
+        HOLE_REDUCTION_ON  = {"density_trim": 0.003, "poisson_crop_scale": 1.08, "normal_max_nn": 80}
 
         def _apply_hole_reduction():
             preset = HOLE_REDUCTION_ON if self.r_hole_reduction.get() else HOLE_REDUCTION_OFF
@@ -1277,7 +1278,7 @@ class ConfigPanel(ttk.Frame):
 
         ttk.Separator(f, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=10)
         _h(f, "Seam resolution (drop low-confidence points)")
-        self.align_seam_var = tk.BooleanVar(value=False)
+        self.align_seam_var = tk.BooleanVar(value=True)
         ttk.Checkbutton(f, text="Where the two sides disagree, keep the more confident one",
                         variable=self.align_seam_var).pack(anchor=tk.W, pady=2)
         ttk.Label(
@@ -1290,7 +1291,8 @@ class ConfigPanel(ttk.Frame):
             foreground=PAL["subtext"], wraplength=340, justify=tk.LEFT,
         ).pack(anchor=tk.W, pady=(0, 4))
         self.align_seam_mode_var   = tk.StringVar(value="point")
-        self.align_seam_tau_var    = tk.StringVar(value="0.5")
+        self.align_seam_tau_var    = tk.StringVar(value="0.3")
+        self.align_seam_minconf_var = tk.StringVar(value="0.35")
         self.align_seam_window_var = tk.StringVar(value="10")
         self.align_seam_minc_var   = tk.IntVar(value=20)
         self.align_seam_passes_var = tk.IntVar(value=3)
@@ -1303,6 +1305,9 @@ class ConfigPanel(ttk.Frame):
         for label, var, kw, hint in [
             ("Conflict gap (vox):", self.align_seam_tau_var, {"width": 8},
              "Sheets closer than this count as agreeing. Lower = more drops."),
+            ("Confidence floor:", self.align_seam_minconf_var, {"width": 8},
+             "Also drop points below this confidence (median is about 0.5) on the less "
+             "confident side wherever the other side covers the surface. 0 = off."),
             ("Window (vox):", self.align_seam_window_var, {"width": 8},
              "Neighbourhood used to compare the sides' confidence."),
             ("Min. other pts:", self.align_seam_minc_var, {"width": 8},
@@ -2183,7 +2188,8 @@ class App(tk.Tk):
             cmd += [
                 "--resolve-seam",
                 "--seam-mode", self._cfg.align_seam_mode_var.get(),
-                "--seam-tau", self._cfg.align_seam_tau_var.get().strip() or "0.5",
+                "--seam-tau", self._cfg.align_seam_tau_var.get().strip() or "0.3",
+                "--seam-min-conf", self._cfg.align_seam_minconf_var.get().strip() or "0",
                 "--seam-window", self._cfg.align_seam_window_var.get().strip() or "10",
                 "--seam-min-count", str(self._cfg.align_seam_minc_var.get()),
                 "--seam-passes", str(self._cfg.align_seam_passes_var.get()),

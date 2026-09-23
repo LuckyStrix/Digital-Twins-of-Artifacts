@@ -586,12 +586,12 @@ def refine_icp(A: MeshData, B: MeshData, T, voxel, params: RefineParams = None, 
 # --------------------------------------------------------------------------- #
 @dataclass
 class SeamParams:
-    tau: float = 0.5         # nearest-neighbour gap (vox) above which a point is "in conflict"
+    tau: float = 0.3         # nearest-neighbour gap (vox) above which a point is "in conflict"
     window: float = 10.0     # neighbourhood size (vox) for the local confidence comparison
     min_count: int = 20      # other side needs >= this many points in the window to conflict
     margin: float = 0.0      # required confidence lead before a point is dropped
     passes: int = 3          # re-evaluate after dropping, up to this many times
-    min_conf: float = 0.0    # >0: ALSO drop any point below this confidence wherever the other
+    min_conf: float = 0.35   # >0: ALSO drop any point below this confidence wherever the other
                              # side covers the surface (>= min_count pts nearby), conflict or not
     floor_loser_only: bool = True  # apply min_conf only to the side whose local mean confidence is
                              # LOWER, so both sides never lose the same patch (keeps coverage)

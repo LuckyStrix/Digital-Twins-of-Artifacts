@@ -55,7 +55,7 @@
   "r_normal_orient_k": 64,
   "r_poisson_depth": 11,
   "r_poisson_linear": true,
-  "r_density_trim": 0.0,
+  "r_density_trim": 0.003,
   "r_poisson_crop_scale": 1.08,
   "r_hole_reduction": true,
   "r_fill_holes": true,
@@ -70,5 +70,14 @@
   "r_normalize_pose": true,
   "align_method_var": "fpfh",
   "align_voxel_var": "0",
-  "align_samples_var": 60000
+  "align_samples_var": 60000,
+  "r_fill_smooth": false,
+  "align_refine_var": false,
+  "align_seam_var": true,
+  "align_seam_mode_var": "point",
+  "align_seam_tau_var": "0.3",
+  "align_seam_minconf_var": "0.35",
+  "align_seam_window_var": "10",
+  "align_seam_minc_var": 20,
+  "align_seam_passes_var": 3
 }

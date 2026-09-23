@@ -34,7 +34,7 @@ def main():
     sg = ap.add_argument_group("Seam resolution (drop the less confident side where the halves disagree)")
     sg.add_argument("--resolve-seam", action="store_true",
                     help="needs COLMAP .vis + images.bin next to each fused.ply (auto-found)")
-    sg.add_argument("--seam-tau", type=float, default=0.5,
+    sg.add_argument("--seam-tau", type=float, default=0.3,
                     help="gap in voxels beyond which overlapping points count as a conflict")
     sg.add_argument("--seam-window", type=float, default=10.0, help="local window size in voxels")
     sg.add_argument("--seam-min-count", type=int, default=20,
@@ -45,7 +45,7 @@ def main():
     sg.add_argument("--seam-mode", choices=["patch", "point"], default="point",
                     help="patch: compare competing sheets' local mean confidence; "
                          "point: drop points below the other side's local mean")
-    sg.add_argument("--seam-min-conf", type=float, default=0.0,
+    sg.add_argument("--seam-min-conf", type=float, default=0.35,
                     help="also drop any point below this confidence wherever the other side "
                          "covers the surface (0=off; median confidence is about 0.5)")
     sg.add_argument("--seam-floor-both", action="store_true",

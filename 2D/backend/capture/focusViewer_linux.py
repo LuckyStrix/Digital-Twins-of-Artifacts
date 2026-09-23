@@ -153,14 +153,17 @@ class FocusViewer:
         self._set_status("Turning on all four directional lights…")
         self.message_arduino(*ALL_LIGHTS_ON)
         self.on_capture()
+        self.message_arduino(*ALL_LIGHTS_OFF)
 
     def _capture_preview(self):
         """Grab one live-view preview frame into the temp dir; return its path or None."""
+        self.message_arduino(*ALL_LIGHTS_ON)
         # On Linux gphoto2 is native, so call it directly (no msys2 shim).
         subprocess.run(
             ["gphoto2", "--capture-preview", "--force-overwrite"],
             cwd=self.tmpdir,
         )
+        self.message_arduino(*ALL_LIGHTS_OFF)
         # gphoto2 --capture-preview writes 'capture_preview.jpg' by default and
         # does not reliably honour --filename, so just pick up whatever image it
         # dropped into the (otherwise temp) directory — newest wins.

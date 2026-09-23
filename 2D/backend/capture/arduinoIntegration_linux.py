@@ -85,7 +85,7 @@ def capture_image(filename):
               "Check that the camera is connected and gphoto2 can reach it.")
         print(" ")
         return
-
+    message_arduino(0, 0, 0, 0, 0, 1, 0, 1)
     #subprocess.run(["exiftool", "-Orientation=1", "-n", tmp], cwd=img_dir)
     subprocess.run(
         ["dcraw", "-T", "-6", "-W", "-o", "0", "-q", "0", "-t", "0", tmp],

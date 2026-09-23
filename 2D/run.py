@@ -820,7 +820,7 @@ class PipelineApp:
             latest, CALIBRATION_IMAGES, "backend/calibration/")
         if copied:
             self.log("Calibration images are in place. Capture the scroll next "
-                      "(Step 0 — Capture Scroll), then run the modeling pipeline.")
+                      "(Step 1 — Capture Scroll), then run the modeling pipeline.")
 
     def step_run_modeling(self):
         sides = self._side_dirs()

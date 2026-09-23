@@ -257,6 +257,20 @@ set on the Inputs tab).
   from the cloud scale automatically.
 - **Sample points** — how many points are sampled from each side's cloud for
   feature matching.
+- **ICP refinement** (checkbox, default on in the GUI; `--refine` on the CLI,
+  off by default there) — after the pose is chosen, polishes it with a
+  coarse-to-fine point-to-plane ICP on **dense** clouds. **Stage dists** are the
+  correspondence distances in voxels, one per stage (default `3,1,0.5,0.25`);
+  **Iters / stage** caps each stage (a stage stops early once converged);
+  **Dense points** is the per-side sample used here, separate from **Sample
+  points**; **Tolerance** is the relative convergence threshold; **Seam band**
+  (>0) restricts each stage to points within band × distance of the other side;
+  **Robust σ** (>0) uses a Tukey loss in voxels. Every run writes
+  `aligned_cloud/icp_report.json`, and **Show ICP details…** plots it: before/
+  after fitness and residuals, per-stage RMSE convergence, and a residual
+  histogram. If RMSE plateaus while the seam still looks doubled, the leftover
+  error is non-rigid and more ICP won't fix it. CLI: `python3 alignment/run.py
+  A.ply B.ply -o out.ply --refine [--refine-thresholds ... --report ...]`.
 - **PLY overrides** — point the alignment step at specific PLY files instead of
   the pipeline's own Stage 2 outputs, for re-running alignment in isolation
   (e.g. after manually editing a cloud). Leave blank to use the normal

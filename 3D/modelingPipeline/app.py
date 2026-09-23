@@ -292,6 +292,12 @@ class AlignParser:
         (r'refine ',                            60, "Refining alignment (ICP)…"),
         (r'chosen ',                            85, "Selecting best candidate…"),
         (r'Best method:',                       90, "Evaluating methods…"),
+        (r'=== refine ===',                     91, "ICP refinement…"),
+        (r'\[icp\] stage 1/',                   92, "ICP stage 1…"),
+        (r'\[icp\] stage 2/',                   94, "ICP stage 2…"),
+        (r'\[icp\] stage 3/',                   96, "ICP stage 3…"),
+        (r'\[icp\] stage [4-9]/',               97, "ICP final stage…"),
+        (r'\[icp\] after',                      98, "ICP finished…"),
         (r'Saved merged',                      100, "Merged cloud saved"),
     ]
 
@@ -581,6 +587,8 @@ class ConfigPanel(ttk.Frame):
         "r_smooth_iters", "r_decimate_tris", "r_simplified_target_verts",
         "r_normalize_pose",
         "align_method_var", "align_voxel_var", "align_samples_var",
+        "align_refine_var", "align_thresholds_var", "align_iters_var",
+        "align_points_var", "align_tol_var", "align_band_var", "align_robust_var",
     ]
 
     def __init__(self, parent, app: "App"):
@@ -1199,6 +1207,56 @@ class ConfigPanel(ttk.Frame):
                     increment=5000, width=8).pack(side=tk.LEFT, padx=4)
 
         ttk.Separator(f, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=10)
+        _h(f, "ICP refinement (coarse-to-fine)")
+        self.align_refine_var = tk.BooleanVar(value=True)
+        ttk.Checkbutton(f, text="Refine with multi-stage ICP after alignment",
+                        variable=self.align_refine_var).pack(anchor=tk.W, pady=2)
+        ttk.Label(
+            f, text=("Runs ICP on dense clouds at a shrinking correspondence distance "
+                     "so the two halves are pulled onto each other at sub-voxel scale. "
+                     "Off = the original single-pass result."),
+            foreground=PAL["subtext"], wraplength=340, justify=tk.LEFT,
+        ).pack(anchor=tk.W, pady=(0, 4))
+
+        self.align_thresholds_var = tk.StringVar(value="3,1,0.5,0.25")
+        self.align_iters_var      = tk.IntVar(value=100)
+        self.align_points_var     = tk.IntVar(value=300000)
+        self.align_tol_var        = tk.StringVar(value="1e-7")
+        self.align_band_var       = tk.StringVar(value="0")
+        self.align_robust_var     = tk.StringVar(value="0")
+        for label, widget, var, kw, hint in [
+            ("Stage dists:", ttk.Entry, self.align_thresholds_var, {"width": 16},
+             "Correspondence distance per stage, in voxels. Add a smaller "
+             "value to go tighter."),
+            ("Iters / stage:", ttk.Spinbox, self.align_iters_var,
+             {"from_": 10, "to": 2000, "increment": 10, "width": 8},
+             "Max ICP iterations per stage; a stage stops early once converged."),
+            ("Dense points:", ttk.Spinbox, self.align_points_var,
+             {"from_": 50000, "to": 3000000, "increment": 50000, "width": 8},
+             "Points sampled per side for refinement (separate from Sample points)."),
+            ("Tolerance:", ttk.Entry, self.align_tol_var, {"width": 8},
+             "Relative fitness/RMSE change that counts as converged."),
+            ("Seam band (0=off):", ttk.Entry, self.align_band_var, {"width": 8},
+             "If >0, refine only points within band x stage-distance of the "
+             "other side, i.e. the overlap near the seam."),
+            ("Robust σ (0=off):", ttk.Entry, self.align_robust_var, {"width": 8},
+             "If >0, Tukey robust loss (σ in voxels) so outliers and the "
+             "wrong-sheet points near the seam are down-weighted."),
+        ]:
+            r = ttk.Frame(f); r.pack(fill=tk.X, pady=1)
+            ttk.Label(r, text=label, width=17).pack(side=tk.LEFT)
+            widget(r, textvariable=var, **kw).pack(side=tk.LEFT, padx=4)
+            ttk.Label(r, text=hint, foreground=PAL["subtext"], wraplength=200,
+                      justify=tk.LEFT).pack(side=tk.LEFT, padx=4)
+
+        ttk.Button(f, text="Show ICP details…",
+                   command=self.app.show_icp_details).pack(anchor=tk.W, pady=(6, 0))
+        ttk.Label(f, text="Opens the last alignment's icp_report.json: per-stage "
+                          "convergence and the residual histogram before/after.",
+                  foreground=PAL["subtext"], wraplength=340, justify=tk.LEFT,
+                  ).pack(anchor=tk.W, pady=(0, 4))
+
+        ttk.Separator(f, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=10)
         ttk.Label(f, text="PLY overrides (blank = auto from pipeline):",
                   font=("Segoe UI", 9, "bold")).pack(anchor=tk.W)
         ttk.Label(f, text="Useful for re-running alignment with different inputs.",
@@ -1412,6 +1470,135 @@ class PhotoGallery(tk.Toplevel):
 #  Main Application
 # ══════════════════════════════════════════════════════════════════════════════
 
+class IcpDetailsWindow(tk.Toplevel):
+    """Read-only view of an icp_report.json: before/after summary, per-stage
+    table, RMSE-vs-iteration convergence plot and residual histograms."""
+
+    _COLORS = ["#2563eb", "#16a34a", "#d97706", "#9333ea", "#dc2626", "#0891b2"]
+
+    def __init__(self, parent, data: dict, path: Path):
+        super().__init__(parent)
+        self.title(f"ICP details - {path.parent.parent.name}")
+        self.geometry("900x760")
+        self.configure(bg=PAL["bg"])
+        self._d = data
+        vox = data.get("voxel", 1.0)
+        pr = data.get("params", {})
+
+        ttk.Label(self, text=(
+            f"method={data.get('method', '?')}   voxel={vox:.5g}   "
+            f"stages={pr.get('thresholds')}   iters/stage={pr.get('max_iters')}   "
+            f"points={pr.get('points')}   band={pr.get('band')}   robust={pr.get('robust')}"),
+            wraplength=870).pack(anchor=tk.W, padx=10, pady=(8, 2))
+
+        b, a = data.get("before", {}), data.get("after", {})
+        sm = ttk.Treeview(self, columns=("m", "b", "a"), show="headings", height=5)
+        for c, t, w in (("m", "metric (eval dist = 2 voxels)", 260), ("b", "before refine", 150),
+                        ("a", "after refine", 150)):
+            sm.heading(c, text=t)
+            sm.column(c, width=w, anchor=tk.W if c == "m" else tk.E)
+        for label, key, fmt in (("fitness (inlier fraction)", "fitness", "{:.4f}"),
+                                ("inlier RMSE", "rmse", "{:.5g}"),
+                                ("median |point-to-plane| (voxels)", "median_vox", "{:.4f}"),
+                                ("95th pct |point-to-plane|", "p95", "{:.5g}"),
+                                ("mean |point-to-plane|", "mean", "{:.5g}")):
+            sm.insert("", tk.END, values=(
+                label, fmt.format(b[key]) if key in b else "-",
+                fmt.format(a[key]) if key in a else "-"))
+        sm.pack(fill=tk.X, padx=10, pady=4)
+
+        st = ttk.Treeview(self, columns=("s", "t", "n", "i", "r", "mv", "rot"),
+                          show="headings", height=6)
+        for c, t, w in (("s", "stage", 50), ("t", "dist (vox)", 80), ("n", "src/tgt pts", 150),
+                        ("i", "iters", 60), ("r", "final rmse", 100),
+                        ("mv", "moved (vox)", 100), ("rot", "rotated (deg)", 100)):
+            st.heading(c, text=t)
+            st.column(c, width=w, anchor=tk.E)
+        for s_ in data.get("stages", []):
+            last = s_["trace"][-1] if s_.get("trace") else {}
+            st.insert("", tk.END, values=(
+                s_["stage"], f"{s_['mult']:g}", f"{s_['n_src']}/{s_['n_tgt']}", s_["iters"],
+                f"{last.get('rmse', float('nan')):.5g}",
+                f"{s_['move_translation'] / vox:.3f}", f"{s_['move_rotation_deg']:.4f}"))
+        st.pack(fill=tk.X, padx=10, pady=4)
+
+        ttk.Label(self, text=("Convergence: RMSE at each logged iteration, one colour per stage. "
+                              "A flat line means ICP has converged at that stage's distance."),
+                  foreground=PAL["subtext"], wraplength=870).pack(anchor=tk.W, padx=10)
+        self._conv = tk.Canvas(self, height=210, bg=PAL["card"], highlightthickness=1,
+                               highlightbackground=PAL["border"])
+        self._conv.pack(fill=tk.X, padx=10, pady=4)
+
+        ttk.Label(self, text=("Residual histogram (|point-to-plane|, in voxels): before = grey, "
+                              "after = blue. A doubled surface shows as mass away from 0."),
+                  foreground=PAL["subtext"], wraplength=870).pack(anchor=tk.W, padx=10)
+        self._hist = tk.Canvas(self, height=210, bg=PAL["card"], highlightthickness=1,
+                               highlightbackground=PAL["border"])
+        self._hist.pack(fill=tk.X, padx=10, pady=4)
+        self._conv.bind("<Configure>", lambda e: self._draw_conv())
+        self._hist.bind("<Configure>", lambda e: self._draw_hist())
+
+    def _axes(self, cv, pad=(46, 12, 12, 26)):
+        w, h = cv.winfo_width(), cv.winfo_height()
+        l, t, r, b = pad
+        cv.create_line(l, t, l, h - b, fill=PAL["subtext"])
+        cv.create_line(l, h - b, w - r, h - b, fill=PAL["subtext"])
+        return l, t, w - r, h - b
+
+    def _draw_conv(self):
+        cv = self._conv
+        cv.delete("all")
+        pts, x = [], 0
+        for s_ in self._d.get("stages", []):
+            seg = []
+            for tp in s_.get("trace", []):
+                x += 1
+                seg.append((x, tp["rmse"]))
+            pts.append(seg)
+        flat = [p for seg in pts for p in seg]
+        if not flat:
+            return
+        x0, y0, x1, y1 = self._axes(cv)
+        lo, hi = min(p[1] for p in flat), max(p[1] for p in flat)
+        span = (hi - lo) or 1e-12
+        xs = lambda v: x0 + (x1 - x0) * (v - 1) / max(1, x - 1)
+        ys = lambda v: y1 - (y1 - y0) * (v - lo) / span
+        for i, seg in enumerate(pts):
+            col = self._COLORS[i % len(self._COLORS)]
+            if len(seg) > 1:
+                cv.create_line(*[c for p in seg for c in (xs(p[0]), ys(p[1]))], fill=col, width=2)
+            for p in seg:
+                cv.create_oval(xs(p[0]) - 2, ys(p[1]) - 2, xs(p[0]) + 2, ys(p[1]) + 2,
+                               fill=col, outline=col)
+            if seg:
+                cv.create_text(xs(seg[0][0]), y0, text=f"s{i + 1}", fill=col, anchor=tk.SW)
+        cv.create_text(x0 - 4, y0, text=f"{hi:.4g}", anchor=tk.E, fill=PAL["text"])
+        cv.create_text(x0 - 4, y1, text=f"{lo:.4g}", anchor=tk.E, fill=PAL["text"])
+        cv.create_text((x0 + x1) / 2, y1 + 14, text="logged iterations (all stages)",
+                       fill=PAL["subtext"])
+
+    def _draw_hist(self):
+        cv = self._hist
+        cv.delete("all")
+        hb, ha = self._d.get("hist_before"), self._d.get("hist_after")
+        if not hb or not ha:
+            return
+        x0, y0, x1, y1 = self._axes(cv)
+        nb = len(hb["counts"])
+        tb, ta = max(1, sum(hb["counts"])), max(1, sum(ha["counts"]))
+        fb = [c / tb for c in hb["counts"]]
+        fa = [c / ta for c in ha["counts"]]
+        top = max(fb + fa) or 1.0
+        bw = (x1 - x0) / nb
+        for i in range(nb):
+            for f, col, off in ((fb[i], "#94a3b8", 0), (fa[i], PAL["accent"], bw / 2)):
+                cv.create_rectangle(x0 + i * bw + off, y1 - (y1 - y0) * f / top,
+                                    x0 + i * bw + off + bw / 2, y1, fill=col, outline="")
+        cv.create_text(x0, y1 + 14, text="0", fill=PAL["subtext"])
+        cv.create_text(x1, y1 + 14, text=f">= {hb['hi_vox']:g} vox", fill=PAL["subtext"], anchor=tk.E)
+        cv.create_text(x0 - 4, y0, text=f"{top:.1%}", anchor=tk.E, fill=PAL["text"])
+
+
 class App(tk.Tk):
     def __init__(self):
         super().__init__()
@@ -1561,6 +1748,25 @@ class App(tk.Tk):
 
     def _merged_ply(self) -> Path:
         return self._session_dir() / "aligned_cloud" / "merged_fpfh.ply"
+
+    def _icp_report_path(self) -> Path:
+        return self._merged_ply().parent / "icp_report.json"
+
+    def show_icp_details(self):
+        rp = self._icp_report_path()
+        if not rp.exists():
+            fp = filedialog.askopenfilename(
+                title="No report for this session - pick an icp_report.json",
+                filetypes=[("ICP report", "*.json"), ("All files", "*.*")])
+            if not fp:
+                return
+            rp = Path(fp)
+        try:
+            data = json.loads(rp.read_text())
+        except (OSError, ValueError) as e:
+            messagebox.showerror("ICP details", f"Could not read {rp}:\n{e}")
+            return
+        IcpDetailsWindow(self, data, rp)
 
     def _recon_dir(self) -> Path:
         return self._session_dir() / "recon"
@@ -1912,6 +2118,17 @@ class App(tk.Tk):
         voxel = self._cfg.align_voxel_var.get().strip()
         if voxel and voxel != "0":
             cmd += ["--voxel", voxel]
+        if self._cfg.align_refine_var.get():
+            cmd += [
+                "--refine",
+                "--refine-thresholds", self._cfg.align_thresholds_var.get().strip(),
+                "--refine-iters", str(self._cfg.align_iters_var.get()),
+                "--refine-points", str(self._cfg.align_points_var.get()),
+                "--refine-tol", self._cfg.align_tol_var.get().strip() or "1e-7",
+                "--refine-band", self._cfg.align_band_var.get().strip() or "0",
+                "--refine-robust", self._cfg.align_robust_var.get().strip() or "0",
+                "--report", str(self._icp_report_path()),
+            ]
 
         self.log(f"[stage 3] Aligning {Path(ply_a).name} + {Path(ply_b).name}")
         parser = AlignParser()

@@ -416,6 +416,168 @@ def align_collapse(A: MeshData, B: MeshData, voxel=None, log=print, fit_floor=0.
 
 
 # --------------------------------------------------------------------------- #
+#  Final refinement: coarse-to-fine ICP with per-iteration diagnostics
+# --------------------------------------------------------------------------- #
+@dataclass
+class RefineParams:
+    """Knobs for refine_icp(). Thresholds are multiples of `voxel`."""
+    thresholds: tuple = (3.0, 1.0, 0.5, 0.25)   # correspondence dist per stage
+    max_iters: int = 100          # ICP iteration cap PER STAGE
+    tol: float = 1e-7             # relative fitness/rmse convergence tolerance
+    points: int = 300000          # dense points sampled per side for refinement
+    band: float = 0.0             # >0: only keep points within band*thr of the other side
+    robust: float = 0.0           # >0: Tukey loss with this sigma (in voxels)
+    chunk: int = 10               # iterations between logged trace points
+
+    @staticmethod
+    def parse_thresholds(text):
+        vals = tuple(float(x) for x in str(text).replace(";", ",").split(",") if x.strip())
+        if not vals or any(v <= 0 for v in vals):
+            raise ValueError(f"bad refine thresholds: {text!r}")
+        return vals
+
+
+def _dense_cloud(md: MeshData, n):
+    """Centered, denser sample of the FULL geometry (the 60k registration cloud
+    is too coarse to resolve sub-voxel offsets)."""
+    g = md.full
+    if md.is_mesh:
+        pcd = g.sample_points_uniformly(number_of_points=n)
+    else:
+        pcd = o3d.geometry.PointCloud(g)
+        if len(pcd.points) > n:
+            pcd = pcd.uniform_down_sample(max(1, len(pcd.points) // n))
+    pcd.translate(-md.centroid)
+    return pcd
+
+
+def _residuals(src, tgt, T, thr):
+    """Point-to-plane residuals |(s - t) . n_t| over correspondences within thr.
+    Unsigned: target normals are not globally oriented."""
+    r = reg.evaluate_registration(src, tgt, thr, T)
+    corr = np.asarray(r.correspondence_set)
+    if corr.shape[0] == 0:
+        return r, np.zeros(0)
+    s = (np.asarray(src.points)[corr[:, 0]] @ T[:3, :3].T) + T[:3, 3]
+    t = np.asarray(tgt.points)[corr[:, 1]]
+    n = np.asarray(tgt.normals)[corr[:, 1]]
+    return r, np.abs(np.einsum("ij,ij->i", s - t, n))
+
+
+def _res_summary(d, voxel):
+    if d.size == 0:
+        return {"n": 0}
+    return {"n": int(d.size), "mean": float(d.mean()),
+            "median": float(np.median(d)), "p95": float(np.percentile(d, 95)),
+            "median_vox": float(np.median(d) / voxel)}
+
+
+def _histogram(d, voxel, bins=40, hi=2.0):
+    """Histogram of residuals in voxel units on [0, hi]. A doubled surface shows
+    as a peak away from 0 instead of a spike at 0."""
+    h, edges = np.histogram(np.clip(d / voxel, 0, hi), bins=bins, range=(0, hi))
+    return {"counts": h.tolist(), "hi_vox": hi}
+
+
+def _pose_delta(Ta, Tb):
+    """(translation, rotation-deg) between two poses."""
+    D = Tb @ np.linalg.inv(Ta)
+    c = np.clip((np.trace(D[:3, :3]) - 1.0) / 2.0, -1.0, 1.0)
+    return float(np.linalg.norm(D[:3, 3])), float(np.degrees(np.arccos(c)))
+
+
+def refine_icp(A: MeshData, B: MeshData, T, voxel, params: RefineParams = None, log=print):
+    """Polish pose T (source->target, centered frame) with a coarse-to-fine ICP
+    on dense clouds. Returns (T_refined, report_dict). Every stage is run in
+    chunks of `params.chunk` iterations so the fitness/rmse trace shows whether
+    ICP is still improving or has plateaued (a plateau with a still-visible
+    double surface means the leftover error is non-rigid)."""
+    p = params or RefineParams()
+    log(f"[icp] refine: voxel={voxel:.5g} thresholds={list(p.thresholds)} "
+        f"max_iters={p.max_iters} points={p.points} band={p.band} robust={p.robust}")
+    src_full = _dense_cloud(B, p.points)
+    tgt_full = _dense_cloud(A, p.points)
+    tgt_full.estimate_normals(o3d.geometry.KDTreeSearchParamHybrid(
+        radius=A.extent * 0.01, max_nn=30))
+    log(f"[icp] dense clouds: src={len(src_full.points)} tgt={len(tgt_full.points)}")
+
+    kernel = None
+    if p.robust > 0:
+        try:
+            kernel = reg.TukeyLoss(k=p.robust * voxel)
+        except Exception as e:                      # older Open3D
+            log(f"[icp] robust kernel unavailable ({e}); using plain L2")
+    est = (reg.TransformationEstimationPointToPlane(kernel) if kernel
+           else reg.TransformationEstimationPointToPlane())
+
+    eval_thr = voxel * 2.0
+    r0, d0 = _residuals(src_full, tgt_full, T, eval_thr)
+    before = _res_summary(d0, voxel)
+    before["fitness"], before["rmse"] = float(r0.fitness), float(r0.inlier_rmse)
+    log(f"[icp] before: fitness={r0.fitness:.4f} rmse={r0.inlier_rmse:.4g} "
+        f"median|d|={before.get('median_vox', 0):.3f}vox p95={before.get('p95', 0):.4g}")
+
+    T0, cur = T.copy(), T.copy()
+    stages = []
+    for si, mult in enumerate(p.thresholds):
+        thr = voxel * mult
+        src, tgt = src_full, tgt_full
+        if p.band > 0:
+            # keep only the seam region: points that have a partner within band*thr
+            moved = copy.deepcopy(src_full).transform(cur.copy())
+            sd = np.asarray(moved.compute_point_cloud_distance(tgt_full))
+            td = np.asarray(tgt_full.compute_point_cloud_distance(moved))
+            src = src_full.select_by_index(np.where(sd < p.band * thr)[0])
+            tgt = tgt_full.select_by_index(np.where(td < p.band * thr)[0])
+            if len(src.points) < 100 or len(tgt.points) < 100:
+                log(f"[icp] stage {si+1}: band left too few points, using all")
+                src, tgt = src_full, tgt_full
+        log(f"[icp] stage {si+1}/{len(p.thresholds)} thr={thr:.5g} ({mult:g} vox) "
+            f"src={len(src.points)} tgt={len(tgt.points)}")
+        trace, done, prev = [], 0, None
+        Tst = cur.copy()
+        while done < p.max_iters:
+            n = min(p.chunk, p.max_iters - done)
+            res = reg.registration_icp(
+                src, tgt, thr, cur, est,
+                reg.ICPConvergenceCriteria(relative_fitness=p.tol,
+                                           relative_rmse=p.tol, max_iteration=n))
+            cur = res.transformation
+            done += n
+            trace.append({"iter": done, "fitness": float(res.fitness),
+                          "rmse": float(res.inlier_rmse)})
+            log(f"[icp]   iter {done:4d}: fitness={res.fitness:.4f} rmse={res.inlier_rmse:.5g}")
+            # a chunk that stopped early on convergence keeps returning the same
+            # numbers; treat an unchanged rmse as converged
+            if prev is not None and abs(prev - res.inlier_rmse) <= p.tol * max(prev, 1e-12):
+                break
+            prev = res.inlier_rmse
+        dt, dr = _pose_delta(Tst, cur)
+        stages.append({"stage": si + 1, "threshold": thr, "mult": mult,
+                       "n_src": len(src.points), "n_tgt": len(tgt.points),
+                       "iters": done, "trace": trace,
+                       "move_translation": dt, "move_rotation_deg": dr})
+        log(f"[icp]   stage {si+1} moved pose by {dt:.4g} ({dt/voxel:.3f} vox), {dr:.4f} deg")
+
+    r1, d1 = _residuals(src_full, tgt_full, cur, eval_thr)
+    after = _res_summary(d1, voxel)
+    after["fitness"], after["rmse"] = float(r1.fitness), float(r1.inlier_rmse)
+    tdt, tdr = _pose_delta(T0, cur)
+    log(f"[icp] after:  fitness={r1.fitness:.4f} rmse={r1.inlier_rmse:.4g} "
+        f"median|d|={after.get('median_vox', 0):.3f}vox p95={after.get('p95', 0):.4g}")
+    log(f"[icp] total pose change {tdt:.4g} ({tdt/voxel:.3f} vox), {tdr:.4f} deg")
+    report = {"voxel": voxel,
+              "params": {"thresholds": list(p.thresholds), "max_iters": p.max_iters,
+                         "tol": p.tol, "points": p.points, "band": p.band,
+                         "robust": p.robust},
+              "before": before, "after": after,
+              "hist_before": _histogram(d0, voxel), "hist_after": _histogram(d1, voxel),
+              "stages": stages, "total_move_translation": tdt,
+              "total_move_rotation_deg": tdr}
+    return cur, report
+
+
+# --------------------------------------------------------------------------- #
 #  Visualization + output
 # --------------------------------------------------------------------------- #
 def _centered_full(md: MeshData):

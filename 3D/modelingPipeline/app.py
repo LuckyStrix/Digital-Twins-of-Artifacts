@@ -293,6 +293,7 @@ class AlignParser:
         (r'chosen ',                            85, "Selecting best candidate…"),
         (r'Best method:',                       90, "Evaluating methods…"),
         (r'=== refine ===',                     91, "ICP refinement…"),
+        (r'=== resolve seam ===',               98, "Resolving seam…"),
         (r'\[icp\] stage 1/',                   92, "ICP stage 1…"),
         (r'\[icp\] stage 2/',                   94, "ICP stage 2…"),
         (r'\[icp\] stage 3/',                   96, "ICP stage 3…"),
@@ -589,6 +590,8 @@ class ConfigPanel(ttk.Frame):
         "align_method_var", "align_voxel_var", "align_samples_var",
         "align_refine_var", "align_thresholds_var", "align_iters_var",
         "align_points_var", "align_tol_var", "align_band_var", "align_robust_var",
+        "align_seam_var", "align_seam_mode_var", "align_seam_tau_var",
+        "align_seam_window_var", "align_seam_minc_var", "align_seam_passes_var",
     ]
 
     def __init__(self, parent, app: "App"):
@@ -1208,7 +1211,7 @@ class ConfigPanel(ttk.Frame):
 
         ttk.Separator(f, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=10)
         _h(f, "ICP refinement (coarse-to-fine)")
-        self.align_refine_var = tk.BooleanVar(value=True)
+        self.align_refine_var = tk.BooleanVar(value=False)
         ttk.Checkbutton(f, text="Refine with multi-stage ICP after alignment",
                         variable=self.align_refine_var).pack(anchor=tk.W, pady=2)
         ttk.Label(
@@ -1255,6 +1258,47 @@ class ConfigPanel(ttk.Frame):
                           "convergence and the residual histogram before/after.",
                   foreground=PAL["subtext"], wraplength=340, justify=tk.LEFT,
                   ).pack(anchor=tk.W, pady=(0, 4))
+
+        ttk.Separator(f, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=10)
+        _h(f, "Seam resolution (drop low-confidence points)")
+        self.align_seam_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(f, text="Where the two sides disagree, keep the more confident one",
+                        variable=self.align_seam_var).pack(anchor=tk.W, pady=2)
+        ttk.Label(
+            f, text=("Confidence per point = COLMAP view count x how head-on the views were "
+                     "(from each side's .vis file + camera poses). Where both sides cover a "
+                     "surface but sit apart as separate sheets, the less confident side's "
+                     "points are dropped. Points are never moved. Writes "
+                     "merged_fpfh_seam_audit.ply (dropped points shown black/orange) and a "
+                     "seam report next to the merged cloud."),
+            foreground=PAL["subtext"], wraplength=340, justify=tk.LEFT,
+        ).pack(anchor=tk.W, pady=(0, 4))
+        self.align_seam_mode_var   = tk.StringVar(value="point")
+        self.align_seam_tau_var    = tk.StringVar(value="0.5")
+        self.align_seam_window_var = tk.StringVar(value="10")
+        self.align_seam_minc_var   = tk.IntVar(value=20)
+        self.align_seam_passes_var = tk.IntVar(value=3)
+        r = ttk.Frame(f); r.pack(fill=tk.X, pady=1)
+        ttk.Label(r, text="Mode:", width=17).pack(side=tk.LEFT)
+        ttk.Combobox(r, textvariable=self.align_seam_mode_var, values=["point", "patch"],
+                     state="readonly", width=8).pack(side=tk.LEFT, padx=4)
+        ttk.Label(r, text="point = stronger; patch = compare whole sheets (gentler)",
+                  foreground=PAL["subtext"]).pack(side=tk.LEFT, padx=4)
+        for label, var, kw, hint in [
+            ("Conflict gap (vox):", self.align_seam_tau_var, {"width": 8},
+             "Sheets closer than this count as agreeing. Lower = more drops."),
+            ("Window (vox):", self.align_seam_window_var, {"width": 8},
+             "Neighbourhood used to compare the sides' confidence."),
+            ("Min. other pts:", self.align_seam_minc_var, {"width": 8},
+             "The other side needs this many points nearby, so nothing is dropped where it has no coverage."),
+            ("Passes:", self.align_seam_passes_var, {"width": 8},
+             "Re-evaluate after dropping, up to this many times."),
+        ]:
+            r = ttk.Frame(f); r.pack(fill=tk.X, pady=1)
+            ttk.Label(r, text=label, width=17).pack(side=tk.LEFT)
+            ttk.Entry(r, textvariable=var, **kw).pack(side=tk.LEFT, padx=4)
+            ttk.Label(r, text=hint, foreground=PAL["subtext"], wraplength=200,
+                      justify=tk.LEFT).pack(side=tk.LEFT, padx=4)
 
         ttk.Separator(f, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=10)
         ttk.Label(f, text="PLY overrides (blank = auto from pipeline):",
@@ -2118,6 +2162,15 @@ class App(tk.Tk):
         voxel = self._cfg.align_voxel_var.get().strip()
         if voxel and voxel != "0":
             cmd += ["--voxel", voxel]
+        if self._cfg.align_seam_var.get():
+            cmd += [
+                "--resolve-seam",
+                "--seam-mode", self._cfg.align_seam_mode_var.get(),
+                "--seam-tau", self._cfg.align_seam_tau_var.get().strip() or "0.5",
+                "--seam-window", self._cfg.align_seam_window_var.get().strip() or "10",
+                "--seam-min-count", str(self._cfg.align_seam_minc_var.get()),
+                "--seam-passes", str(self._cfg.align_seam_passes_var.get()),
+            ]
         if self._cfg.align_refine_var.get():
             cmd += [
                 "--refine",

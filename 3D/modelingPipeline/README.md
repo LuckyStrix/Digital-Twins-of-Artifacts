@@ -257,7 +257,7 @@ set on the Inputs tab).
   from the cloud scale automatically.
 - **Sample points** — how many points are sampled from each side's cloud for
   feature matching.
-- **ICP refinement** (checkbox, default on in the GUI; `--refine` on the CLI,
+- **ICP refinement** (checkbox, default off; `--refine` on the CLI,
   off by default there) — after the pose is chosen, polishes it with a
   coarse-to-fine point-to-plane ICP on **dense** clouds. **Stage dists** are the
   correspondence distances in voxels, one per stage (default `3,1,0.5,0.25`);
@@ -271,6 +271,18 @@ set on the Inputs tab).
   histogram. If RMSE plateaus while the seam still looks doubled, the leftover
   error is non-rigid and more ICP won't fix it. CLI: `python3 alignment/run.py
   A.ply B.ply -o out.ply --refine [--refine-thresholds ... --report ...]`.
+- **Seam resolution** (checkbox, default off; `--resolve-seam` on the CLI) —
+  where both sides cover a surface but appear as separate sheets, drops the
+  points of the less confident side. Confidence per point is COLMAP's view count
+  (from each side's `dense/fused_component_00.ply.vis`) times how head-on the
+  views were (camera poses from `dense/component_00/sparse/images.bin`). Points
+  are only dropped, never moved, and only where the other side has >= **Min.
+  other pts** nearby. **Mode** `point` drops any conflicting point below the
+  other side's local mean confidence (stronger); `patch` compares whole
+  competing sheets (gentler). **Conflict gap**, **Window** and **Passes** tune
+  it. Outputs `merged_fpfh_seam_audit.ply` (dropped points black/orange) and
+  `merged_fpfh_seam_report.json`. Needs point-cloud inputs with the `.vis`
+  files present; otherwise it is skipped with a message.
 - **PLY overrides** — point the alignment step at specific PLY files instead of
   the pipeline's own Stage 2 outputs, for re-running alignment in isolation
   (e.g. after manually editing a cloud). Leave blank to use the normal

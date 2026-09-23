@@ -90,6 +90,7 @@ class MeshData:
     extent: float                         # bbox diagonal (for scale / voxel)
     is_mesh: bool = True
     full: object = None                   # full-res geometry for output (mesh or cloud)
+    keep_idx: object = None               # cloud inputs: indices into the ORIGINAL file kept in `full`
 
 
 def _opening_direction(mesh):
@@ -163,8 +164,10 @@ def _load_from_mesh(path, mesh, n_sample):
 
 
 def _load_from_cloud(path, pcd, n_sample, clean=True):
+    keep_idx = None
     if clean and len(pcd.points) > 100:
-        pcd, _ = pcd.remove_statistical_outlier(nb_neighbors=20, std_ratio=2.0)
+        pcd, keep_idx = pcd.remove_statistical_outlier(nb_neighbors=20, std_ratio=2.0)
+        keep_idx = np.asarray(keep_idx)
     centroid = pcd.get_center()
     extent = float(np.linalg.norm(pcd.get_axis_aligned_bounding_box().get_extent()))
 
@@ -192,7 +195,8 @@ def _load_from_cloud(path, pcd, n_sample, clean=True):
 
     e_long, e_mid, e_short = _pca(np.asarray(reg_pcd.points))
     return MeshData(path, None, reg_pcd, centroid, d_open, c_rim,
-                    e_long, e_mid, e_short, extent, is_mesh=False, full=pcd)
+                    e_long, e_mid, e_short, extent, is_mesh=False, full=pcd,
+                    keep_idx=keep_idx)
 
 
 # --------------------------------------------------------------------------- #
@@ -578,6 +582,118 @@ def refine_icp(A: MeshData, B: MeshData, T, voxel, params: RefineParams = None, 
 
 
 # --------------------------------------------------------------------------- #
+#  Seam resolution: where the two sides disagree, keep the more confident one
+# --------------------------------------------------------------------------- #
+@dataclass
+class SeamParams:
+    tau: float = 0.5         # nearest-neighbour gap (vox) above which a point is "in conflict"
+    window: float = 10.0     # neighbourhood size (vox) for the local confidence comparison
+    min_count: int = 20      # other side needs >= this many points in the window to conflict
+    margin: float = 0.0      # required confidence lead before a point is dropped
+    passes: int = 3          # re-evaluate after dropping, up to this many times
+    mode: str = "point"      # "patch": compare the competing sheets' local mean confidence
+                             # "point": drop a point whose own confidence < the other side's local mean
+
+
+def _window_sums(P, vals_list, targets, g):
+    """Sum of each vals over the 3x3x3 block of grid cells (size g) around every
+    target point. Pure numpy; returns (list of sums, counts)."""
+    def keys(ijk):
+        ijk = ijk + (1 << 20)
+        return (ijk[:, 0] << 42) | (ijk[:, 1] << 21) | ijk[:, 2]
+    out_c = np.zeros(len(targets)); out_s = [np.zeros(len(targets)) for _ in vals_list]
+    if len(P) == 0:
+        return out_s, out_c
+    cell = np.floor(P / g).astype(np.int64)
+    uk, inv = np.unique(keys(cell), return_inverse=True)
+    cnt = np.bincount(inv, minlength=len(uk)).astype(float)
+    sums = [np.bincount(inv, weights=v, minlength=len(uk)) for v in vals_list]
+    tc = np.floor(targets / g).astype(np.int64)
+    for dx in (-1, 0, 1):
+        for dy in (-1, 0, 1):
+            for dz in (-1, 0, 1):
+                kk = keys(tc + np.array([dx, dy, dz]))
+                pos = np.searchsorted(uk, kk)
+                pos[pos >= len(uk)] = 0
+                hit = uk[pos] == kk
+                out_c[hit] += cnt[pos[hit]]
+                for o, s_ in zip(out_s, sums):
+                    o[hit] += s_[pos[hit]]
+    return out_s, out_c
+
+
+def _pc(P):
+    return o3d.geometry.PointCloud(o3d.utility.Vector3dVector(P))
+
+
+def _seam_conflicts(PA, PB, voxel, p, g):
+    """Boolean masks of points whose other side is present nearby (>= min_count
+    points in the window) but has no point within tau voxels."""
+    dA = np.asarray(_pc(PA).compute_point_cloud_distance(_pc(PB)))
+    dB = np.asarray(_pc(PB).compute_point_cloud_distance(_pc(PA)))
+    _, nAB = _window_sums(PB, [np.zeros(len(PB))], PA, g)
+    _, nBA = _window_sums(PA, [np.zeros(len(PA))], PB, g)
+    return (dA > p.tau * voxel) & (nAB >= p.min_count), (dB > p.tau * voxel) & (nBA >= p.min_count)
+
+
+def resolve_seam(PA, cA, PB, cB, voxel, params: SeamParams = None, log=print):
+    """PA/PB: points of the two sides in ONE common frame; cA/cB: per-point
+    confidence. A point is IN CONFLICT when the other side is present nearby yet
+    none of its points lies within `tau` voxels, i.e. the sides show separate
+    sheets there. In a conflict the side with the lower confidence loses its
+    points (see SeamParams.mode). Points are only ever dropped, never moved, and
+    only where the other side provides coverage. Returns (keepA, keepB, report)."""
+    p = params or SeamParams()
+    g = p.window * voxel / 3.0
+    keepA = np.ones(len(PA), bool)
+    keepB = np.ones(len(PB), bool)
+    first = None
+    for it in range(p.passes):
+        ia, ib = np.where(keepA)[0], np.where(keepB)[0]
+        a, b, ca, cb = PA[ia], PB[ib], cA[ia], cB[ib]
+        confA, confB = _seam_conflicts(a, b, voxel, p, g)
+        if first is None:
+            first = (int(confA.sum()), int(confB.sum()))
+        if p.mode == "point":
+            (sAB,), nAB = _window_sums(b, [cb], a, g)
+            (sBA,), nBA = _window_sums(a, [ca], b, g)
+            dropA = confA & (ca < sAB / np.maximum(nAB, 1) - p.margin)
+            dropB = confB & (cb < sBA / np.maximum(nBA, 1) - p.margin)
+        else:   # patch: compare the two competing sheets (conflict points only)
+            (a_own,), na = _window_sums(a[confA], [ca[confA]], a, g)
+            (a_oth,), nao = _window_sums(b[confB], [cb[confB]], a, g)
+            (b_own,), nb = _window_sums(b[confB], [cb[confB]], b, g)
+            (b_oth,), nbo = _window_sums(a[confA], [ca[confA]], b, g)
+            # no competing sheet nearby -> nothing to compare against -> keep
+            la = np.where(nao > 0, a_oth / np.maximum(nao, 1), -np.inf)
+            lb = np.where(nbo > 0, b_oth / np.maximum(nbo, 1), -np.inf)
+            dropA = confA & (a_own / np.maximum(na, 1) < la - p.margin)
+            dropB = confB & (b_own / np.maximum(nb, 1) < lb - p.margin)
+        log(f"[seam] pass {it + 1}: conflicts A={int(confA.sum())} B={int(confB.sum())} "
+            f"-> drop A={int(dropA.sum())} B={int(dropB.sum())}")
+        if not dropA.any() and not dropB.any():
+            break
+        keepA[ia[dropA]] = False
+        keepB[ib[dropB]] = False
+    ia, ib = np.where(keepA)[0], np.where(keepB)[0]
+    fA, fB = _seam_conflicts(PA[ia], PB[ib], voxel, p, g)
+    rep = {"voxel": voxel, "params": dict(p.__dict__),
+           "conflicts_before": {"A": first[0], "B": first[1]},
+           "conflicts_after": {"A": int(fA.sum()), "B": int(fB.sum())}}
+    for k, keep, c in (("A", keepA, cA), ("B", keepB, cB)):
+        d = ~keep
+        rep[k] = {"n": len(keep), "dropped": int(d.sum()),
+                  "mean_conf_dropped": float(c[d].mean()) if d.any() else None,
+                  "mean_conf_kept": float(c[keep].mean())}
+        r = rep[k]
+        log(f"[seam] side {k}: dropped {r['dropped']} ({r['dropped'] / r['n']:.1%}); "
+            f"mean conf dropped={None if r['mean_conf_dropped'] is None else round(r['mean_conf_dropped'], 3)} "
+            f"kept={r['mean_conf_kept']:.3f}")
+    log(f"[seam] conflicts A {first[0]}->{int(fA.sum())}  B {first[1]}->{int(fB.sum())}")
+    return keepA, keepB, rep
+
+
+# --------------------------------------------------------------------------- #
 #  Visualization + output
 # --------------------------------------------------------------------------- #
 def _centered_full(md: MeshData):
@@ -599,11 +715,24 @@ def view_geometries(A: MeshData, B: MeshData, T=None):
     return [gt, gs, o3d.geometry.TriangleMesh.create_coordinate_frame(size=size)]
 
 
-def merged_mesh(A: MeshData, B: MeshData, T):
+def centered_points(A: MeshData, B: MeshData, T):
+    """Full-res points of both sides in the TARGET's centered frame (B moved by T)."""
+    PA = np.asarray(_centered_full(A).points if not A.is_mesh else _centered_full(A).vertices)
+    gb = _centered_full(B).transform(T)
+    PB = np.asarray(gb.points if not B.is_mesh else gb.vertices)
+    return PA, PB
+
+
+def merged_mesh(A: MeshData, B: MeshData, T, keepA=None, keepB=None):
     """Single combined geometry in the TARGET's original world frame.
-    Returns a TriangleMesh if both inputs were meshes, else a PointCloud."""
+    Returns a TriangleMesh if both inputs were meshes, else a PointCloud.
+    keepA/keepB (bool masks over the side's points) apply to point clouds only."""
     gt = _centered_full(A)
     gs = _centered_full(B).transform(T)
+    if keepA is not None and not A.is_mesh:
+        gt = gt.select_by_index(np.where(keepA)[0])
+    if keepB is not None and not B.is_mesh:
+        gs = gs.select_by_index(np.where(keepB)[0])
     combined = gt + gs
     combined.translate(A.centroid)        # back to target's original world coords
     if A.is_mesh and B.is_mesh:
@@ -611,10 +740,24 @@ def merged_mesh(A: MeshData, B: MeshData, T):
     return combined
 
 
-def save_merged(A, B, T, path):
-    combined = merged_mesh(A, B, T)
+def save_merged(A, B, T, path, keepA=None, keepB=None):
+    combined = merged_mesh(A, B, T, keepA, keepB)
     if isinstance(combined, o3d.geometry.TriangleMesh):
         o3d.io.write_triangle_mesh(path, combined)
     else:
         o3d.io.write_point_cloud(path, combined)
+    return path
+
+
+def save_seam_audit(A, B, T, keepA, keepB, path):
+    """Colour-coded cloud for inspecting what resolve_seam did:
+    blue/red = kept side1/side2, black = dropped from side1, orange = dropped from side2."""
+    PA, PB = centered_points(A, B, T)
+    P = np.vstack([PA, PB]) + A.centroid
+    col = np.zeros_like(P)
+    col[:len(PA)] = np.where(keepA[:, None], [0.15, 0.4, 0.95], [0.0, 0.0, 0.0])
+    col[len(PA):] = np.where(keepB[:, None], [0.9, 0.2, 0.2], [1.0, 0.65, 0.0])
+    pc = o3d.geometry.PointCloud(o3d.utility.Vector3dVector(P))
+    pc.colors = o3d.utility.Vector3dVector(col)
+    o3d.io.write_point_cloud(path, pc)
     return path

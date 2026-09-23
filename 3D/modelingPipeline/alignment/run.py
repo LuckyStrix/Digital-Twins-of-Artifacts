@@ -31,6 +31,22 @@ def main():
                    help="0=off; else keep only points within band*threshold of the other side")
     g.add_argument("--refine-robust", type=float, default=0.0,
                    help="0=off; else Tukey robust loss with this sigma (in voxels)")
+    sg = ap.add_argument_group("Seam resolution (drop the less confident side where the halves disagree)")
+    sg.add_argument("--resolve-seam", action="store_true",
+                    help="needs COLMAP .vis + images.bin next to each fused.ply (auto-found)")
+    sg.add_argument("--seam-tau", type=float, default=0.5,
+                    help="gap in voxels beyond which overlapping points count as a conflict")
+    sg.add_argument("--seam-window", type=float, default=10.0, help="local window size in voxels")
+    sg.add_argument("--seam-min-count", type=int, default=20,
+                    help="other side must have this many points nearby for a conflict")
+    sg.add_argument("--seam-margin", type=float, default=0.0,
+                    help="local-confidence lead required before dropping a point")
+    sg.add_argument("--seam-passes", type=int, default=3, help="re-evaluate after dropping, up to N times")
+    sg.add_argument("--seam-mode", choices=["patch", "point"], default="point",
+                    help="patch: compare competing sheets' local mean confidence; "
+                         "point: drop points below the other side's local mean")
+    sg.add_argument("--views-cap", type=int, default=8,
+                    help="view count at which the view-count term of confidence saturates")
     g.add_argument("--report", default=None,
                    help="write ICP diagnostics JSON here (default: icp_report.json next to --out)")
     ap.add_argument("--view", action="store_true", help="open an Open3D window")
@@ -69,7 +85,28 @@ def main():
         with open(rp, "w") as fh:
             json.dump(report, fh, indent=1)
         print(f"[icp] report -> {rp}")
-    align.save_merged(A, B, T, args.out)
+    keepA = keepB = None
+    if args.resolve_seam:
+        import confidence
+        print("\n=== resolve seam ===")
+        cAll = confidence.confidence_for_cloud(args.A, args.views_cap)
+        cBll = confidence.confidence_for_cloud(args.B, args.views_cap)
+        if cAll is None or cBll is None or A.is_mesh or B.is_mesh or A.keep_idx is None:
+            print("[seam] skipped: confidence data unavailable (need point-cloud PLYs with COLMAP .vis files)")
+        else:
+            cA, cB = cAll["conf"][A.keep_idx], cBll["conf"][B.keep_idx]
+            voxel = args.voxel or min(A.extent, B.extent) * 0.01
+            PA, PB = align.centered_points(A, B, T)
+            keepA, keepB, srep = align.resolve_seam(
+                PA, cA, PB, cB, voxel,
+                align.SeamParams(args.seam_tau, args.seam_window, args.seam_min_count,
+                                 args.seam_margin, args.seam_passes, args.seam_mode))
+            base = os.path.splitext(os.path.abspath(args.out))[0]
+            with open(base + "_seam_report.json", "w") as fh:
+                json.dump(srep, fh, indent=1)
+            align.save_seam_audit(A, B, T, keepA, keepB, base + "_seam_audit.ply")
+            print(f"[seam] audit cloud -> {base}_seam_audit.ply")
+    align.save_merged(A, B, T, args.out, keepA, keepB)
     print(f"Saved merged -> {args.out}")
 
     if args.view:

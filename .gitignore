@@ -11,3 +11,6 @@ data/
 .history/
 *-backups/
 ~*.lck
+
+# Colour-fit environment (see 2D/backend/modeling/requirements-colorfit.txt)
+.venv-colorfit/

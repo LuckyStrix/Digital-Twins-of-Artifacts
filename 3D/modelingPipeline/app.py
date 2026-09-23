@@ -583,7 +583,7 @@ class ConfigPanel(ttk.Frame):
         "r_normal_max_nn", "r_normal_orient_k",
         "r_poisson_depth", "r_poisson_linear", "r_density_trim",
         "r_poisson_crop_scale", "r_hole_reduction",
-        "r_fill_holes", "r_fill_holes_ratio", "r_fill_holes_passes",
+        "r_fill_holes", "r_fill_holes_ratio", "r_fill_holes_passes", "r_fill_smooth",
         "r_comp_min_ratio", "r_comp_min_tris", "r_comp_max_count",
         "r_smooth_iters", "r_decimate_tris", "r_simplified_target_verts",
         "r_normalize_pose",
@@ -1108,6 +1108,7 @@ class ConfigPanel(ttk.Frame):
         self.r_fill_holes       = tk.BooleanVar(value=False)
         self.r_fill_holes_ratio = tk.DoubleVar(value=0.3)
         self.r_fill_holes_passes = tk.IntVar(value=4)
+        self.r_fill_smooth       = tk.BooleanVar(value=False)
         row("Fill hole size ratio", self.r_fill_holes_ratio, to=1.0,
             increment=0.01, is_float=True)
         row("Fill hole passes",     self.r_fill_holes_passes, to=10, from_=1)
@@ -1117,6 +1118,21 @@ class ConfigPanel(ttk.Frame):
             text="Fill remaining holes (boundary triangulation)",
             variable=self.r_fill_holes,
         ).pack(side=tk.LEFT)
+        fs_row = ttk.Frame(f); fs_row.pack(fill=tk.X, pady=2)
+        ttk.Checkbutton(
+            fs_row,
+            text="Smooth the filled patches (experimental)",
+            variable=self.r_fill_smooth,
+        ).pack(side=tk.LEFT)
+        ttk.Label(
+            f,
+            text=("Hole patches are always re-wound to match the surrounding surface "
+                  "(Open3D's filler leaves most of them inverted, which shows as dark or "
+                  "oddly shaded flat panels). This option additionally subdivides and "
+                  "fairs each well-formed patch into a smooth membrane. Slower, and can "
+                  "leave a few dark slivers on thin patches."),
+            foreground=PAL["subtext"], wraplength=340, justify=tk.LEFT,
+        ).pack(anchor=tk.W, pady=(0, 4))
         ttk.Label(
             f,
             text=("After cleanup, triangulates any leftover boundary loops to bridge "
@@ -1394,6 +1410,7 @@ class ConfigPanel(ttk.Frame):
             "--fill-holes",               "1" if self.r_fill_holes.get() else "0",
             "--fill-holes-max-size-ratio", str(self.r_fill_holes_ratio.get()),
             "--fill-holes-passes",        str(self.r_fill_holes_passes.get()),
+            "--fill-holes-smooth",        "1" if self.r_fill_smooth.get() else "0",
             "--simplified-target-vertices", str(self.r_simplified_target_verts.get()),
             "--component-min-ratio",      str(self.r_comp_min_ratio.get()),
             "--component-min-triangles",  str(self.r_comp_min_tris.get()),

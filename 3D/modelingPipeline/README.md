@@ -231,6 +231,13 @@ Mirrors `src/reconstruct_mesh.py`'s CLI options (`python3 src/reconstruct_mesh.p
   caps the max hole radius filled, as a fraction of the cloud's bounding-box
   diagonal. **Fill hole passes** repeats the fill (closing one loop can free up
   a neighbor) until a pass closes nothing new, up to this cap.
+- **Smooth the filled patches** (checkbox, default off; `--fill-holes-smooth`
+  on the CLI) — hole patches are now **always re-wound** to match the surrounding
+  surface, because Open3D's hole filler leaves most patches inverted, which shows
+  as dark or oddly shaded flat panels. This option additionally subdivides each
+  well-formed patch and fairs it into a smooth membrane (slit-like, degenerate
+  or non-manifold patches are left as filled). Experimental: slower, and can
+  leave a few dark slivers on thin patches.
 - **Mesh cleanup** — **Component min ratio/min triangles** drop small
   disconnected mesh pieces (by relative size and by absolute triangle count);
   **Component max count** caps how many components survive; **Smooth

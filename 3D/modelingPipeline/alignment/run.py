@@ -48,6 +48,8 @@ def main():
     sg.add_argument("--seam-min-conf", type=float, default=0.0,
                     help="also drop any point below this confidence wherever the other side "
                          "covers the surface (0=off; median confidence is about 0.5)")
+    sg.add_argument("--seam-global-min-conf", type=float, default=0.0,
+                    help="drop ANY point below this confidence, overlap or not (0=off)")
     sg.add_argument("--views-cap", type=int, default=8,
                     help="view count at which the view-count term of confidence saturates")
     g.add_argument("--report", default=None,
@@ -104,7 +106,7 @@ def main():
                 PA, cA, PB, cB, voxel,
                 align.SeamParams(args.seam_tau, args.seam_window, args.seam_min_count,
                                  args.seam_margin, args.seam_passes, args.seam_min_conf,
-                                 args.seam_mode))
+                                 args.seam_global_min_conf, args.seam_mode))
             base = os.path.splitext(os.path.abspath(args.out))[0]
             with open(base + "_seam_report.json", "w") as fh:
                 json.dump(srep, fh, indent=1)

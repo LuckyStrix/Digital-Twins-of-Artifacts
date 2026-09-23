@@ -593,6 +593,8 @@ class SeamParams:
     passes: int = 3          # re-evaluate after dropping, up to this many times
     min_conf: float = 0.0    # >0: ALSO drop any point below this confidence wherever the other
                              # side covers the surface (>= min_count pts nearby), conflict or not
+    global_min_conf: float = 0.0   # >0: drop ANY point below this confidence, overlap or not
+                                   # (trims grazing-view fringes; can remove single-side coverage)
     mode: str = "point"      # "patch": compare the competing sheets' local mean confidence
                              # "point": drop a point whose own confidence < the other side's local mean
 
@@ -681,6 +683,10 @@ def resolve_seam(PA, cA, PB, cB, voxel, params: SeamParams = None, log=print):
             break
         keepA[ia[dropA]] = False
         keepB[ib[dropB]] = False
+    if p.global_min_conf > 0:
+        keepA &= cA >= p.global_min_conf
+        keepB &= cB >= p.global_min_conf
+        log(f"[seam] global confidence floor {p.global_min_conf}: kept A={keepA.sum()} B={keepB.sum()}")
     ia, ib = np.where(keepA)[0], np.where(keepB)[0]
     fA, fB, _, _ = _seam_conflicts(PA[ia], PB[ib], voxel, p, g)
     rep = {"voxel": voxel, "params": dict(p.__dict__),

@@ -576,6 +576,7 @@ class ConfigPanel(ttk.Frame):
         "sec_extra_x_var", "sec_extra_y_var", "sec_extra_z_var",
         "sec_translate_x_var", "sec_translate_y_var", "sec_translate_z_var",
         "sec_align_mode_var",
+        "share_intr_var", "camera_model_var",
         "r_max_input_pts", "r_outlier_nn", "r_outlier_std",
         "r_radius_nn", "r_radius_factor",
         "r_dbscan_max_pts", "r_dbscan_min_pts", "r_dbscan_eps",
@@ -982,6 +983,40 @@ class ConfigPanel(ttk.Frame):
             setattr(self, attr, var)
             row(label, ttk.Spinbox, from_=0, to=256, textvariable=var, width=6)
 
+        _h(f, "Camera intrinsics")
+        self.share_intr_var   = tk.BooleanVar(value=True)
+        self.camera_model_var = tk.StringVar(value="(COLMAP default)")
+        self.intr_file_var    = tk.StringVar(value="")
+        row("Share between sides", ttk.Checkbutton, variable=self.share_intr_var)
+        ttk.Label(
+            f,
+            text=("Both sides come from the same camera and lens, so side 1's refined "
+                  "calibration (focal length, lens distortion) is saved and side 2 reuses it "
+                  "FIXED instead of re-estimating its own. Separately estimated calibrations "
+                  "differ slightly from side to side (focal length and distortion trade off "
+                  "against each other), which shows up as the two surfaces not quite agreeing. "
+                  "With several cameras, each camera folder (cam1, cam2, ...) is matched to "
+                  "the same folder on the other side. Untick if the sides used different lenses."),
+            foreground=PAL["subtext"], wraplength=340, justify=tk.LEFT,
+        ).pack(anchor=tk.W, pady=(0, 4))
+        row("Camera model", ttk.Combobox, textvariable=self.camera_model_var,
+            values=["(COLMAP default)", "SIMPLE_RADIAL", "RADIAL", "OPENCV", "PINHOLE"],
+            state="readonly", width=16)
+        r_if = ttk.Frame(f); r_if.pack(fill=tk.X, pady=2)
+        ttk.Label(r_if, text="Intrinsics file:", width=16).pack(side=tk.LEFT)
+        ttk.Entry(r_if, textvariable=self.intr_file_var).pack(side=tk.LEFT, fill=tk.X,
+                                                               expand=True, padx=(2, 2))
+        ttk.Button(r_if, text="…", width=3, command=lambda: self.intr_file_var.set(
+            filedialog.askopenfilename(title="Camera intrinsics JSON",
+                                       filetypes=[("JSON", "*.json"), ("All files", "*.*")])
+            or self.intr_file_var.get())).pack(side=tk.LEFT)
+        ttk.Label(
+            f,
+            text=("Optional: a camera_intrinsics.json (e.g. from an earlier session or a "
+                  "separate calibration) to use, fixed, for BOTH sides. Overrides sharing."),
+            foreground=PAL["subtext"], wraplength=340, justify=tk.LEFT,
+        ).pack(anchor=tk.W, pady=(0, 6))
+
         _h(f, "Secondary camera")
         self.sec_rotate_deg_var  = tk.StringVar(value="180")
         self.sec_rotate_axis_var = tk.StringVar(value="primary_frame_x")
@@ -1378,6 +1413,9 @@ class ConfigPanel(ttk.Frame):
         env["FIPMESH_COLMAP_SECONDARY_TRANSLATE_Y"]    = self.sec_translate_y_var.get()
         env["FIPMESH_COLMAP_SECONDARY_TRANSLATE_Z"]    = self.sec_translate_z_var.get()
         env["FIPMESH_COLMAP_SECONDARY_ALIGN_MODE"]     = self.sec_align_mode_var.get()
+        cam_model = self.camera_model_var.get().strip()
+        if cam_model and not cam_model.startswith("("):
+            env["FIPMESH_COLMAP_CAMERA_MODEL"] = cam_model
         return env
 
     def get_recon_cmd(self, input_ply: str, out_obj: str,
@@ -2078,7 +2116,7 @@ class App(tk.Tk):
                 if r:
                     on_progress(*r)
 
-            ok = self._colmap_one_side(s1, processed, env, on_line=on_line1)
+            ok = self._colmap_one_side(s1, processed, env, on_line=on_line1, role="primary")
             if not ok or self._stop_req:
                 return False
 
@@ -2090,7 +2128,7 @@ class App(tk.Tk):
                 if r:
                     on_progress(*r)
 
-            ok = self._colmap_one_side(s2, processed, env, on_line=on_line2)
+            ok = self._colmap_one_side(s2, processed, env, on_line=on_line2, role="secondary")
             return ok
 
         elif s1:
@@ -2102,7 +2140,7 @@ class App(tk.Tk):
                 if r:
                     on_progress(*r)
 
-            return self._colmap_one_side(s1, processed, env, on_line=on_line)
+            return self._colmap_one_side(s1, processed, env, on_line=on_line, role="primary")
 
         else:
             self.log("[stage 2] COLMAP flat image set")
@@ -2115,8 +2153,27 @@ class App(tk.Tk):
 
             return self._colmap_flat(processed, env, on_line=on_line)
 
+    def _intrinsics_path(self) -> Path:
+        return self._session_dir() / "camera_intrinsics.json"
+
     def _colmap_one_side(self, side: str, processed_root: Path,
-                          env: dict, on_line=None) -> bool:
+                          env: dict, on_line=None, role: str = "primary") -> bool:
+        env = dict(env)
+        user_file = self._cfg.intr_file_var.get().strip()
+        if user_file:
+            env["FIPMESH_COLMAP_INTRINSICS_IN"] = user_file
+            self.log(f"[stage 2] using fixed intrinsics from {user_file}")
+        if role == "primary":
+            # record what this side's reconstruction refined its cameras to
+            env["FIPMESH_COLMAP_INTRINSICS_OUT"] = str(self._intrinsics_path())
+        elif self._cfg.share_intr_var.get() and not user_file:
+            p = self._intrinsics_path()
+            if p.is_file():
+                env["FIPMESH_COLMAP_INTRINSICS_IN"] = str(p)
+                self.log(f"[stage 2] side {side}: reusing side 1's camera intrinsics (fixed) from {p.name}")
+            else:
+                self.log(f"[stage 2] side {side}: no saved intrinsics at {p} (run side 1 first); "
+                         "estimating this side's own")
         img_dir = processed_root / side
         out_dir = self._colmap_dir(side)
         out_dir.mkdir(parents=True, exist_ok=True)

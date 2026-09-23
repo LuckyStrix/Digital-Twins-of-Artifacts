@@ -599,6 +599,37 @@ def parse_args() -> argparse.Namespace:
         ),
     )
     p.add_argument(
+        "--intrinsics-out",
+        default=os.environ.get("FIPMESH_COLMAP_INTRINSICS_OUT", ""),
+        help=(
+            "After the sparse reconstruction, write each camera's refined intrinsics "
+            "(model, size, params; keyed by camera folder name) to this JSON file so "
+            "another run can reuse them via --intrinsics-in. Env: FIPMESH_COLMAP_INTRINSICS_OUT."
+        ),
+    )
+    p.add_argument(
+        "--intrinsics-in",
+        default=os.environ.get("FIPMESH_COLMAP_INTRINSICS_IN", ""),
+        help=(
+            "Use the camera intrinsics in this JSON (written by --intrinsics-out, or hand-made "
+            "from a calibration) and keep them FIXED during mapping instead of re-estimating "
+            "them. Cameras are matched by folder name (e.g. cam1 -> cam1; 'all' when there is "
+            "one camera and no per-folder mode). Cameras missing from the file are estimated "
+            "as usual. Env: FIPMESH_COLMAP_INTRINSICS_IN."
+        ),
+    )
+    p.add_argument(
+        "--share-intrinsics",
+        type=int,
+        default=int(os.environ.get("FIPMESH_COLMAP_SHARE_INTRINSICS", "0")),
+        help=(
+            "Dual image-set mode only (--images-secondary): reconstruct the primary set first, "
+            "then fix the secondary set's intrinsics to the primary's refined values (both "
+            "sides come from the same camera/lens). Runs the two sets one after the other "
+            "instead of in parallel. (0/1, default: 0). Env: FIPMESH_COLMAP_SHARE_INTRINSICS."
+        ),
+    )
+    p.add_argument(
         "--focal-length",
         type=float,
         default=float(os.environ.get("FIPMESH_COLMAP_FOCAL_LENGTH", "0")),
@@ -2905,6 +2936,62 @@ def merge_component_clouds(
     o3d.io.write_point_cloud(str(merged_snap), merged, write_ascii=False)
     print(f"snapshot saved: {merged_snap}")
 
+def _intrinsics_group_key(image_name: str, per_folder: bool) -> str:
+    """Which camera group an image belongs to: its top-level folder in per-folder
+    mode ('root' for images at the top), otherwise the single group 'all'."""
+    if not per_folder:
+        return "all"
+    return image_name.split("/", 1)[0] if "/" in image_name else "root"
+
+
+def _export_camera_intrinsics(txt_dir: Path, per_folder: bool, set_label: str) -> dict:
+    """Read the TXT-exported sparse model and return {'cameras': {group: {...}}}."""
+    cams: dict[int, dict] = {}
+    with (txt_dir / "cameras.txt").open("r", encoding="utf-8") as f:
+        for ln in f:
+            if ln.startswith("#") or not ln.strip():
+                continue
+            t = ln.split()
+            cams[int(t[0])] = {"model": t[1], "width": int(t[2]), "height": int(t[3]),
+                               "params": [float(x) for x in t[4:]]}
+    with (txt_dir / "images.txt").open("r", encoding="utf-8") as f:
+        lines = [ln for ln in f if not ln.startswith("#")]
+    per_group: dict[str, dict[int, int]] = {}
+    for i in range(0, len(lines) - 1, 2):
+        t = lines[i].split()
+        if len(t) < 10:
+            continue
+        cid, name = int(t[8]), t[9]
+        g = _intrinsics_group_key(name, per_folder)
+        per_group.setdefault(g, {}).setdefault(cid, 0)
+        per_group[g][cid] += 1
+    out: dict[str, dict] = {}
+    for g, counts in per_group.items():
+        if len(counts) > 1:
+            print(f"[set] {set_label} warning: group '{g}' has {len(counts)} camera ids; "
+                  f"using the most common one", file=sys.stderr)
+        cid = max(counts, key=counts.get)
+        out[g] = dict(cams[cid], num_images=counts[cid])
+    return {"version": 1, "source_set": set_label, "cameras": out}
+
+
+def _load_intrinsics(path: str | Path) -> dict | None:
+    if not str(path).strip():
+        return None
+    p = Path(path)
+    if not p.is_file():
+        print(f"warning: intrinsics file not found, estimating intrinsics as usual: {p}",
+              file=sys.stderr)
+        return None
+    try:
+        data = json.loads(p.read_text())
+        cams = data.get("cameras", {})
+        return cams if isinstance(cams, dict) and cams else None
+    except Exception as exc:
+        print(f"warning: could not read intrinsics file {p}: {exc}", file=sys.stderr)
+        return None
+
+
 def run_pipeline_for_image_set(
     *,
     args: argparse.Namespace,
@@ -2949,6 +3036,8 @@ def run_pipeline_for_image_set(
     focal_length_px: float = 0.0,
     single_camera_per_folder: bool = False,
     mask_path: Path | None = None,
+    intrinsics_in: dict | None = None,
+    intrinsics_out: Path | None = None,
 ) -> int:
     if clean_workspace and workspace.exists():
         shutil.rmtree(workspace)
@@ -3059,7 +3148,22 @@ def run_pipeline_for_image_set(
 
     image_exts = {".jpg", ".jpeg", ".png", ".tif", ".tiff", ".bmp", ".webp", ".ppm", ".pgm", ".pnm"}
 
-    def _camera_params_args(folder: Path) -> list[str]:
+    intrinsics_applied: list[str] = []
+
+    def _camera_params_args(folder: Path, group: str = "all") -> list[str]:
+        shared = (intrinsics_in or {}).get(group)
+        if shared:
+            img_w, img_h = _get_first_image_size(folder)
+            if (img_w, img_h) == (int(shared["width"]), int(shared["height"])):
+                intrinsics_applied.append(group)
+                params = ",".join(f"{float(x):.10g}" for x in shared["params"])
+                print(f"[set] {set_label} fixed intrinsics for '{group}': "
+                      f"{shared['model']} {shared['width']}x{shared['height']} params={params}")
+                return ["--ImageReader.camera_model", str(shared["model"]),
+                        "--ImageReader.camera_params", params]
+            print(f"[set] {set_label} warning: intrinsics for '{group}' are for "
+                  f"{shared['width']}x{shared['height']} but these images are {img_w}x{img_h}; "
+                  f"estimating this camera instead", file=sys.stderr)
         if not camera_model:
             return []
         extra = ["--ImageReader.camera_model", camera_model]
@@ -3088,7 +3192,7 @@ def run_pipeline_for_image_set(
             str(images_for_colmap),
             "--ImageReader.single_camera",
             "1" if (single_camera_per_folder or single_camera) else "0",
-        ] + base_fx_args + _camera_params_args(target)
+        ] + base_fx_args + _camera_params_args(target, label)
         if image_list is not None:
             list_path = workspace / f"_image_list_{label}.txt"
             list_path.write_text("\n".join(image_list) + "\n")
@@ -3201,20 +3305,35 @@ def run_pipeline_for_image_set(
     run(matcher_args)
 
     print("[step] colmap mapper")
-    run(
-        [
-            args.colmap_bin,
-            "mapper",
-            "--database_path",
-            str(db_path),
-            "--image_path",
-            str(images_for_colmap),
-            "--output_path",
-            str(sparse_root),
-            "--Mapper.num_threads",
-            str(mapper_threads),
-        ]
-    )
+    mapper_cmd = [
+        args.colmap_bin,
+        "mapper",
+        "--database_path",
+        str(db_path),
+        "--image_path",
+        str(images_for_colmap),
+        "--output_path",
+        str(sparse_root),
+        "--Mapper.num_threads",
+        str(mapper_threads),
+    ]
+    if intrinsics_applied:
+        # Keep the supplied intrinsics fixed: no refinement of focal length,
+        # distortion, or principal point during bundle adjustment.
+        for names in (
+            ("--Mapper.ba_refine_focal_length", "--BundleAdjustment.refine_focal_length"),
+            ("--Mapper.ba_refine_extra_params", "--BundleAdjustment.refine_extra_params"),
+            ("--Mapper.ba_refine_principal_point", "--BundleAdjustment.refine_principal_point"),
+        ):
+            opt = first_supported_option(args.colmap_bin, "mapper", *names)
+            if opt is None:
+                print(f"[set] {set_label} WARNING: this COLMAP has none of {names}; the supplied "
+                      f"intrinsics are only an initial guess and will be re-refined",
+                      file=sys.stderr)
+            else:
+                mapper_cmd += [opt, "0"]
+        print(f"[set] {set_label} mapper runs with FIXED intrinsics for: {', '.join(intrinsics_applied)}")
+    run(mapper_cmd)
 
     model_dirs = list_sparse_models(sparse_root)
     print(f"[set] {set_label} sparse models found: {len(model_dirs)}")
@@ -3236,6 +3355,17 @@ def run_pipeline_for_image_set(
             check=True,
             capture_output=True,
         )
+        if intrinsics_out is not None:
+            try:
+                intr = _export_camera_intrinsics(txt_dir, single_camera_per_folder, set_label)
+                intrinsics_out.parent.mkdir(parents=True, exist_ok=True)
+                intrinsics_out.write_text(json.dumps(intr, indent=2))
+                for g, c in intr["cameras"].items():
+                    print(f"[set] {set_label} camera '{g}': {c['model']} {c['width']}x{c['height']} "
+                          f"params={[round(x, 4) for x in c['params']]} ({c['num_images']} images)")
+                print(f"[set] {set_label} intrinsics saved: {intrinsics_out}")
+            except Exception as _intr_exc:
+                print(f"[set] {set_label} warning: could not save intrinsics: {_intr_exc}", file=sys.stderr)
         centers = _read_camera_centers_from_txt(txt_dir / "images.txt")
         if centers:
             cam_centers_path.parent.mkdir(parents=True, exist_ok=True)
@@ -3512,8 +3642,19 @@ def main() -> int:
             set_dense_cloud = dense_cloud_out
         return set_workspace, set_dense_cloud
 
+    intr_file_in = _load_intrinsics(args.intrinsics_in)
+    share_intrinsics = multi_set and int(args.share_intrinsics) != 0
+    intr_out_raw = str(args.intrinsics_out).strip()
+    intr_out_path = Path(intr_out_raw) if intr_out_raw else (
+        workspace / "camera_intrinsics.json" if share_intrinsics else None)
+    shared_intr: dict[str, dict] = {}
+
     def _run_one_set(idx: int, set_label: str, set_images: Path) -> tuple[int, Path]:
         set_workspace, set_dense_cloud = _build_set_paths(idx, set_label)
+        set_intr_in = dict(intr_file_in or {})
+        if share_intrinsics and set_label != "primary":
+            set_intr_in.update(shared_intr)   # primary's refined values win over a file
+        set_intr_out = intr_out_path if set_label == "primary" else None
         rc = run_pipeline_for_image_set(
             args=args,
             images=set_images,
@@ -3557,10 +3698,31 @@ def main() -> int:
             focal_length_px=focal_length_px,
             single_camera_per_folder=single_camera_per_folder,
             mask_path=mask_path_by_label.get(set_label),
+            intrinsics_in=set_intr_in or None,
+            intrinsics_out=set_intr_out,
         )
         return rc, set_dense_cloud
 
-    if multi_set:
+    if share_intrinsics:
+        print("[share-intrinsics] reconstructing the primary set first; the secondary set "
+              "will reuse its refined camera intrinsics (fixed)")
+        results = []
+        for idx, (set_label, set_images, _) in enumerate(image_sets):
+            res = _run_one_set(idx, set_label, set_images)
+            results.append(res)
+            if res[0] != 0:
+                return res[0]
+            if set_label == "primary":
+                loaded = _load_intrinsics(intr_out_path) if intr_out_path else None
+                if loaded:
+                    shared_intr.update(loaded)
+                else:
+                    print("[share-intrinsics] warning: primary intrinsics unavailable; the "
+                          "secondary set will estimate its own", file=sys.stderr)
+        for (rc, set_dense_cloud), (_, _, pre_transform) in zip(results, image_sets):
+            set_clouds.append(set_dense_cloud)
+            set_pre_transforms.append(pre_transform)
+    elif multi_set:
         print(f"[parallel] running {len(image_sets)} image sets simultaneously")
         with concurrent.futures.ThreadPoolExecutor(max_workers=len(image_sets)) as pool:
             futures = [

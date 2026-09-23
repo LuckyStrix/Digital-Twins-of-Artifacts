@@ -180,6 +180,23 @@ full detail on any field.
 - **Threads / Cache** (0 = auto) — per-stage CPU thread counts and PatchMatch/
   fusion GPU cache sizes in GB; raise the caches if you have GPU memory to
   spare and are fusing large scenes, lower them if COLMAP runs out of VRAM.
+- **Camera intrinsics** — **Share between sides** (default on): side 1's
+  refined calibration (focal length + lens distortion, per camera folder) is
+  saved to `<output>/camera_intrinsics.json`, and side 2 reuses it **fixed**
+  (COLMAP's mapper is told not to refine focal length, distortion or principal
+  point) instead of re-estimating its own. Independently estimated calibrations
+  of the same lens differ by about 1% in focal length and a few % in distortion
+  from side to side, which appears as the two surfaces not quite agreeing.
+  Cameras are matched by folder name (`cam1` ↔ `cam1`); a camera missing from
+  the file, or with different image dimensions, is estimated as usual (with a
+  warning). Untick if the sides used different lenses. **Camera model** picks
+  COLMAP's ImageReader model (default: COLMAP's own, currently SIMPLE_RADIAL).
+  **Intrinsics file** optionally uses a `camera_intrinsics.json` from elsewhere
+  (e.g. a separate calibration) for both sides, fixed. CLI: `--intrinsics-out`,
+  `--intrinsics-in`, and `--share-intrinsics 1` for dual `--images-secondary`
+  runs (which then run primary-then-secondary instead of in parallel). File
+  format: `{"cameras": {"cam1": {"model": "SIMPLE_RADIAL", "width": 4032,
+  "height": 3024, "params": [f, cx, cy, k]}}}`.
 - **Secondary camera** — how side 2's reconstruction is re-posed relative to
   side 1 before alignment: **Rotate degrees/axis** plus **Extra rotate X/Y/Z**
   and **Translate X/Y/Z** for fine adjustment, and **Align mode**

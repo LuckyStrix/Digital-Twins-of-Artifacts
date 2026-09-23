@@ -73,9 +73,9 @@ driver is replaced with **WinUSB** using [Zadig](https://zadig.akeo.ie/)
 (download the standalone `.exe` — no install needed):
 
 1. Connect the camera over USB and switch it **on** (put it in PC/PTP mode if it
-   has one). Close any Canon/vendor software (e.g. EOS Utility) that may grab it.
+   has one). Close any vendor software (e.g. EOS Utility) that may grab it.
 2. Run Zadig, then **Options → List All Devices**.
-3. In the dropdown, select your camera (e.g. "Canon Digital Camera").
+3. In the dropdown, select your camera (e.g. "Canon Digital Camera" or "Nikon Digital Camera").
 4. Set the target driver to **WinUSB** and click **Replace Driver**
    (or **Install Driver**).
 5. Confirm with `gphoto2 --auto-detect` in the MSYS2 MINGW64 shell — the camera

@@ -7,7 +7,7 @@ stage — to shoot the directional-light TIFFs the modeling pipeline needs.
 ## Contents
 
 - `arduinoIntegration.py` — main capture loop. Talks to the Arduino over serial,
-  triggers the camera for each lighting condition, and converts the RAW `.cr2`
+  triggers the camera for each lighting condition, and converts the RAW 
   files to TIFF with `dcraw`.
 - `serialTesting.py` — tiny helper to sanity-check the serial connection.
 - `IrisArduinoCode/IrisArduinoCode.ino` — firmware for the Arduino controlling
@@ -37,7 +37,7 @@ Capture only runs on the machine wired to the rig:
 ## Output
 
 Captures are written to the app's top-level `data/<timestamp>/` folder (the RAW
-`.cr2` files are moved into a `cr2Archive/` subfolder; the converted `.tiff`
+ files are moved into a `Archive/` subfolder; the converted `.tiff`
 files stay in the timestamp folder). Each such folder is a self-contained scan
 set: the modeling and rendering stages add `maps/` and `model/` subfolders to it.
 Use the launcher's **Select working image set** button to pick which scan folder

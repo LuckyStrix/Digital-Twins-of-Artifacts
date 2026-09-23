@@ -593,6 +593,8 @@ class SeamParams:
     passes: int = 3          # re-evaluate after dropping, up to this many times
     min_conf: float = 0.0    # >0: ALSO drop any point below this confidence wherever the other
                              # side covers the surface (>= min_count pts nearby), conflict or not
+    floor_loser_only: bool = True  # apply min_conf only to the side whose local mean confidence is
+                             # LOWER, so both sides never lose the same patch (keeps coverage)
     global_min_conf: float = 0.0   # >0: drop ANY point below this confidence, overlap or not
                                    # (trims grazing-view fringes; can remove single-side coverage)
     mode: str = "point"      # "patch": compare the competing sheets' local mean confidence
@@ -675,8 +677,16 @@ def resolve_seam(PA, cA, PB, cB, voxel, params: SeamParams = None, log=print):
             dropA = confA & (a_own / np.maximum(na, 1) < la - p.margin)
             dropB = confB & (b_own / np.maximum(nb, 1) < lb - p.margin)
         if p.min_conf > 0:
-            dropA |= ovA & (ca < p.min_conf)
-            dropB |= ovB & (cb < p.min_conf)
+            fA, fB = ovA & (ca < p.min_conf), ovB & (cb < p.min_conf)
+            if p.floor_loser_only:
+                (aO,), naO = _window_sums(a, [ca], a, g)
+                (aX,), naX = _window_sums(b, [cb], a, g)
+                (bO,), nbO = _window_sums(b, [cb], b, g)
+                (bX,), nbX = _window_sums(a, [ca], b, g)
+                fA &= (aO / np.maximum(naO, 1)) < (aX / np.maximum(naX, 1))
+                fB &= (bO / np.maximum(nbO, 1)) < (bX / np.maximum(nbX, 1))
+            dropA |= fA
+            dropB |= fB
         log(f"[seam] pass {it + 1}: conflicts A={int(confA.sum())} B={int(confB.sum())} "
             f"-> drop A={int(dropA.sum())} B={int(dropB.sum())}")
         if not dropA.any() and not dropB.any():

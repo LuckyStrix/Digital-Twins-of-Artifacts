@@ -48,6 +48,9 @@ def main():
     sg.add_argument("--seam-min-conf", type=float, default=0.0,
                     help="also drop any point below this confidence wherever the other side "
                          "covers the surface (0=off; median confidence is about 0.5)")
+    sg.add_argument("--seam-floor-both", action="store_true",
+                    help="apply --seam-min-conf to BOTH sides everywhere (old behaviour; can leave "
+                         "holes). Default applies it only to the less confident side of each patch.")
     sg.add_argument("--seam-global-min-conf", type=float, default=0.0,
                     help="drop ANY point below this confidence, overlap or not (0=off)")
     sg.add_argument("--views-cap", type=int, default=8,
@@ -104,9 +107,11 @@ def main():
             PA, PB = align.centered_points(A, B, T)
             keepA, keepB, srep = align.resolve_seam(
                 PA, cA, PB, cB, voxel,
-                align.SeamParams(args.seam_tau, args.seam_window, args.seam_min_count,
-                                 args.seam_margin, args.seam_passes, args.seam_min_conf,
-                                 args.seam_global_min_conf, args.seam_mode))
+                align.SeamParams(
+                    tau=args.seam_tau, window=args.seam_window, min_count=args.seam_min_count,
+                    margin=args.seam_margin, passes=args.seam_passes,
+                    min_conf=args.seam_min_conf, floor_loser_only=not args.seam_floor_both,
+                    global_min_conf=args.seam_global_min_conf, mode=args.seam_mode))
             base = os.path.splitext(os.path.abspath(args.out))[0]
             with open(base + "_seam_report.json", "w") as fh:
                 json.dump(srep, fh, indent=1)

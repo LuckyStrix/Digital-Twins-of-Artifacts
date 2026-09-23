@@ -76,14 +76,27 @@ def load_with_confidence(ply, vis, images_bin, views_cap=8):
 
 
 def find_colmap_inputs(fused_ply):
-    """Locate the .vis file and images.bin that belong to a side's fused.ply
-    (the layout run_colmap_mvs.py writes). Returns (ply, vis, images_bin) or None."""
+    """Locate the .vis file and images.bin that belong to a side's fused.ply.
+    run_colmap_mvs.py writes one of two layouts:
+      * several sparse models (the usual case with a stray small component):
+          dense/fused_component_00.ply(.vis) + dense/component_00/sparse/images.bin
+          (fused.ply is the merge of the components)
+      * a single sparse model:
+          fused.ply(.vis) itself + dense/sparse/images.bin
+    Returns (ply, vis, images_bin) or None."""
     import os
     d = os.path.dirname(os.path.abspath(fused_ply))
-    ply = os.path.join(d, "dense", "fused_component_00.ply")
-    vis = ply + ".vis"
-    ib = os.path.join(d, "dense", "component_00", "sparse", "images.bin")
-    return (ply, vis, ib) if all(os.path.exists(p) for p in (ply, vis, ib)) else None
+    candidates = [
+        (os.path.join(d, "dense", "fused_component_00.ply"),
+         os.path.join(d, "dense", "component_00", "sparse", "images.bin")),
+        (os.path.abspath(fused_ply),
+         os.path.join(d, "dense", "sparse", "images.bin")),
+    ]
+    for ply, ib in candidates:
+        vis = ply + ".vis"
+        if all(os.path.exists(p) for p in (ply, vis, ib)):
+            return ply, vis, ib
+    return None
 
 
 def confidence_for_cloud(fused_ply, views_cap=8, log=print):
@@ -94,7 +107,11 @@ def confidence_for_cloud(fused_ply, views_cap=8, log=print):
     if found is None:
         log(f"  [conf] no .vis / images.bin next to {fused_ply}; confidence unavailable")
         return None
-    comp, info = load_with_confidence(*found, views_cap=views_cap)
+    try:
+        comp, info = load_with_confidence(*found, views_cap=views_cap)
+    except Exception as exc:                      # unreadable/mismatched .vis etc.
+        log(f"  [conf] could not read confidence data for {fused_ply}: {exc}")
+        return None
     fused = o3d.io.read_point_cloud(fused_ply)
     tree = o3d.geometry.KDTreeFlann(comp)
     F = np.asarray(fused.points)

@@ -584,7 +584,7 @@ class PipelineApp:
             self.log(f"  {ok} dcraw ({dcraw})")
         else:
             self.log(f"  {no} dcraw not found on PATH — install it "
-                      "(e.g. sudo apt install dcraw; converts .cr2 -> .tiff)")
+                      "(e.g. sudo apt install dcraw; converts .tmp -> .tiff)")
         self.log("       The Arduino must be flashed with backend/capture/IrisArduinoCode "
                   "and connected. The Linux capture scripts default to serial port "
                   "/dev/ttyACM0 (override with the PAPYRUS_SERIAL_PORT env var).")
@@ -885,14 +885,14 @@ class PipelineApp:
         self._cleanup_intermediates()
 
     def _cleanup_intermediates(self):
-        """Remove intermediate .cr2/.tiff/.glb files left under backend/ after a
-        build. Mirrors backend/delete-cr2-tiff.ps1 (the Windows path used by
+        """Remove intermediate .tmp/.tiff/.glb files left under backend/ after a
+        build. Mirrors backend/delete-tmp-tiff.ps1 (the Windows path used by
         run.py) but done natively in Python so it works on Linux. The 9 capture
         TIFFs are kept, and the working data/ folders (outside backend/) — where
         the copied render.glb, maps/ and info.txt live — are never touched."""
         keep = set(CAPTURE_TIFFS)
         removed = 0
-        for pattern in ("*.cr2", "*.tiff", "*.glb"):
+        for pattern in ("*.tmp", "*.tiff", "*.glb"):
             for f in BACKEND.rglob(pattern):
                 if f.name in keep or not f.is_file():
                     continue

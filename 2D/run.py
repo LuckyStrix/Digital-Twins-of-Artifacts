@@ -161,7 +161,7 @@ PYTHON_DEPS = [
     ("onnxruntime",             "onnxruntime",  "modeling (alpha mask)"),
 ]
 
-CLEANUP_SCRIPT = BACKEND / "delete-cr2-tiff.ps1"
+CLEANUP_SCRIPT = BACKEND / "delete-tmp-tiff.ps1"
 TXT_SCRIPT = BACKEND / "create_artifact_info.py"
 TXT_NAME = "info.txt"
 
@@ -578,7 +578,7 @@ class PipelineApp:
             self.log(f"  {ok} dcraw ({dcraw})")
         else:
             self.log(f"  {no} dcraw not found on PATH — install it / add it to PATH "
-                      "(used to convert .cr2 -> .tiff)")
+                      "(used to convert .tmp -> .tiff)")
         self.log("       gphoto2 runs inside msys2; make sure it's installed there "
                   "(pacman -S mingw-w64-x86_64-gphoto2).")
         self.log("       The Arduino must be flashed with backend/capture/IrisArduinoCode "
@@ -874,7 +874,7 @@ class PipelineApp:
         target_folder = str(BACKEND)
         env = os.environ.copy()
         env["DELETE_TARGET_DIR"] = target_folder
-        rc = self.run_command(["powershell", "-ExecutionPolicy", "Bypass", "-File", r".\delete-cr2-tiff.ps1"], cwd=BACKEND, env=env)
+        rc = self.run_command(["powershell", "-ExecutionPolicy", "Bypass", "-File", r".\delete-tmp-tiff.ps1"], cwd=BACKEND, env=env)
 
     def _build_model_for(self, side: Path):
         maps_dir = self._maps_dir(side)
@@ -943,7 +943,7 @@ class PipelineApp:
         target_folder = str(BACKEND)
         env = os.environ.copy()
         env["DELETE_TARGET_DIR"] = target_folder
-        rc = self.run_command(["powershell", "-ExecutionPolicy", "Bypass", "-File", r".\delete-cr2-tiff.ps1"], cwd=BACKEND, env=env)
+        rc = self.run_command(["powershell", "-ExecutionPolicy", "Bypass", "-File", r".\delete-tmp-tiff.ps1"], cwd=BACKEND, env=env)
 
     def step_generate_desc(self):
         done = threading.Event()

@@ -4,7 +4,7 @@ arduinoIntegration_linux.py
 ===========================
 Linux port of arduinoIntegration.py — the main capture loop. It talks to the
 Arduino over serial, triggers the camera for each lighting condition, and
-converts the RAW .cr2 files to TIFF with dcraw.
+converts the RAW .tmp files to TIFF with dcraw.
 
 Differences from the Windows version:
   - The serial port defaults to a Linux device (/dev/ttyACM0) instead of COM3,
@@ -71,24 +71,24 @@ def message_arduino(n, e, s, w, g, b, step, dir):
 
 
 def capture_image(filename):
-    cr2 = f"{filename}.cr2"
+    tmp = f"{filename}.tmp"
     # On Linux gphoto2 is a native tool, so call it directly (no msys2 shim).
     # We run it synchronously and let its output stream through so its errors are
-    # visible in the log, then hand the downloaded .cr2 to dcraw.
+    # visible in the log, then hand the downloaded .tmp to dcraw.
     subprocess.run(
-        ["gphoto2", "--capture-image-and-download", "--filename", cr2],
+        ["gphoto2", "--capture-image-and-download", "--filename", tmp],
         cwd=img_dir,
     )
 
-    if not os.path.exists(os.path.join(img_dir, cr2)):
-        print(f"WARNING: {cr2} was not created by gphoto2 — skipping dcraw. "
+    if not os.path.exists(os.path.join(img_dir, tmp)):
+        print(f"WARNING: {tmp} was not created by gphoto2 — skipping dcraw. "
               "Check that the camera is connected and gphoto2 can reach it.")
         print(" ")
         return
 
-    #subprocess.run(["exiftool", "-Orientation=1", "-n", cr2], cwd=img_dir)
+    #subprocess.run(["exiftool", "-Orientation=1", "-n", tmp], cwd=img_dir)
     subprocess.run(
-        ["dcraw", "-T", "-6", "-W", "-o", "0", "-q", "0", "-t", "0", cr2],
+        ["dcraw", "-T", "-6", "-W", "-o", "0", "-q", "0", "-t", "0", tmp],
         cwd=img_dir,
     )
     print(filename + " captured!")
@@ -153,13 +153,13 @@ if __name__ == "__main__":
     print("Scanning Complete!")
     print(" ")
 
-    #SORT IMAGES — move the RAW .cr2 files into a cr2Archive/ subfolder, leaving
+    #SORT IMAGES — move the RAW .tmp files into a tmpArchive/ subfolder, leaving
     #the converted .tiff files in the capture folder. Uses shutil so it works
     #with POSIX paths (the Windows version shelled out to mkdir / move).
-    archive_dir = os.path.join(img_dir, "cr2Archive")
+    archive_dir = os.path.join(img_dir, "tmpArchive")
     os.makedirs(archive_dir, exist_ok=True)
-    for cr2_path in glob.glob(os.path.join(img_dir, "*.cr2")):
-        shutil.move(cr2_path, os.path.join(archive_dir, os.path.basename(cr2_path)))
+    for tmp_path in glob.glob(os.path.join(img_dir, "*.tmp")):
+        shutil.move(tmp_path, os.path.join(archive_dir, os.path.basename(tmp_path)))
 
     #FINISH
     message_arduino(0, 0, 0, 0, 0, 0, 0, 1)

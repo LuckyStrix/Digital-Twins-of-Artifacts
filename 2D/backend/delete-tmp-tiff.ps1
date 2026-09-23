@@ -1,4 +1,4 @@
-# delete-cr2-tiff.ps1
+# delete-tmp-tiff.ps1
 
 # --- CONFIG ---
 $rootPath = $env:DELETE_TARGET_DIR
@@ -29,7 +29,7 @@ $excludeFiles = @(
 # --- SCRIPT ---
 $dryRun = $false   # <-- set to $false once you've verified the file list below
 
-$filesToDelete = Get-ChildItem -Path $rootPath -Recurse -Include *.cr2, *.tiff, *.glb -File |
+$filesToDelete = Get-ChildItem -Path $rootPath -Recurse -Include *.tmp, *.tiff, *.glb -File |
     Where-Object { $excludeFiles -notcontains $_.Name }
 
 Write-Host "Found $($filesToDelete.Count) files to delete (excluding $($excludeFiles.Count) protected files):"

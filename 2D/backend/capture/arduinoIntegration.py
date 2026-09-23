@@ -19,25 +19,25 @@ def message_arduino(n, e, s, w, g, b, step, dir):
             break
 
 def capture_image(filename):
-    cr2 = f"{filename}.cr2"
+    tmp = f"{filename}.tmp"
     # -defterm -no-start runs gphoto2 synchronously in this process instead of
     # spawning a detached mintty window. Without it, msys2_shell.cmd returns
     # immediately (the window runs in the background), so dcraw below fires
-    # before the .cr2 has been downloaded — fine from an interactive terminal,
+    # before the .tmp has been downloaded — fine from an interactive terminal,
     # but it races and fails when launched from the GUI (run.py). We also let
     # gphoto2's output stream through so its errors are visible in the log.
     cmd = (rf'C:\msys64\msys2_shell.cmd -mingw64 -defterm -no-start -here '
-           rf'-c "gphoto2 --capture-image-and-download --filename {cr2}"')
+           rf'-c "gphoto2 --capture-image-and-download --filename {tmp}"')
     subprocess.run(cmd, shell=True, cwd=img_dir)
 
-    if not os.path.exists(os.path.join(img_dir, cr2)):
-        print(f"WARNING: {cr2} was not created by gphoto2 — skipping dcraw. "
+    if not os.path.exists(os.path.join(img_dir, tmp)):
+        print(f"WARNING: {tmp} was not created by gphoto2 — skipping dcraw. "
               "Check that the camera is connected and gphoto2 can reach it.")
         print(" ")
         return
     message_arduino(0, 0, 0, 0, 0, 1, 0, 1)
-    #subprocess.run(f"exiftool -Orientation=1 -n {filename}.cr2", cwd=img_dir, shell=True)
-    subprocess.run(f"dcraw -T -6 -W -o 0 -q 0 -t 0 {cr2}", cwd=img_dir, shell=True)
+    #subprocess.run(f"exiftool -Orientation=1 -n {filename}.tmp", cwd=img_dir, shell=True)
+    subprocess.run(f"dcraw -T -6 -W -o 0 -q 0 -t 0 {tmp}", cwd=img_dir, shell=True)
     print(filename + " captured!")
     print(" ")
 
@@ -103,9 +103,9 @@ if __name__ == "__main__":
     print(" ")
 
     #SORT IMAGES
-    archive_dir = f"{img_dir}\\cr2Archive"
+    archive_dir = f"{img_dir}\\tmpArchive"
     subprocess.run(f"mkdir \"{archive_dir}\"", shell=True)
-    subprocess.run(f"move \"{img_dir}\\*.cr2\" \"{archive_dir}\"", shell=True)
+    subprocess.run(f"move \"{img_dir}\\*.tmp\" \"{archive_dir}\"", shell=True)
 
     #FINISH
     message_arduino(0, 0, 0, 0, 0, 0, 0, 1)

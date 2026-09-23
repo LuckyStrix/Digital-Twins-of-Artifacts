@@ -591,6 +591,8 @@ class SeamParams:
     min_count: int = 20      # other side needs >= this many points in the window to conflict
     margin: float = 0.0      # required confidence lead before a point is dropped
     passes: int = 3          # re-evaluate after dropping, up to this many times
+    min_conf: float = 0.0    # >0: ALSO drop any point below this confidence wherever the other
+                             # side covers the surface (>= min_count pts nearby), conflict or not
     mode: str = "point"      # "patch": compare the competing sheets' local mean confidence
                              # "point": drop a point whose own confidence < the other side's local mean
 
@@ -633,7 +635,8 @@ def _seam_conflicts(PA, PB, voxel, p, g):
     dB = np.asarray(_pc(PB).compute_point_cloud_distance(_pc(PA)))
     _, nAB = _window_sums(PB, [np.zeros(len(PB))], PA, g)
     _, nBA = _window_sums(PA, [np.zeros(len(PA))], PB, g)
-    return (dA > p.tau * voxel) & (nAB >= p.min_count), (dB > p.tau * voxel) & (nBA >= p.min_count)
+    return ((dA > p.tau * voxel) & (nAB >= p.min_count), (dB > p.tau * voxel) & (nBA >= p.min_count),
+            nAB >= p.min_count, nBA >= p.min_count)
 
 
 def resolve_seam(PA, cA, PB, cB, voxel, params: SeamParams = None, log=print):
@@ -651,7 +654,7 @@ def resolve_seam(PA, cA, PB, cB, voxel, params: SeamParams = None, log=print):
     for it in range(p.passes):
         ia, ib = np.where(keepA)[0], np.where(keepB)[0]
         a, b, ca, cb = PA[ia], PB[ib], cA[ia], cB[ib]
-        confA, confB = _seam_conflicts(a, b, voxel, p, g)
+        confA, confB, ovA, ovB = _seam_conflicts(a, b, voxel, p, g)
         if first is None:
             first = (int(confA.sum()), int(confB.sum()))
         if p.mode == "point":
@@ -669,6 +672,9 @@ def resolve_seam(PA, cA, PB, cB, voxel, params: SeamParams = None, log=print):
             lb = np.where(nbo > 0, b_oth / np.maximum(nbo, 1), -np.inf)
             dropA = confA & (a_own / np.maximum(na, 1) < la - p.margin)
             dropB = confB & (b_own / np.maximum(nb, 1) < lb - p.margin)
+        if p.min_conf > 0:
+            dropA |= ovA & (ca < p.min_conf)
+            dropB |= ovB & (cb < p.min_conf)
         log(f"[seam] pass {it + 1}: conflicts A={int(confA.sum())} B={int(confB.sum())} "
             f"-> drop A={int(dropA.sum())} B={int(dropB.sum())}")
         if not dropA.any() and not dropB.any():
@@ -676,7 +682,7 @@ def resolve_seam(PA, cA, PB, cB, voxel, params: SeamParams = None, log=print):
         keepA[ia[dropA]] = False
         keepB[ib[dropB]] = False
     ia, ib = np.where(keepA)[0], np.where(keepB)[0]
-    fA, fB = _seam_conflicts(PA[ia], PB[ib], voxel, p, g)
+    fA, fB, _, _ = _seam_conflicts(PA[ia], PB[ib], voxel, p, g)
     rep = {"voxel": voxel, "params": dict(p.__dict__),
            "conflicts_before": {"A": first[0], "B": first[1]},
            "conflicts_after": {"A": int(fA.sum()), "B": int(fB.sum())}}

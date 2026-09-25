@@ -556,11 +556,24 @@ def _selftest() -> int:
     return 0
 
 
-def _find_test_cr2() -> Path | None:
-    """Any .cr2 already in the repo's data/ folder, for the dcraw cross-check."""
+_RAW_SUFFIXES = {".cr2", ".nef", ".arw", ".dng", ".orf", ".raf", ".rw2", ".pef"}
+
+
+def _find_test_raw() -> Path | None:
+    """Any RAW file already in the repo's data/ folder, for the dcraw cross-check.
+
+    Real RAW extensions are preferred. The capture scripts download RAWs as
+    `<name>.tmp` and archive them in `tmpArchive/`, so those count too -- but
+    only there, since a stray .tmp elsewhere is unlikely to be a camera file.
+    """
     app_root = Path(__file__).resolve().parent.parent.parent   # .../2D
-    for cr2 in sorted((app_root.parent / "data").rglob("*.cr2")):
-        return cr2
+    files = sorted(f for f in (app_root.parent / "data").rglob("*") if f.is_file())
+    for f in files:
+        if f.suffix.lower() in _RAW_SUFFIXES:
+            return f
+    for f in files:
+        if f.suffix.lower() == ".tmp" and f.parent.name == "tmpArchive":
+            return f
     return None
 
 
@@ -571,7 +584,7 @@ def _check_against_dcraw(tol_lsb: float = 2.0):
     that inverting the BT.709 curve in software reproduces what dcraw would
     have produced with `-g 1 1`, so scans captured before the switch to linear
     can still be processed correctly.  Returns (passed, detail), or
-    (None, reason) when dcraw or a .cr2 is unavailable.
+    (None, reason) when dcraw or a RAW file is unavailable.
     """
     import shutil as _shutil
     import subprocess
@@ -579,9 +592,9 @@ def _check_against_dcraw(tol_lsb: float = 2.0):
 
     if _shutil.which("dcraw") is None:
         return None, "dcraw not on PATH"
-    cr2 = _find_test_cr2()
-    if cr2 is None:
-        return None, "no .cr2 found under data/"
+    raw = _find_test_raw()
+    if raw is None:
+        return None, "no RAW file found under data/"
 
     import tifffile
     common = ["-T", "-6", "-W", "-o", "0", "-q", "0", "-t", "0"]
@@ -591,7 +604,7 @@ def _check_against_dcraw(tol_lsb: float = 2.0):
             for label, extra in (("gamma", []), ("linear", ["-g", "1", "1"])):
                 p = Path(td) / f"{label}.tiff"
                 with open(p, "wb") as fh:
-                    subprocess.run(["dcraw", "-c", *common, *extra, str(cr2)],
+                    subprocess.run(["dcraw", "-c", *common, *extra, str(raw)],
                                    stdout=fh, stderr=subprocess.DEVNULL, check=True)
                 out[label] = tifffile.imread(str(p)).astype(np.float64) / 65535.0
     except (subprocess.CalledProcessError, OSError) as exc:
@@ -599,7 +612,7 @@ def _check_against_dcraw(tol_lsb: float = 2.0):
 
     err = np.abs(dcraw_decode(out["gamma"]) - out["linear"]).max()
     return err <= tol_lsb / 65535.0, (
-        f"max err {err:.2e} = {err * 65535:.2f} LSB  ({cr2.name})")
+        f"max err {err:.2e} = {err * 65535:.2f} LSB  ({raw.name})")
 
 
 if __name__ == "__main__":

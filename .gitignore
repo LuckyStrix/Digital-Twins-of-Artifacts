@@ -14,3 +14,16 @@ data/
 
 # Colour-fit environment (see 2D/backend/modeling/requirements-colorfit.txt)
 .venv-colorfit/
+
+# Local calibration data (user specific)
+2D/backend/calibration/allLight.tiff
+2D/backend/calibration/capture_info.json
+2D/backend/calibration/eco.tiff
+2D/backend/calibration/ecross.tiff
+2D/backend/calibration/nco.tiff
+2D/backend/calibration/ncross.tiff
+2D/backend/calibration/sco.tiff
+2D/backend/calibration/scross.tiff
+2D/backend/calibration/wco.tiff
+2D/backend/calibration/wcross.tiff
+2D/backend/modeling/__pycache__/color_correction.cpython-312.pyc

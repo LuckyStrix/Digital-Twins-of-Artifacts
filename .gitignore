@@ -27,3 +27,7 @@ data/
 2D/backend/calibration/wco.tiff
 2D/backend/calibration/wcross.tiff
 2D/backend/modeling/__pycache__/color_correction.cpython-312.pyc
+
+# Python bytecode
+__pycache__/
+*.pyc

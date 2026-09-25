@@ -19,8 +19,19 @@ code and differ only in how they drive the capture rig:
 **How it runs day to day:**
 - `run.py` / `run_linux.py` is a single launcher whose buttons run top to
   bottom: select a working image set → (optional) Open Focus Viewer → Capture
-  Calibration (once per rig setup) → Capture Scroll → Run Modeling Pipeline →
-  Build 3D Model → Open Viewer.
+  Calibration (Step 0a, flat copy paper) → Capture Colour Chart (0b) → Fit
+  Colour Matrix (0c) → Capture Scroll → Run Modeling Pipeline → Build 3D Model →
+  Open Viewer. Steps 0a–0c are the same on Windows and Linux. Calibration is
+  stored beside the scan set (`<working>/cal/`, with the fitted matrix in
+  `cal/ccm.json`), and the pipeline applies it automatically. Shoot 0a and 0b at
+  the same exposure.
+- **Colour fit environment (once per machine):** the fit needs contrib OpenCV,
+  which clashes with the pipeline's OpenCV, so it has its own virtualenv at the
+  repo root. On Windows:
+  `py -3.12 -m venv .venv-colorfit` then
+  `.venv-colorfit\Scripts\pip install -r 2D\backend\modeling\requirements-colorfit.txt`
+  (on Linux: `python3 -m venv .venv-colorfit`, then `.venv-colorfit/bin/pip ...`).
+  Without it the pipeline still runs, just uncorrected.
 - The **active working folder** holds one scan set; the pipeline reads it and
   writes `maps/` inside it from modeling plus `<folder>.glb` alongside it from
   rendering, so each scan set is self-contained and a fresh capture just starts

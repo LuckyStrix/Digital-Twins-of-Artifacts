@@ -6,6 +6,11 @@
 #     python3 -m venv .venv-colorfit
 #     ./.venv-colorfit/bin/pip install -r requirements-colorfit.txt
 #
+# On Windows (Python 3.9-3.12; run from the repo root):
+#
+#     py -3.12 -m venv .venv-colorfit
+#     .venv-colorfit\Scripts\pip install -r 2D\backend\modeling\requirements-colorfit.txt
+#
 # WHY A SEPARATE ENVIRONMENT
 # --------------------------
 # cv2.mcc (chart detection) lives in opencv-contrib, while rembg -- which the

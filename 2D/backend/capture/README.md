@@ -34,6 +34,15 @@ Capture only runs on the machine wired to the rig:
 > [2D README](../../README.md#camera-driver-setup-zadig-windows-only). (Not
 > needed on Linux, where gphoto2 uses the kernel USB driver directly.)
 
+## Colour handling
+
+Frames are converted to **linear** 16-bit TIFFs (`dcraw -g 1 1 -o 0 ...`), so
+they look dark in an image viewer; that is expected. Each capture folder also
+gets a `capture_info.json` recording the dcraw flags, which the modeling
+pipeline reads to decide whether to linearise. The Windows and Linux capture
+scripts share the same flags and sidecar. Setting `PAPYRUS_CAPTURE_DIR` makes
+the script write straight into that folder (no timestamped subfolder).
+
 ## Output
 
 Captures are written to the app's top-level `data/<timestamp>/` folder (the RAW

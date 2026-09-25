@@ -66,7 +66,7 @@ code and differ only in how they drive the capture rig:
   - **msys2** with gphoto2 — https://www.msys2.org/ , then in the MSYS2 MINGW64
     shell: `pacman -S mingw-w64-x86_64-gphoto2`. Add the MSYS2 `mingw64\bin`
     folder to your PATH so `gphoto2` is callable from the launcher.
-  - **dcraw** on PATH (converts `.cr2` → `.tiff`). Windows binary:
+  - **dcraw** on PATH (converts the camera's RAW files → `.tiff`). Windows binary:
     https://sourceforge.net/app/dcraw/ (download `DCRaw_V9.28.exe` and put it on
     your PATH).
   - **Zadig** — camera USB driver swap, **required on Windows for gphoto2 to see

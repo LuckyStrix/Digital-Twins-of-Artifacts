@@ -133,10 +133,10 @@ def _dcraw_version():
     return None
 
 
-def _camera_info(cr2_path):
+def _camera_info(raw_path):
     """(make, model) via `dcraw -i`, or (None, None)."""
     try:
-        out = subprocess.run(["dcraw", "-i", "-v", cr2_path],
+        out = subprocess.run(["dcraw", "-i", "-v", raw_path],
                              capture_output=True, text=True, timeout=30)
         for line in out.stdout.splitlines():
             if line.startswith("Camera:"):
@@ -147,7 +147,7 @@ def _camera_info(cr2_path):
     return (None, None)
 
 
-def write_capture_info(dest_dir, frames, sample_cr2=None):
+def write_capture_info(dest_dir, frames, sample_raw=None):
     """Record how these TIFFs were produced, beside them.
 
     The pipeline reads `encoding.kind` to decide whether to linearise. A folder
@@ -160,7 +160,7 @@ def write_capture_info(dest_dir, frames, sample_cr2=None):
     try:
         linear = "-g" in DCRAW_ARGS and DCRAW_ARGS[DCRAW_ARGS.index("-g") + 1:
                                                    DCRAW_ARGS.index("-g") + 3] == ["1", "1"]
-        make, model = _camera_info(sample_cr2) if sample_cr2 else (None, None)
+        make, model = _camera_info(sample_raw) if sample_raw else (None, None)
         info = {
             "schema_version": 1,
             "written_utc": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),

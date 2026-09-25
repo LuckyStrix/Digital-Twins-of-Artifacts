@@ -1,7 +1,9 @@
 # Dependencies for color_fit.py ONLY (the ColorChecker fit), not the pipeline.
 #
 # Install these into their OWN virtualenv, not alongside the pipeline's
-# requirements.txt:
+# requirements.txt. The launcher's "Check / Install Dependencies" button does
+# this for you (creating .venv-colorfit at the repo root, or repairing it). To
+# do it by hand instead:
 #
 #     python3 -m venv .venv-colorfit
 #     ./.venv-colorfit/bin/pip install -r requirements-colorfit.txt

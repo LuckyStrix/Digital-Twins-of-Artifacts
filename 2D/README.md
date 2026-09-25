@@ -26,12 +26,10 @@ code and differ only in how they drive the capture rig:
   `cal/ccm.json`), and the pipeline applies it automatically. Shoot 0a and 0b at
   the same exposure.
 - **Colour fit environment (once per machine):** the fit needs contrib OpenCV,
-  which clashes with the pipeline's OpenCV, so it has its own virtualenv at the
-  repo root. On Windows:
-  `py -3.12 -m venv .venv-colorfit` then
-  `.venv-colorfit\Scripts\pip install -r 2D\backend\modeling\requirements-colorfit.txt`
-  (on Linux: `python3 -m venv .venv-colorfit`, then `.venv-colorfit/bin/pip ...`).
-  Without it the pipeline still runs, just uncorrected.
+  which clashes with the pipeline's OpenCV, so it has its own virtualenv,
+  `.venv-colorfit` at the repo root. **Check / Install Dependencies** creates it
+  (and repairs it if it is broken) using the Python the launcher runs on, which
+  must be 3.9–3.12. Without it the pipeline still runs, just uncorrected.
 - The **active working folder** holds one scan set; the pipeline reads it and
   writes `maps/` inside it from modeling plus `<folder>.glb` alongside it from
   rendering, so each scan set is self-contained and a fresh capture just starts
@@ -112,9 +110,11 @@ driver is replaced with **WinUSB** using [Zadig](https://zadig.akeo.ie/)
 ## Setup
 
 `run.py` self-installs most dependencies. Launch it and click
-**Install Python Dependencies**, which runs `pip install -r
-backend/modeling/requirements.txt pyserial` and `npm install` in the renderer
-for you:
+**Check / Install Dependencies**, which runs `pip install -r
+backend/modeling/requirements.txt pyserial`, creates the separate `.venv-colorfit`
+environment for the colour fit (Step 0c) from
+`backend/modeling/requirements-colorfit.txt`, and runs `npm install` in the
+renderer for you:
 
 ```bash
 python run.py

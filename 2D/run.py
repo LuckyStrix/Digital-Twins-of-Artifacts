@@ -127,6 +127,26 @@ CCM_NAME     = "ccm.json"
 # and the two overwrite each other's cv2/ directory. See
 # backend/modeling/requirements-colorfit.txt.
 COLORFIT_VENV = ".venv-colorfit"
+COLORFIT_REQS = MODELING_DIR / "requirements-colorfit.txt"
+
+# Run inside the colour-fit venv by 'Check / Install Dependencies'. Prints the
+# space-separated names of whatever color_fit.py needs but cannot import, so an
+# empty line means the environment is complete. cv2.mcc is checked as an
+# attribute because plain opencv installs a cv2 without it; pip is reported so a
+# venv created without it (Debian's python3 with no python3-venv) is rebuilt
+# rather than pip-installed into.
+COLORFIT_CHECK = """
+import importlib.util
+missing = [m for m in ("pip", "colour", "tifffile", "imagecodecs", "scipy", "numpy")
+           if importlib.util.find_spec(m) is None]
+try:
+    import cv2
+    if not hasattr(cv2, "mcc"):
+        missing.append("cv2.mcc")
+except Exception:
+    missing.append("cv2")
+print(" ".join(missing))
+"""
 
 # Per-working-folder layout. The scroll scans live directly in the working
 # folder; the pipeline writes its render-ready maps and the built model into
@@ -576,7 +596,11 @@ class PipelineApp:
         else:
             self.log("\nAll Python packages already present — nothing to install.")
 
-        # 3. Node.js + renderer packages (Build 3D Model step) ----------------
+        # 3. Colour-fit virtualenv (Step 0c) ---------------------------------
+        self.log("\nColour-fit environment (needed for 'Step 0c — Fit Colour Matrix'):")
+        self._ensure_colorfit_env(ok, no)
+
+        # 4. Node.js + renderer packages (Build 3D Model step) ----------------
         self.log("\nNode.js (needed for 'Build 3D Model'):")
         node = shutil.which("node")
         npm = shutil.which(NPM)
@@ -595,7 +619,7 @@ class PipelineApp:
             self.log("       Install the LTS from https://nodejs.org/ (tick 'Add to PATH'),")
             self.log("       reopen this app, then click this button again to run npm install.")
 
-        # 4. Capture-rig tools (only needed for capture / focus viewer) -------
+        # 5. Capture-rig tools (only needed for capture / focus viewer) -------
         self.log("\nCapture-rig tools (only needed to run Capture / Focus Viewer):")
         if Path(MSYS2_SHELL).exists():
             self.log(f"  {ok} msys2 ({MSYS2_SHELL})")
@@ -982,6 +1006,75 @@ class PipelineApp:
         self.step_fit_color()
 
     # ── Colour matrix fit ────────────────────────────────────────────────────
+    def _venv_python(self, venv: Path) -> Path:
+        return venv / "Scripts" / "python.exe"
+
+    def _colorfit_missing(self, python: Path):
+        """What the colour-fit venv at `python` lacks, as a list (empty when it
+        is complete), or None when that interpreter cannot run at all."""
+        try:
+            res = subprocess.run([str(python), "-c", COLORFIT_CHECK],
+                                 capture_output=True, text=True, timeout=300)
+        except Exception:
+            return None
+        if res.returncode != 0:
+            return None
+        lines = res.stdout.strip().splitlines()
+        return lines[-1].split() if lines else []
+
+    def _ensure_colorfit_env(self, ok: str, no: str):
+        """Create or repair the colour-fit venv so Step 0c works without manual
+        setup. Kept apart from the pipeline's packages for the reason given at
+        COLORFIT_VENV; this is the only place that installs into it."""
+        venv = next((b / COLORFIT_VENV for b in (ROOTER, ROOT)
+                     if self._venv_python(b / COLORFIT_VENV).is_file()),
+                    ROOTER / COLORFIT_VENV)
+        python = self._venv_python(venv)
+        missing = self._colorfit_missing(python) if python.is_file() else None
+        if missing == []:
+            self.log(f"  {ok} {venv}")
+            return
+
+        if missing is None or "pip" in missing:
+            ver = sys.version_info
+            if not (3, 9) <= (ver.major, ver.minor) <= (3, 12):
+                self.log(f"  {no} {venv} — cannot create it with Python "
+                         f"{ver.major}.{ver.minor}: colour-science 0.4.x and numpy<2 "
+                         "need Python 3.9-3.12. Relaunch with one of those and "
+                         "click this button again.")
+                return
+            self.log(f"  {no} {venv} "
+                     + ("is broken" if venv.exists() else "not found")
+                     + " -> creating it")
+            rc = self.run_command([sys.executable, "-m", "venv", "--clear", str(venv)])
+            if rc != 0 or not python.is_file():
+                self.log(f"  Could not create {venv} (exit code {rc}).")
+                self.log("  Make sure this Python was installed from python.org with "
+                         "the standard library intact, then try again.")
+                return
+        else:
+            self.log(f"  {no} {venv} is missing {', '.join(missing)} -> will install")
+            if "cv2" in missing or "cv2.mcc" in missing:
+                # A plain OpenCV shares cv2/ with the contrib build, so installing
+                # contrib over it leaves whichever wrote last. Clear every
+                # variant first so the reinstall below lands on a clean cv2/.
+                self.run_command([str(python), "-m", "pip", "uninstall", "-y",
+                                  "opencv-python", "opencv-python-headless",
+                                  "opencv-contrib-python",
+                                  "opencv-contrib-python-headless"])
+
+        self.log("  Installing the colour-fit packages (contrib OpenCV + "
+                 "colour-science; may take a few minutes)...")
+        rc = self.run_command([str(python), "-m", "pip", "install",
+                               "-r", str(COLORFIT_REQS)])
+        missing = self._colorfit_missing(python)
+        if rc == 0 and missing == []:
+            self.log(f"  {ok} colour-fit environment ready ({venv})")
+        else:
+            self.log(f"  {no} colour-fit setup incomplete (pip exit code {rc}"
+                     + (f", still missing: {', '.join(missing)}" if missing else "")
+                     + "). Step 0c will not run until this succeeds.")
+
     def _colorfit_python(self):
         """Interpreter for color_fit.py, or None if its environment is missing.
 
@@ -992,7 +1085,7 @@ class PipelineApp:
         Falls back to this interpreter if it happens to have cv2.mcc already.
         """
         for base in (ROOTER, ROOT):
-            candidate = base / COLORFIT_VENV / "Scripts" / "python.exe"
+            candidate = self._venv_python(base / COLORFIT_VENV)
             if candidate.is_file():
                 return candidate
         if self._cv2_mcc_present(sys.executable):
@@ -1030,12 +1123,8 @@ class PipelineApp:
         python = self._colorfit_python()
         if python is None:
             self.log("Cannot fit: the colour-fit environment is missing.")
-            self.log("Create it once with:")
-            self.log(f"    py -3.12 -m venv {ROOTER / COLORFIT_VENV}")
-            self.log(f"    {ROOTER / COLORFIT_VENV}\\Scripts\\pip install -r "
-                     f"{MODELING_DIR / 'requirements-colorfit.txt'}")
-            self.log("It is kept separate from the pipeline on purpose — see the "
-                     "notes in requirements-colorfit.txt.")
+            self.log("Click 'Check / Install Dependencies' to create it "
+                     "automatically, then run this step again.")
             return
 
         self.log(f"Using {python}")

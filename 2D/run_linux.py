@@ -22,7 +22,7 @@ Single launcher that ties the four Papyrus sub-projects together:
                         render-ready maps into <active folder>/maps/.
 
   backend/rendering  - Three.js / Vite app. Turns the texture maps into a
-                        textured 3D model, saved to <active folder>/model/render.glb.
+                        textured 3D model, saved to <active folder>.glb.
 
   backend/website    - Interactive museum-style viewer for render.glb.
 
@@ -50,7 +50,8 @@ each producing its own maps/ and its own .glb next to that side's folder:
     side2.glb
 
 When the box is left unticked everything behaves exactly as before (a single
-flat scan set with its own maps/ and model/ directly in the working folder).
+flat scan set with its own maps/ directly in the working folder and its .glb
+next to it).
 
 Usage:
     python3 run_linux.py
@@ -864,7 +865,7 @@ class PipelineApp:
         self.log(f"Capture finished. Active working folder set to: {latest}")
         if self._has_scans(latest):
             self.log("Scroll scans are in place. Make sure calibration images "
-                      "exist too (Step 0 — Capture Calibration), then run the "
+                      "exist too (Step 0a — Capture Calibration), then run the "
                       "modeling pipeline.")
         else:
             missing = [n for n in CAPTURE_TIFFS if not (latest / n).exists()]
@@ -908,7 +909,7 @@ class PipelineApp:
         self._set_active_dir(working)
         self.log(f"Two-sided capture finished. Active working folder set to: {working}")
         self.log("Both sides captured into side1/ and side2/. Make sure "
-                  "calibration images exist (Step 0 — Capture Calibration), then "
+                  "calibration images exist (Step 0a — Capture Calibration), then "
                   "run the modeling pipeline.")
 
     def _check_exposure(self, folder: Path, label: str) -> None:

@@ -15,7 +15,7 @@ Single launcher that ties the four Papyrus sub-projects together:
                         render-ready maps into <active folder>/maps/.
 
   backend/rendering  - Three.js / Vite app. Turns the texture maps into a
-                        textured 3D model, saved to <active folder>/model/render.glb.
+                        textured 3D model, saved to <active folder>.glb.
 
   backend/website    - Interactive museum-style viewer for render.glb.
 
@@ -25,7 +25,7 @@ its outputs inside that same folder, so each scan set is self-contained:
   <active folder>/
     allLight.tiff, ncross.tiff, ... wco.tiff   (the 9 scroll scans)
     maps/        *_render.tiff                  (modeling output)
-    model/       render.glb                     (rendering output)
+  <active folder>.glb                           (rendering output, alongside it)
 
 It defaults to the top-level data/ folder (where captures land); a fresh capture
 makes its own data/<timestamp>/ folder active, and "Select working image set"
@@ -34,14 +34,17 @@ points it at any other scan folder.
 Optionally you can tick "Scan both sides of the object". Capture then shoots two
 scan sets (pausing so you can flip the object) into side1/ and side2/ subfolders
 of one working folder, and the modeling and rendering steps run once per side,
-each producing its own maps/ and model/ inside that side's folder:
+each producing its own maps/ and its own .glb next to that side's folder:
 
   <active folder>/
-    side1/  allLight.tiff ... wco.tiff   maps/   model/render.glb
-    side2/  allLight.tiff ... wco.tiff   maps/   model/render.glb
+    side1/  allLight.tiff ... wco.tiff   maps/
+    side1.glb
+    side2/  allLight.tiff ... wco.tiff   maps/
+    side2.glb
 
 When the box is left unticked everything behaves exactly as before (a single
-flat scan set with its own maps/ and model/ directly in the working folder).
+flat scan set with its own maps/ directly in the working folder and its .glb
+next to it).
 
 Usage:
     python3 run.py
@@ -60,7 +63,9 @@ Then click the buttons top to bottom:
                               (needs the camera + Arduino attached) and stores
                               them in the active working folder.
   2. Run Modeling Pipeline  - generates the texture maps into <active>/maps/.
-  3. Build 3D Model (.glb)  - bakes the maps into <active>/model/render.glb.
+  3. Build 3D Model (.glb)  - bakes the maps into <active>.glb, next to the
+                              working folder (side1.glb / side2.glb when both
+                              sides were scanned).
   4. Open 3D Viewer         - serves backend/website/ and opens it in a browser.
 
 The individual steps 1-4 always run (force re-do). "Run Everything" and "Select
@@ -149,10 +154,13 @@ print(" ".join(missing))
 """
 
 # Per-working-folder layout. The scroll scans live directly in the working
-# folder; the pipeline writes its render-ready maps and the built model into
-# these subfolders inside that same folder, so each scan set is self-contained.
+# folder and the pipeline writes its render-ready maps into <folder>/maps/, so
+# each scan set is self-contained. The built model is saved *next to* the folder
+# as <folder>.glb, which is how the website's artifact manifest refers to models
+# (e.g. side1.glb / side2.glb, 28-07-26_13-36-25.glb).
 MAPS_SUBDIR  = "maps"
-MODEL_SUBDIR = "model"
+# Name the renderer gives its own export inside backend/rendering/ before it is
+# copied out to <folder>.glb.
 GLB_NAME     = "render.glb"
 
 # Optional two-sided capture. When the user opts to scan both sides of the
@@ -439,8 +447,6 @@ class PipelineApp:
         self.active_dir = Path(folder)
         self.active_dir_var.set(str(self.active_dir))
         self.log(f"Active working folder set to: {self.active_dir}")
-        env = dict(os.environ)
-        env["CAPTURE_DATA_DIR"] = str(self.active_dir)
         for side in self._side_dirs():
             label = self._side_label(side)
             prefix = f"  {label}: " if label else "  Folder status: "
@@ -448,10 +454,9 @@ class PipelineApp:
                 "scans" if self._has_scans(side) else "no scans",
                 "maps" if self._has_maps(side) else "no maps",
             ]
-            glbs = [".glb" if self._has_glb(side, side) else "no .glb"]
-            self.log(prefix + ", ".join(have) + ", " + " ".join(glbs) + ".")
-        txt = ".txt" if self._has_txt() else "no .txt"
-        self.log(txt)
+            have.append(".glb" if self._has_glb(side) else "no .glb")
+            self.log(prefix + ", ".join(have) + ".")
+        self.log("  Description: " + (TXT_NAME if self._has_txt() else "no " + TXT_NAME))
         self.log("Click a step or 'Run Everything' to process it.")
 
     def on_open_focus_viewer(self):
@@ -510,14 +515,14 @@ class PipelineApp:
         save_dir = self.active_dir
         if not save_dir:
             messagebox.showerror(
-                "CAPTURE_DATA_DIR not set",
-                "The CAPTURE_DATA_DIR environment variable is not set.\n"
-                "Please set it before running this script."
+                "No working folder set",
+                "No active working folder is set.\n"
+                "Select or capture an image set before generating a description."
             )
             return
 
         os.makedirs(save_dir, exist_ok=True)
-        save_path = os.path.join(save_dir, "info.txt")
+        save_path = os.path.join(save_dir, TXT_NAME)
 
         content = (
             f"Name: {name}\n"
@@ -651,6 +656,7 @@ class PipelineApp:
         artifact's sets."""
         return self.active_dir / datetime.now().strftime("%d-%m-%y_%H-%M-%S")
 
+    # ── Active working folder ────────────────────────────────────────────────────
     @property
     def two_sides(self) -> bool:
         """True when the user has opted to scan both sides of the object."""
@@ -681,7 +687,11 @@ class PipelineApp:
         return (side or self.active_dir) / MAPS_SUBDIR
 
     def _glb_path(self, side: Path = None) -> Path:
-        return (side or self.active_dir) / MODEL_SUBDIR / GLB_NAME
+        """Where the built model for `side` is saved: <side>.glb, alongside the
+        folder rather than inside it (side1/ -> side1.glb), matching the naming
+        the website's artifact manifest expects."""
+        side = side or self.active_dir
+        return side.parent / f"{side.name}.glb"
     
     def _txt_path(self, side: Path = None) -> Path:
         return (side or self.active_dir) / TXT_NAME
@@ -733,14 +743,12 @@ class PipelineApp:
         maps = d / MAPS_SUBDIR
         return all((maps / name).exists() for name in RENDER_MAPS)
 
-    def _has_glb(self, glb, d: Path = None) -> bool:
-        d = d or self.active_dir
-        return (d / f"{glb}.glb").exists()
+    def _has_glb(self, side: Path = None) -> bool:
+        return self._glb_path(side).exists()
     
     def _has_txt(self, d: Path = None) -> bool:
         d = d or self.active_dir
-        txt = TXT_NAME
-        return (d / f"{txt}").exists()
+        return (d / TXT_NAME).exists()
 
     def _ask_continue(self, title: str, message: str) -> bool:
         """Pop a modal OK/Cancel dialog from a background thread; return True on OK.
@@ -863,7 +871,7 @@ class PipelineApp:
         """Capture both sides of the object into side1/ and side2/ subfolders of
         one fresh working folder, pausing between them so the user can flip the
         object over."""
-        working = self.active_dir / datetime.now().strftime("%d-%m-%y_%H-%M-%S")
+        working = self._new_capture_dir()
         self.log("TWO-SIDED SCROLL CAPTURE")
         self.log(f"Working folder: {working}")
 
@@ -1267,14 +1275,14 @@ class PipelineApp:
             self.log("Export failed — see log above for details.")
             return
 
-        glb = RENDERING_DIR / "render.glb"
+        glb = RENDERING_DIR / GLB_NAME
         if glb.exists():
-            dest = CAPTURE_DATA_DIR / f"{side}.glb"
+            dest = self._glb_path(side)
             dest.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(glb, dest)
             self.log(f"Saved model -> {dest}.")
         else:
-            self.log("render.glb was not created — see log above for details.")
+            self.log(f"{GLB_NAME} was not created — see log above for details.")
         target_folder = str(BACKEND)
         env = os.environ.copy()
         env["DELETE_TARGET_DIR"] = target_folder
@@ -1344,12 +1352,13 @@ class PipelineApp:
                 return
 
         # ── Modeling + build, per side ────────────────────────────────────────
+        tag = ""
         for side in sides:
             label = self._side_label(side)
             tag = f" [{label}]" if label else ""
 
             if self._has_maps(side):
-                self.log(f"Render-ready maps already in {self._maps_dir(side)} ─ "
+                self.log(f"Render-ready maps already in {self._maps_dir(side)} — "
                           f"skipping modeling{tag}.")
             else:
                 self._run_modeling_for(side)
@@ -1359,7 +1368,7 @@ class PipelineApp:
                     return
 
             if self._has_glb(side):
-                self.log(f"Model already built ({self._glb_path(side)}) ─ "
+                self.log(f"Model already built ({self._glb_path(side)}) — "
                           f"skipping render{tag}.")
             else:
                 self._build_model_for(side)
@@ -1368,12 +1377,12 @@ class PipelineApp:
                               "stopping.")
                     return
         if self._has_txt(self.active_dir):
-            self.log(f"Description already written ({self._txt_path()}) ─ "
+            self.log(f"Description already written ({self._txt_path()}) — "
                      f"skipping description generation.")
         else:
             self.step_generate_desc()
             if not self._has_txt():
-                self.log(f"Description Generation failed{tag}; "
+                self.log(f"Description generation failed{tag}; "
                          "stopping.")
                 return
 

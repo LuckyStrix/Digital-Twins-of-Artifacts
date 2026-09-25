@@ -651,6 +651,7 @@ class PipelineApp:
         artifact's sets."""
         return self.active_dir / datetime.now().strftime("%d-%m-%y_%H-%M-%S")
 
+    @property
     def two_sides(self) -> bool:
         """True when the user has opted to scan both sides of the object."""
         return bool(self.two_sides_var.get())

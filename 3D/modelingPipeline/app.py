@@ -652,7 +652,7 @@ class ConfigPanel(ttk.Frame):
         self._build_io(_scroll_frame(io_tab))
         self._build_colmap(_scroll_frame(colmap_tab))
         self._build_recon(_scroll_frame(recon_tab))
-        self._build_align(align_tab)
+        self._build_align(_scroll_frame(align_tab))
 
     # ── IO tab ────────────────────────────────────────────────────────────────
     def _build_io(self, f):
@@ -2362,13 +2362,16 @@ def _scroll_frame(parent: tk.Widget) -> ttk.Frame:
     canvas.bind("<Configure>",
                 lambda e: canvas.itemconfig(win_id, width=e.width))
 
+    # Bound app-wide so the wheel works over child widgets too, not just
+    # the bare canvas; only acts when the pointer is inside this canvas.
     def _scroll(e):
+        if not str(e.widget).startswith(str(canvas)):
+            return
         canvas.yview_scroll(
             -1 * (e.delta // 120 if e.delta else (-1 if e.num == 4 else 1)),
             "units")
-    canvas.bind("<MouseWheel>", _scroll)
-    canvas.bind("<Button-4>", _scroll)
-    canvas.bind("<Button-5>", _scroll)
+    for seq in ("<MouseWheel>", "<Button-4>", "<Button-5>"):
+        canvas.bind_all(seq, _scroll, add="+")
     return inner
 
 

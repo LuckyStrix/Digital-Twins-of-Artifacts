@@ -2311,7 +2311,7 @@ class App(tk.Tk):
         src_gltf  = recon_dir / "recon_mesh_recon.gltf"
         dest_gltf = self._session_dir() / "model.gltf"
         if src_gltf.exists():
-            shutil.copy2(src_gltf, dest_gltf)
+            shutil.copyfile(src_gltf, dest_gltf)
             self.log(f"[stage 4] GLTF → {dest_gltf}")
         else:
             self.log(f"[stage 4] Warning: GLTF not found at {src_gltf}")
@@ -2320,7 +2320,7 @@ class App(tk.Tk):
         src_simplified_glb  = recon_dir / "recon_mesh_recon_simplified.glb"
         dest_simplified_glb = self._session_dir() / "model_simplified.glb"
         if src_simplified_glb.exists():
-            shutil.copy2(src_simplified_glb, dest_simplified_glb)
+            shutil.copyfile(src_simplified_glb, dest_simplified_glb)
             self.log(f"[stage 4] Simplified GLB → {dest_simplified_glb}")
 
         # Write the website's info.txt metadata file, if a name was given

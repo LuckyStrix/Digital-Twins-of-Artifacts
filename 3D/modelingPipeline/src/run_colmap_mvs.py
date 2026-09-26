@@ -862,7 +862,7 @@ def _rewrite_images_without_metadata(src_root: Path, dst_root: Path) -> Path:
             encode_image(src, dst)
             rewritten += 1
         else:
-            shutil.copy2(src, dst)
+            shutil.copyfile(src, dst)
             copied += 1
 
     print(
@@ -976,14 +976,14 @@ def _prepare_input_images(
         if resize_image is not None:
             resize_image(src, dst, scale)
         else:
-            shutil.copy2(src, dst)
+            shutil.copyfile(src, dst)
         with lock:
             counters["kept"] += 1
 
     def _copy_non_image(src: Path) -> None:
         dst = dst_root / src.relative_to(src_root)
         dst.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(src, dst)
+        shutil.copyfile(src, dst)
         with lock:
             counters["copied"] += 1
 
@@ -3435,7 +3435,7 @@ def run_pipeline_for_image_set(
         
         # --- SNAPSHOT 2: Normal/Depth maps and fused .ply cloud ---
         dense_ply_snap = snapshot_dir / f"{set_label}_dense_fused_{idx:02d}.ply"
-        shutil.copy2(cloud_out, dense_ply_snap)
+        shutil.copyfile(cloud_out, dense_ply_snap)
         print(f"snapshot saved: {dense_ply_snap}")
 
     merge_component_clouds(dense_parts, dense_cloud_out)

@@ -296,6 +296,22 @@ def parse_args() -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--fill-holes-smooth",
+        type=int,
+        default=int(os.environ.get("FIPMESH_RECON_FILL_HOLES_SMOOTH", "0")),
+        help=(
+            "Replace the flat triangulated hole patches with smooth membranes: subdivide "
+            "each patch and fair its interior vertices so it blends into the surrounding "
+            "surface. Only the added patch vertices move (0/1, default: 0)."
+        ),
+    )
+    parser.add_argument(
+        "--fill-holes-smooth-rounds",
+        type=int,
+        default=int(os.environ.get("FIPMESH_RECON_FILL_HOLES_SMOOTH_ROUNDS", "2")),
+        help="Subdivision rounds for --fill-holes-smooth; more = finer membrane (default: 2).",
+    )
+    parser.add_argument(
         "--fill-holes-max-size",
         type=float,
         default=0.0,
@@ -866,6 +882,275 @@ def keep_significant_mesh_components(
     mesh.remove_triangles_by_mask(remove_mask)
     mesh.remove_unreferenced_vertices()
     return mesh
+
+
+def _refine_patch_triangles(V, T, C, n_patch_from):
+    """One round of conforming (red/green) midpoint subdivision of the patch
+    triangles (index >= n_patch_from). Every edge of a patch triangle is split, so
+    patch triangles become 4 children and the original triangles that share a patch
+    boundary edge become green 2/3-way splits: no T-junctions, geometry unchanged.
+    Returns (V, T, C, n_patch_from) with patch triangles renumbered to the tail."""
+    nV = len(V)
+    patch = np.arange(len(T)) >= n_patch_from
+    def ekey(a, b):
+        lo, hi = np.minimum(a, b), np.maximum(a, b)
+        return lo.astype(np.int64) * nV + hi
+    ka, kb, kc = ekey(T[:, 0], T[:, 1]), ekey(T[:, 1], T[:, 2]), ekey(T[:, 2], T[:, 0])
+    split_keys = np.unique(np.concatenate([ka[patch], kb[patch], kc[patch]]))
+    mid_of = {int(k): nV + i for i, k in enumerate(split_keys)}
+    lo, hi = split_keys // nV, split_keys % nV
+    newV = 0.5 * (V[lo] + V[hi])
+    newC = None if C is None else 0.5 * (C[lo] + C[hi])
+    def mids(k):
+        return np.array([mid_of.get(int(x), -1) for x in k])
+    ma, mb, mc = mids(ka), mids(kb), mids(kc)
+    nsplit = (ma >= 0).astype(int) + (mb >= 0) + (mc >= 0)
+    keep_idx = np.where(nsplit == 0)[0]
+    out_old = [T[keep_idx]]
+    out_patch = []
+    Vall = np.vstack([V, newV])
+    def d(i, j):
+        return np.linalg.norm(Vall[i] - Vall[j])
+    for t in np.where(nsplit > 0)[0]:
+        a, b, c = T[t]
+        m = (ma[t], mb[t], mc[t])
+        tris = []
+        if nsplit[t] == 3:
+            tris = [(a, m[0], m[2]), (m[0], b, m[1]), (m[2], m[1], c), (m[0], m[1], m[2])]
+        else:
+            # rotate so the pattern is canonical: 1 split -> edge ab; 2 split -> ab,bc split
+            rots = [((a, b, c), m), ((b, c, a), (m[1], m[2], m[0])), ((c, a, b), (m[2], m[0], m[1]))]
+            for (p, q, r), (mpq, mqr, mrp) in rots:
+                if nsplit[t] == 1 and mpq >= 0:
+                    tris = [(p, mpq, r), (mpq, q, r)]; break
+                if nsplit[t] == 2 and mpq >= 0 and mqr >= 0:
+                    tris = [(mpq, q, mqr)]
+                    if d(p, mqr) <= d(mpq, r):
+                        tris += [(p, mpq, mqr), (p, mqr, r)]
+                    else:
+                        tris += [(mpq, mqr, r), (p, mpq, r)]
+                    break
+        (out_patch if patch[t] else out_old).append(np.array(tris, dtype=np.int64))
+    T_old = np.vstack([x for x in out_old if len(x)])
+    T_new = np.vstack([x for x in out_patch if len(x)]) if out_patch else np.zeros((0, 3), np.int64)
+    Tn = np.vstack([T_old, T_new])
+    Cn = None if C is None else np.vstack([C, newC])
+    return Vall, Tn, Cn, len(T_old)
+
+
+def _relax_patch_tangential(V, T, g, iters=40):
+    """Even out the vertex spacing of one patch group inside its best-fit plane
+    (uniform Laplacian on the in-plane coordinates, boundary fixed) so the long thin
+    triangles left by the hole filler become well-shaped. Moves that would flip a
+    triangle are rolled back; if the patch does not project cleanly onto its plane
+    (folded/wrapped) nothing is changed. Heights are re-solved afterwards."""
+    g = np.asarray(g)
+    gset = np.zeros(len(V), bool); gset[g] = True
+    tri_ids = np.where(gset[T].any(1))[0]
+    Tl = T[tri_ids]
+    verts = np.unique(Tl)
+    loc = np.searchsorted(verts, Tl)
+    pts = V[g]
+    c = pts.mean(0)
+    _, _, Vt = np.linalg.svd(pts - c, full_matrices=False)
+    u, v, n = Vt[0], Vt[1], Vt[2]
+    P = np.stack([(V[verts] - c) @ u, (V[verts] - c) @ v], 1)
+    def areas(Pp):
+        a, b, cc = Pp[loc[:, 0]], Pp[loc[:, 1]], Pp[loc[:, 2]]
+        return (b[:, 0] - a[:, 0]) * (cc[:, 1] - a[:, 1]) - (b[:, 1] - a[:, 1]) * (cc[:, 0] - a[:, 0])
+    A0 = areas(P)
+    sgn = np.sign(np.median(A0))
+    if sgn == 0 or np.mean(A0 * sgn > 0) < 0.999:
+        return V                      # does not project cleanly onto one plane
+    e = np.concatenate([loc[:, [0, 1]], loc[:, [1, 2]], loc[:, [2, 0]]])
+    e = np.unique(np.sort(e, axis=1), axis=0)
+    ea = np.concatenate([e[:, 0], e[:, 1]]); eb = np.concatenate([e[:, 1], e[:, 0]])
+    deg = np.bincount(ea, minlength=len(verts)).astype(float)
+    free = gset[verts]
+    for _ in range(iters):
+        acc = np.zeros_like(P)
+        np.add.at(acc, ea, P[eb])
+        mean = acc / np.maximum(deg, 1)[:, None]
+        Pn = P.copy()
+        Pn[free] = 0.5 * P[free] + 0.5 * mean[free]
+        for _try in range(12):
+            bad = (areas(Pn) * sgn) <= 1e-14
+            if not bad.any():
+                break
+            rv = np.unique(loc[bad])
+            rv = rv[free[rv]]
+            Pn[rv] = P[rv]                # roll back vertices of flipped triangles
+        else:
+            Pn = P                        # could not repair: skip this iteration
+        P = Pn
+    h = (V[verts] - c) @ n
+    V = V.copy()
+    newp = c + P[:, 0:1] * u + P[:, 1:2] * v + h[:, None] * n
+    V[verts[free]] = newp[free]
+    return V
+
+
+def _fair_free_vertices(V, T, free, max_dense=4500, tangential_relax=True):
+    """Biharmonic fairing of the free vertices (uniform Laplacian, everything else
+    fixed). Minimising |L x|^2 over the free set and their neighbours' rows makes the
+    patch meet the surrounding surface tangent-continuously. Dense solve per
+    connected group; very large groups fall back to plain Laplacian relaxation."""
+    nV = len(V)
+    nbr = [set() for _ in range(nV)]
+    for a, b, c in T:
+        nbr[a].update((b, c)); nbr[b].update((a, c)); nbr[c].update((a, b))
+    free = set(int(x) for x in free)
+    seen = set(); groups = []
+    for v in free:
+        if v in seen:
+            continue
+        stack = [v]; seen.add(v); g = []
+        while stack:
+            u = stack.pop(); g.append(u)
+            for w in nbr[u]:
+                if w in free and w not in seen:
+                    seen.add(w); stack.append(w)
+        groups.append(g)
+    V = V.copy()
+    for g in groups:
+        if tangential_relax and len(g) >= 8:
+            V = _relax_patch_tangential(V, T, g)
+        gset = set(g)
+        if len(g) > max_dense:
+            for _ in range(300):          # Jacobi Laplacian relaxation fallback
+                newp = {u: np.mean([V[w] for w in nbr[u]], axis=0) for u in g}
+                for u in g:
+                    V[u] = newp[u]
+            continue
+        rows = sorted(gset | {w for u in g for w in nbr[u]})
+        cols = sorted(set(rows) | {w for u in rows for w in nbr[u]})
+        cidx = {u: i for i, u in enumerate(cols)}
+        L = np.zeros((len(rows), len(cols)))
+        for r_i, u in enumerate(rows):
+            L[r_i, cidx[u]] = 1.0
+            for w in nbr[u]:
+                L[r_i, cidx[w]] -= 1.0 / len(nbr[u])
+        fcols = [cidx[u] for u in g]
+        ncols = [i for i in range(len(cols)) if cols[i] not in gset]
+        A = L[:, fcols]
+        # Displace the group's vertices only along the best-fit plane normal of the
+        # patch (tangential layout stays put, so triangles cannot fold over): solve
+        # min_h |(L x0)_n + A h|^2 for the height field h.
+        X0 = V[cols]
+        pts = V[g]
+        n = np.linalg.svd(pts - pts.mean(0), full_matrices=False)[2][-1]
+        rn = (L @ X0) @ n
+        h, *_ = np.linalg.lstsq(A, -rn, rcond=None)
+        span = float(np.linalg.norm(pts.max(0) - pts.min(0)))
+        if span > 0 and np.abs(h).max() > 0.3 * span:
+            continue                       # implausible bulge/dip: keep the relaxed flat patch
+        V[g] = V[g] + h[:, None] * n[None, :]
+    return V
+
+
+def smooth_filled_patches(mesh, n_orig_tris, rounds=2):
+    """Turn the flat triangulated hole patches (triangles appended after index
+    n_orig_tris) into smooth membranes: subdivide the patch `rounds` times, then
+    fair the interior vertices. Original triangles/vertices are never moved."""
+    if len(mesh.triangles) <= n_orig_tris:
+        return mesh
+    V = np.asarray(mesh.vertices, dtype=np.float64).copy()
+    T = np.asarray(mesh.triangles, dtype=np.int64).copy()
+    C = np.asarray(mesh.vertex_colors).copy() if mesh.has_vertex_colors() else None
+    n_patch = n_orig_tris
+    # Open3D's hole filler does not wind every patch consistently with the surrounding
+    # surface. Decide the winding PER connected patch: keep whichever orientation
+    # shares fewer directed edges with the original triangles (0 = consistent).
+    nV0 = len(V)
+    old = T[:n_patch]
+    dk = np.concatenate([old[:, [0, 1]], old[:, [1, 2]], old[:, [2, 0]]])
+    old_keys = np.sort(dk[:, 0].astype(np.int64) * nV0 + dk[:, 1])
+    def _hits(tris):
+        d = np.concatenate([tris[:, [0, 1]], tris[:, [1, 2]], tris[:, [2, 0]]])
+        k = d[:, 0].astype(np.int64) * nV0 + d[:, 1]
+        pos = np.searchsorted(old_keys, k)
+        pos[pos >= len(old_keys)] = 0
+        return int((old_keys[pos] == k).sum())
+    patch_idx = np.arange(n_patch, len(T))
+    parent = {int(i): int(i) for i in patch_idx}
+    def find(x):
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+    edge_owner = {}
+    for i in patch_idx:
+        a_, b_, c_ = T[i]
+        for e in ((a_, b_), (b_, c_), (c_, a_)):
+            k = (min(e), max(e))
+            if k in edge_owner:
+                ra, rb = find(int(i)), find(edge_owner[k])
+                if ra != rb:
+                    parent[ra] = rb
+            else:
+                edge_owner[k] = int(i)
+    comps = {}
+    for i in patch_idx:
+        comps.setdefault(find(int(i)), []).append(int(i))
+    n_flipped = 0
+    for idxs in comps.values():
+        idxs = np.array(idxs)
+        if _hits(T[idxs][:, ::-1]) < _hits(T[idxs]):
+            T[idxs] = T[idxs][:, ::-1]
+            n_flipped += 1
+    # Thin slit holes get filled with zero-area "fin" triangles, and some patches
+    # touch non-manifold edges. Subdividing those only makes degenerate/non-manifold
+    # geometry that cleanup then deletes (leaving cracks), so leave such patches as
+    # the hole filler made them and smooth only the well-formed ones.
+    e_all = np.sort(np.concatenate([T[:, [0, 1]], T[:, [1, 2]], T[:, [2, 0]]]), axis=1)
+    _, inv_e, cnt_e = np.unique(e_all, axis=0, return_inverse=True, return_counts=True)
+    inv_e = inv_e.reshape(-1)
+    tri_nm = np.zeros(len(T), bool)
+    nT = len(T)
+    bad_e = cnt_e[inv_e] > 2                       # per directed-edge slot [e01 | e12 | e20]
+    tri_nm |= bad_e[:nT] | bad_e[nT:2 * nT] | bad_e[2 * nT:]
+    Pp = V[T]
+    ar = np.linalg.norm(np.cross(Pp[:, 1] - Pp[:, 0], Pp[:, 2] - Pp[:, 0]), axis=1)
+    Lmax = np.max(np.stack([np.linalg.norm(Pp[:, 1] - Pp[:, 0], axis=1),
+                            np.linalg.norm(Pp[:, 2] - Pp[:, 1], axis=1),
+                            np.linalg.norm(Pp[:, 0] - Pp[:, 2], axis=1)]), axis=0)
+    tri_deg = ar < 1e-5 * Lmax ** 2
+    skip_idx, good_idx = [], []
+    def _thin(idxs):
+        """Slit-like patch (long and narrow) or too small to fair sensibly."""
+        if len(idxs) < 12:
+            return True
+        pts = V[np.unique(T[idxs])]
+        sv = np.linalg.svd(pts - pts.mean(0), compute_uv=False)
+        return sv[0] <= 0 or sv[1] / sv[0] < 0.25
+    for idxs in comps.values():
+        idxs = np.array(idxs)
+        bad = tri_deg[idxs].any() or tri_nm[idxs].any() or (rounds > 0 and _thin(idxs))
+        (skip_idx if bad else good_idx).append(idxs)
+    skip_idx = np.concatenate(skip_idx) if skip_idx else np.zeros(0, np.int64)
+    good_idx = np.concatenate(good_idx) if good_idx else np.zeros(0, np.int64)
+    T = np.vstack([T[:n_patch], T[skip_idx], T[good_idx]])
+    n_patch = n_patch + len(skip_idx)
+    print(f"hole patches:        {len(comps)} patch(es), {n_flipped} re-wound to match the surface; "
+          f"{len(skip_idx)} tris in degenerate/non-manifold/thin patches left un-smoothed")
+    if rounds <= 0 or len(good_idx) == 0:
+        # winding fix only (no subdivision / fairing)
+        out = o3d.geometry.TriangleMesh(o3d.utility.Vector3dVector(V), o3d.utility.Vector3iVector(T))
+        if C is not None:
+            out.vertex_colors = o3d.utility.Vector3dVector(C)
+        return out
+    for _ in range(rounds):
+        V, T, C, n_patch = _refine_patch_triangles(V, T, C, n_patch)
+    used_by_old = np.zeros(len(V), bool)
+    used_by_old[np.unique(T[:n_patch])] = True
+    free = np.setdiff1d(np.unique(T[n_patch:]), np.where(used_by_old)[0])
+    if len(free):
+        V = _fair_free_vertices(V, T, free)
+    out = o3d.geometry.TriangleMesh(o3d.utility.Vector3dVector(V), o3d.utility.Vector3iVector(T))
+    if C is not None:
+        out.vertex_colors = o3d.utility.Vector3dVector(C)
+    print(f"smooth hole fill:    {len(free)} interior vertices faired over {rounds} subdivision round(s)")
+    return out
 
 
 def fill_mesh_holes(
@@ -1760,6 +2045,11 @@ def main() -> int:
             mesh, fill_passes_run = fill_mesh_holes(
                 mesh, hole_size, max_passes=max(1, int(args.fill_holes_passes))
             )
+            # Always re-wind hole patches to match the surface (Open3D's filler leaves many
+            # of them inverted, which shows as dark/odd-shaded panels); optionally also smooth.
+            mesh = smooth_filled_patches(
+                mesh, tris_before,
+                int(args.fill_holes_smooth_rounds) if args.fill_holes_smooth else 0)
             mesh = cleanup_mesh_topology(mesh)
             print(f"hole fill max radius: {hole_size:.6f}")
             print(f"hole fill passes:    {fill_passes_run}/{max(1, int(args.fill_holes_passes))}")

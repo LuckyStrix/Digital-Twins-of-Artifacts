@@ -180,6 +180,23 @@ full detail on any field.
 - **Threads / Cache** (0 = auto) — per-stage CPU thread counts and PatchMatch/
   fusion GPU cache sizes in GB; raise the caches if you have GPU memory to
   spare and are fusing large scenes, lower them if COLMAP runs out of VRAM.
+- **Camera intrinsics** — **Share between sides** (default on): side 1's
+  refined calibration (focal length + lens distortion, per camera folder) is
+  saved to `<output>/camera_intrinsics.json`, and side 2 reuses it **fixed**
+  (COLMAP's mapper is told not to refine focal length, distortion or principal
+  point) instead of re-estimating its own. Independently estimated calibrations
+  of the same lens differ by about 1% in focal length and a few % in distortion
+  from side to side, which appears as the two surfaces not quite agreeing.
+  Cameras are matched by folder name (`cam1` ↔ `cam1`); a camera missing from
+  the file, or with different image dimensions, is estimated as usual (with a
+  warning). Untick if the sides used different lenses. **Camera model** picks
+  COLMAP's ImageReader model (default: COLMAP's own, currently SIMPLE_RADIAL).
+  **Intrinsics file** optionally uses a `camera_intrinsics.json` from elsewhere
+  (e.g. a separate calibration) for both sides, fixed. CLI: `--intrinsics-out`,
+  `--intrinsics-in`, and `--share-intrinsics 1` for dual `--images-secondary`
+  runs (which then run primary-then-secondary instead of in parallel). File
+  format: `{"cameras": {"cam1": {"model": "SIMPLE_RADIAL", "width": 4032,
+  "height": 3024, "params": [f, cx, cy, k]}}}`.
 - **Secondary camera** — how side 2's reconstruction is re-posed relative to
   side 1 before alignment: **Rotate degrees/axis** plus **Extra rotate X/Y/Z**
   and **Translate X/Y/Z** for fine adjustment, and **Align mode**
@@ -231,6 +248,13 @@ Mirrors `src/reconstruct_mesh.py`'s CLI options (`python3 src/reconstruct_mesh.p
   caps the max hole radius filled, as a fraction of the cloud's bounding-box
   diagonal. **Fill hole passes** repeats the fill (closing one loop can free up
   a neighbor) until a pass closes nothing new, up to this cap.
+- **Smooth the filled patches** (checkbox, default off; `--fill-holes-smooth`
+  on the CLI) — hole patches are now **always re-wound** to match the surrounding
+  surface, because Open3D's hole filler leaves most patches inverted, which shows
+  as dark or oddly shaded flat panels. This option additionally subdivides each
+  well-formed patch and fairs it into a smooth membrane (slit-like, degenerate
+  or non-manifold patches are left as filled). Experimental: slower, and can
+  leave a few dark slivers on thin patches.
 - **Mesh cleanup** — **Component min ratio/min triangles** drop small
   disconnected mesh pieces (by relative size and by absolute triangle count);
   **Component max count** caps how many components survive; **Smooth
@@ -257,6 +281,35 @@ set on the Inputs tab).
   from the cloud scale automatically.
 - **Sample points** — how many points are sampled from each side's cloud for
   feature matching.
+- **ICP refinement** (checkbox, default off; `--refine` on the CLI,
+  off by default there) — after the pose is chosen, polishes it with a
+  coarse-to-fine point-to-plane ICP on **dense** clouds. **Stage dists** are the
+  correspondence distances in voxels, one per stage (default `3,1,0.5,0.25`);
+  **Iters / stage** caps each stage (a stage stops early once converged);
+  **Dense points** is the per-side sample used here, separate from **Sample
+  points**; **Tolerance** is the relative convergence threshold; **Seam band**
+  (>0) restricts each stage to points within band × distance of the other side;
+  **Robust σ** (>0) uses a Tukey loss in voxels. Every run writes
+  `aligned_cloud/icp_report.json`, and **Show ICP details…** plots it: before/
+  after fitness and residuals, per-stage RMSE convergence, and a residual
+  histogram. If RMSE plateaus while the seam still looks doubled, the leftover
+  error is non-rigid and more ICP won't fix it. CLI: `python3 alignment/run.py
+  A.ply B.ply -o out.ply --refine [--refine-thresholds ... --report ...]`.
+- **Seam resolution** (checkbox, default **on** in the GUI; `--resolve-seam` on the CLI) —
+  where both sides cover a surface but appear as separate sheets, drops the
+  points of the less confident side. Confidence per point is COLMAP's view count
+  (from each side's `dense/fused_component_00.ply.vis`) times how head-on the
+  views were (camera poses from `dense/component_00/sparse/images.bin`). Points
+  are only dropped, never moved, and only where the other side has >= **Min.
+  other pts** nearby. **Mode** `point` drops any conflicting point below the
+  other side's local mean confidence (stronger); `patch` compares whole
+  competing sheets (gentler). Defaults: mode `point`, conflict gap 0.3 vox,
+  confidence floor 0.35 (applied only to the less confident side of each patch,
+  so coverage is kept), window 10, min other points 20, 3 passes. Density trim
+  0.003 with the hole-reduction preset pairs well with it; higher trims leave
+  holes where points were dropped. Outputs `merged_fpfh_seam_audit.ply` (dropped points black/orange) and
+  `merged_fpfh_seam_report.json`. Needs point-cloud inputs with the `.vis`
+  files present; otherwise it is skipped with a message.
 - **PLY overrides** — point the alignment step at specific PLY files instead of
   the pipeline's own Stage 2 outputs, for re-running alignment in isolation
   (e.g. after manually editing a cloud). Leave blank to use the normal

@@ -1,0 +1,62 @@
+Screen { layout: vertical; }
+#body { height: 1fr; }
+
+/* ── sidebar ─────────────────────────────────────────────────────────────── */
+#side { width: 42; padding: 0 1; border-right: vkey $panel-lighten-1; }
+#proj { height: auto; padding: 0 0 1 0; }
+#proj-title { color: $secondary; text-style: bold; }
+#proj-path, #detected { color: $text-muted; }
+.stage { height: auto; border: round $panel-lighten-2; padding: 0 1;
+         border-title-color: $text-muted; }
+.stage.running { border: round $primary; border-title-color: $primary;
+                 border-title-style: bold; }
+.stage.done    { border: round $success; border-title-color: $success; }
+.stage.failed  { border: round $error;   border-title-color: $error; }
+.stage ProgressBar { width: 100%; }
+.stage Bar { width: 1fr; }
+.stage.done Bar > .bar--complete, .stage.done Bar > .bar--bar { color: $success; }
+.stage.failed Bar > .bar--complete, .stage.failed Bar > .bar--bar { color: $error; }
+.detail { color: $text-muted; }
+.stage-btns { height: 1; }
+.stage-btns Button { width: 1fr; min-width: 0; margin-right: 1; }
+.stage-btns Button:last-of-type { margin-right: 0; }
+#actions { height: auto; margin-top: 1; }
+#actions Button { width: 1fr; min-width: 0; margin-right: 1; }
+#actions Button:last-of-type { margin-right: 0; }
+
+/* ── settings ────────────────────────────────────────────────────────────── */
+#main { width: 1fr; }
+#form { height: 1fr; }
+#tabs { height: 1fr; }
+TabPane { padding: 0 1; }
+.section { color: $secondary; text-style: bold; margin-top: 1;
+           border-bottom: solid $panel-lighten-1; width: 100%; }
+.row { height: 1; }
+.lbl { width: 24; color: $text-muted; }
+.lbl-above { color: $text-muted; margin-top: 0; }
+.hint { color: $text-disabled; margin-left: 2; width: auto; }
+.help { color: $text-disabled; margin-left: 24; padding-right: 2; }
+.status-line { color: $secondary; margin-left: 24; }
+.num { width: 14; }
+.pick { width: 28; }
+.text { width: 28; }
+.path { width: 1fr; }
+.browse { width: 5; min-width: 5; margin-left: 1; }
+.chk { margin-left: 23; height: 1; }
+.textarea { height: 5; margin-left: 24; margin-right: 2; }
+Slider { width: 36; }
+Collapsible.about { margin-left: 23; padding: 0; border: none; background: transparent; }
+Collapsible.about CollapsibleTitle { color: $text-disabled; padding: 0 1; }
+Collapsible.about Contents { padding: 0 0 0 3; }
+.help-body { color: $text-disabled; padding-right: 2; }
+Input.-invalid { border: none; background: $error 25%; }
+
+/* ── log ─────────────────────────────────────────────────────────────────── */
+#log-handle { height: 1; background: $panel; color: $text-muted; padding: 0 1; }
+#log-handle:hover, #log-handle.-dragging { background: $primary 40%; color: $text; }
+#log-wrap { height: 12; }
+#log { background: $surface; padding: 0 1; scrollbar-size-vertical: 1; }
+
+/* log maximised: hide the settings */
+Screen.-log-max #form { display: none; }
+Screen.-log-max #log-wrap { height: 1fr; }

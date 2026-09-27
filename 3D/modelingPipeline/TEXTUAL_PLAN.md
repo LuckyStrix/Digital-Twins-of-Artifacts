@@ -240,16 +240,26 @@ Give seam 99 or reorder.
    - Tests: `python3 -m pytest tests` from this folder.
 2. **Textual shell** — `tui/` layout, themes, generated settings forms,
    stage cards, log pane (resizable), footer bindings, save/load defaults,
-   input-change behaviour, reconcile.
+   input-change behaviour, reconcile. **Done.** UI prefs (log height,
+   theme, recent folders, "Windows dialog first") live in the gitignored
+   `.tui_state.json`, not in `app_defaults.json`. Deliberate differences
+   from Tk: input-folder changes are debounced and ignored until the path
+   is an existing folder (Tk reacted per keystroke, so typing a path set
+   the output folder from its first character); Windows paths typed into
+   path fields are converted when the field is left.
 3. **Wire the runner** — run stage / run all / stop (process-group kill),
-   live progress + log.
+   live progress + log. **Done.** Runner events go through a queue drained
+   every 50 ms. Quitting while a stage runs asks first.
 4. **Pickers and extras** — folder/file pickers (locations, path box,
    recents, Windows dialog), view actions, open session folder, photo
-   gallery, ICP details.
+   gallery, ICP details. **Done.** Under WSL the picker opens the Windows
+   dialog first and falls back to the in-terminal browser on cancel. The
+   photo gallery opens the folder (no inline thumbnails). ICP plots use
+   block-character sparklines/histogram (no textual-plotext).
 5. **Cut over** — `app.py` becomes the Textual entry point; delete Tk code
    and `textual_mockup.py`; headless UI tests with `App.run_test()` (drive a
    fake runner through all four stages, assert card states, log contents,
-   saved defaults).
+   saved defaults). **Done.**
 6. **Docs/setup** — add `textual` (and `textual-plotext` if used) to
    `requirements.txt`; update `README.md` (L4, L62–79, L321 describe the Tk
    GUI), add "Running on Linux / over SSH"; `SETUP.md` L116–122: WSLg is no

@@ -384,3 +384,14 @@ def test_quit_while_running_asks_first(tmp_path, two_side_scan, fake_runner):
         await pilot.pause(0.3)
         assert app.runner._stop_req
     run(make_app(tmp_path, runner_factory=fake_runner), body)
+
+
+def test_entry_point_is_the_textual_app():
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("recon_app_entry", SCRIPT_DIR / "app.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)          # __name__ != "__main__": doesn't start the UI
+    from tui.app import main
+    assert mod.main is main
+    assert "tkinter" not in (SCRIPT_DIR / "app.py").read_text()

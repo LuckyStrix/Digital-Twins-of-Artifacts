@@ -14,6 +14,7 @@ them through verbatim.
 from __future__ import annotations
 
 import json
+import math
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -414,7 +415,10 @@ def coerce(setting: Setting, value: Any) -> Any:
     if t == FLOAT:
         if isinstance(value, bool) or not isinstance(value, (int, float, str)):
             raise ValueError(f"{setting.key}: not a number: {value!r}")
-        return float(value)
+        f = float(value)
+        if not math.isfinite(f):
+            raise ValueError(f"{setting.key}: not a finite number: {value!r}")
+        return f
     if t == CHOICE:
         if not isinstance(value, str):
             raise ValueError(f"{setting.key}: not a string: {value!r}")

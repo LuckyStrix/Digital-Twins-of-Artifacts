@@ -45,9 +45,23 @@ def has_display() -> bool:
 _WIN_DRIVE_RE = re.compile(r"^[A-Za-z]:([\\/]|$)")
 
 
-def looks_like_windows_path(p: str) -> bool:
-    """``D:\\scans``, ``D:/scans`` or ``\\\\server\\share``."""
+def unquote(p: str) -> str:
+    """Strip whitespace and one pair of matching surrounding quotes, as added
+    by Explorer's "Copy as path" or a terminal drag-and-drop."""
     p = p.strip()
+    if len(p) >= 2 and p[0] == p[-1] and p[0] in "\"'":
+        p = p[1:-1].strip()
+    return p
+
+
+def needs_normalising(p: str) -> bool:
+    """A typed path that to_posix_path() would change (quoted or Windows)."""
+    return p.strip() != unquote(p) or looks_like_windows_path(p)
+
+
+def looks_like_windows_path(p: str) -> bool:
+    """``D:\\scans``, ``D:/scans`` or ``\\\\server\\share`` (optionally quoted)."""
+    p = unquote(p)
     return bool(_WIN_DRIVE_RE.match(p)) or p.startswith("\\\\")
 
 
@@ -66,10 +80,11 @@ def to_windows_path(p: Path) -> str:
 def to_posix_path(p: str) -> str:
     """Convert a Windows path typed or pasted by the user to a WSL path.
 
-    Returns ``p`` unchanged when it isn't a Windows path or can't be
-    converted (not under WSL, wslpath failed).
+    Surrounding quotes are always removed. Otherwise returns ``p`` unchanged
+    when it isn't a Windows path or can't be converted (not under WSL,
+    wslpath failed).
     """
-    p = p.strip()
+    p = unquote(p)
     if not looks_like_windows_path(p) or not running_under_wsl():
         return p
     try:

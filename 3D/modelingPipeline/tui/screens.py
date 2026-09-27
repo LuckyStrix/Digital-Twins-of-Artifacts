@@ -18,6 +18,7 @@ from textual.widgets import (
 from textual.widgets.option_list import Option
 
 from pipeline import platform as plat
+from pipeline.paths import is_dir, is_file
 
 
 class ConfirmScreen(ModalScreen[bool]):
@@ -77,9 +78,9 @@ def start_dir(initial: str, recents: list[str]) -> Path:
         if not cand:
             continue
         p = Path(cand)
-        if p.is_file():
+        if is_file(p):
             p = p.parent
-        if p.is_dir():
+        if is_dir(p):
             return p
     return Path.home()
 
@@ -175,7 +176,7 @@ class PathPicker(ModalScreen["str | None"]):
     @on(OptionList.OptionSelected, "#locations")
     def _location(self, event: OptionList.OptionSelected) -> None:
         p = self._locations[int(event.option.id.split("-")[1])]
-        if p.is_dir():
+        if is_dir(p):
             self.go(p)
         else:
             self.notify(f"Not available: {p}", severity="warning")
@@ -193,21 +194,24 @@ class PathPicker(ModalScreen["str | None"]):
     @on(Input.Submitted, "#picker-path")
     def _path_submitted(self) -> None:
         p = self.typed_path()
-        if p.is_dir() and self.mode == "file":
+        if is_dir(p) and self.mode == "file":
             self.go(p)
         else:
             self.accept()
 
     def typed_path(self) -> Path:
-        raw = self.query_one("#picker-path", Input).value.strip()
-        return Path(plat.to_posix_path(raw)).expanduser()
+        p = Path(plat.to_posix_path(self.query_one("#picker-path", Input).value))
+        try:
+            return p.expanduser()
+        except RuntimeError:          # ~unknownuser
+            return p
 
     def accept(self) -> None:
         p = self.typed_path()
-        if self.mode == "dir" and not p.is_dir():
+        if self.mode == "dir" and not is_dir(p):
             self.notify(f"Not a folder: {p}", severity="warning")
             return
-        if self.mode == "file" and not p.is_file():
+        if self.mode == "file" and not is_file(p):
             self.notify(f"Not a file: {p}", severity="warning")
             return
         self.dismiss(str(p))
@@ -222,6 +226,56 @@ class PathPicker(ModalScreen["str | None"]):
 
 
 # ── ICP details ───────────────────────────────────────────────────────────────
+
+_STAGE_KEYS = ("stage", "mult", "n_src", "n_tgt", "iters", "move_translation", "move_rotation_deg")
+_METRIC_KEYS = ("fitness", "rmse", "median_vox", "p95", "mean")
+
+
+def _is_num(v) -> bool:
+    return isinstance(v, (int, float)) and not isinstance(v, bool)
+
+
+def icp_report_problem(d) -> str | None:
+    """Why `d` can't be shown as an icp_report.json, or None if it can.
+
+    The picker accepts any *.json, so check the shape align.refine_icp()
+    writes instead of crashing on some other file."""
+    if not isinstance(d, dict):
+        return "not a JSON object"
+    if "stages" not in d and "before" not in d:
+        return "no 'stages' or 'before' section"
+    if "voxel" in d and not _is_num(d["voxel"]):
+        return "'voxel' is not a number"
+    for sec in ("params", "before", "after"):
+        if sec in d and not isinstance(d[sec], dict):
+            return f"'{sec}' is not an object"
+    for sec in ("before", "after"):
+        for k in _METRIC_KEYS:
+            if k in d.get(sec, {}) and not _is_num(d[sec][k]):
+                return f"'{sec}.{k}' is not a number"
+    stages = d.get("stages", [])
+    if not isinstance(stages, list):
+        return "'stages' is not a list"
+    for i, s in enumerate(stages):
+        if not isinstance(s, dict):
+            return f"stage {i + 1} is not an object"
+        missing = [k for k in _STAGE_KEYS if not _is_num(s.get(k))]
+        if missing:
+            return f"stage {i + 1}: missing/invalid {', '.join(missing)}"
+        tr = s.get("trace", [])
+        if not isinstance(tr, list) or any(
+                not isinstance(t, dict) or not _is_num(t.get("rmse")) for t in tr):
+            return f"stage {i + 1}: bad 'trace'"
+    for sec in ("hist_before", "hist_after"):
+        h = d.get(sec)
+        if h is None:
+            continue
+        if (not isinstance(h, dict) or not isinstance(h.get("counts"), list)
+                or not all(_is_num(c) for c in h["counts"])
+                or ("hi_vox" in h and not _is_num(h["hi_vox"]))):
+            return f"bad '{sec}'"
+    return None
+
 
 _BLOCKS = " ▁▂▃▄▅▆▇█"
 BEFORE_STYLE = "#94a3b8"
@@ -312,7 +366,8 @@ class IcpDetailsScreen(ModalScreen[None]):
                     " = blue. A doubled surface shows as mass away from 0."),
                     classes="help-body")
                 hb, ha = d.get("hist_before"), d.get("hist_after")
-                if hb and ha and hb.get("counts") and ha.get("counts"):
+                if (hb and ha and hb.get("counts") and ha.get("counts")
+                        and len(hb["counts"]) == len(ha["counts"])):
                     yield Static(histogram_text(hb, ha, 10, BEFORE_STYLE, primary), id="icp-hist")
                 else:
                     yield Static(Text("(no histogram in report)", style="dim"), id="icp-hist")

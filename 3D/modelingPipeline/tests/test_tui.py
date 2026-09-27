@@ -52,15 +52,16 @@ def test_loads_saved_defaults(tmp_path):
     run(make_app(tmp_path), body)
 
 
-def test_edits_update_settings_and_invalid_values_are_ignored(tmp_path):
+def test_edits_update_settings(tmp_path):
     async def body(app, pilot):
         inp = app.query_one("#set-erode_px_var", Input)
         inp.value = "15"
         await pilot.pause()
         assert app.settings["erode_px_var"] == 15
-        inp.value = "500"            # above max 100
+        inp.value = "500"            # above the usual 0-100: accepted, as in Tk
         await pilot.pause()
-        assert app.settings["erode_px_var"] == 15
+        assert app.settings["erode_px_var"] == 500
+        assert app.form.invalid_fields() == []
         app.query_one("#set-quality_var", Select).value = "low"
         app.query_one("#set-use_gpu_var", Checkbox).value = False
         app.query_one("#set-sift_peak_var", Input).value = "0.01"

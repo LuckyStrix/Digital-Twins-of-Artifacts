@@ -72,7 +72,7 @@ palette with the menu items):
 
 | Key | Action |
 | --- | --- |
-| `r` / `s` | Run all stages / stop the running stage (stops COLMAP and everything else it started) |
+| `r` (or `ctrl+r`) / `s` | Run all stages / stop the running stage (stops COLMAP and everything else it started). `r`, `s` and `q` are ignored while a settings field has focus; `ctrl+r` works anywhere |
 | `o` | Open the session (output) folder in the file manager |
 | `ctrl+s` | Save current settings as default (`app_defaults.json`) |
 | `i` | Show ICP details (the last alignment's `icp_report.json`) |
@@ -89,6 +89,12 @@ converted when you leave the field.
 
 The log height, theme, recent folders and that choice are kept in
 `.tui_state.json` (not committed).
+
+A run uses the settings as they were when it started; edits made while it
+runs apply to the next run. Run and Save defaults refuse while a numeric
+field holds something that isn't a number (it's shown in red). Quitting,
+closing the terminal or losing the SSH connection stops any running stage,
+including COLMAP.
 
 ### Running on Linux / over SSH
 
@@ -199,8 +205,9 @@ generated standalone, without the GUI: `python3 -m src.artifact_info
 **Experimental: COLMAP-side masking** — `process_photos.py --save-masks`
 writes each photo's final binary mask as its own PNG (default `--mask-dir
 <output>_masks`). If Stage 2 finds a matching `<processed-dir>_masks` folder
-it passes it to `run.sh -m`/`-n` automatically, which feeds
-`run_colmap_mvs.py --mask-path`/`--mask-path-secondary` so `feature_extractor`
+it passes it to `run.sh -m` automatically (per side: `-m <processed-dir>_masks/<side>`,
+since each side runs through `run.sh` on its own), which feeds
+`run_colmap_mvs.py --mask-path` so `feature_extractor`
 and `stereo_fusion` ignore background pixels directly, instead of COLMAP
 guessing from RGB alone. No GUI toggle for this — it's CLI/env-only
 (`--save-masks`) and off by default, because it was found to be able to

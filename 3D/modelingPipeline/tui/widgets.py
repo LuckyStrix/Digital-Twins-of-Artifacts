@@ -355,10 +355,11 @@ class SettingsForm(Vertical):
             elif st.type in (S.INT, S.FLOAT):
                 w = Input(fmt_value(st, value), compact=True, id=wid, classes="num",
                           type="integer" if st.type == S.INT else "number",
-                          validators=[(Integer if st.type == S.INT else Number)(
-                              minimum=st.min, maximum=st.max)],
+                          validators=[Integer() if st.type == S.INT else Number()],
                           validate_on=["changed", "blur", "submitted"],
                           select_on_focus=False)
+                if st.min is not None and st.max is not None:
+                    w.tooltip = f"Usual range {st.min:g}–{st.max:g}"
             elif st.type == S.CHOICE and st.editable:
                 w = Input(str(value), compact=True, id=wid, classes="pick",
                           suggester=SuggestFromList(list(st.choices), case_sensitive=False),
@@ -412,6 +413,25 @@ class SettingsForm(Vertical):
         if notify:
             self.post_message(self.SettingChanged(key, value))
 
+    def invalid_fields(self) -> list[str]:
+        """Labels of fields whose text isn't a valid value for the setting
+        (numbers that don't parse, malformed numeric-string fields)."""
+        bad = []
+        for key, w in self.fields.items():
+            if not isinstance(w, Input):
+                continue
+            st = S.BY_KEY[key]
+            if st.type in (S.INT, S.FLOAT):
+                try:
+                    S.coerce(st, w.value)
+                except (ValueError, TypeError):
+                    bad.append(st.label)
+            elif st.validate:
+                v = _str_validator(st.validate)
+                if v is not None and not v.validate(w.value).is_valid:
+                    bad.append(st.label)
+        return bad
+
     def refresh_all(self) -> None:
         for key in self.fields:
             self.set_value(key, self.settings[key])
@@ -427,9 +447,10 @@ class SettingsForm(Vertical):
         try:
             value = S.coerce(st, raw)
         except (ValueError, TypeError):
-            return            # keep the last valid value; the field shows as invalid
-        if st.type in (S.INT, S.FLOAT) and (
-                (st.min is not None and value < st.min) or (st.max is not None and value > st.max)):
+            # Not a number (yet): the field shows as invalid, and Run / Save
+            # refuse until it's fixed (see invalid_fields). Out-of-range
+            # numbers are accepted, as in the Tk GUI, whose spinbox ranges
+            # only limited the arrow buttons.
             return
         if self.settings.get(key) == value and type(self.settings.get(key)) is type(value):
             return            # programmatic update echoing back

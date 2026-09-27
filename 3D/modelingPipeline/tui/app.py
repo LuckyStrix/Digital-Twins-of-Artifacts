@@ -3,8 +3,11 @@ form, the stage cards, the log and the pipeline runner."""
 
 from __future__ import annotations
 
+import atexit
 import json
+import os
 import queue
+import signal
 from pathlib import Path
 from typing import Callable
 
@@ -19,10 +22,12 @@ from pipeline import DEFAULTS_PATH
 from pipeline import platform as plat
 from pipeline import settings as S
 from pipeline.options import STAGE_NAMES
-from pipeline.paths import SessionPaths, default_output_for, describe_sides, detect_sides
+from pipeline.paths import (
+    SessionPaths, default_output_for, describe_sides, detect_sides, is_dir, is_file,
+)
 from pipeline.runner import PipelineRunner
 
-from .screens import ConfirmScreen, IcpDetailsScreen, PathPicker
+from .screens import ConfirmScreen, IcpDetailsScreen, PathPicker, icp_report_problem
 from .uistate import UI_STATE_PATH, UiState
 from .widgets import LOG_MIN_HEIGHT, LogHandle, LogPane, SettingsForm, StageCard
 
@@ -62,9 +67,15 @@ class ReconApp(App):
     SUB_TITLE = "Digital Twins of Artifacts"
     CSS_PATH = "app.tcss"
 
+    # Bare-letter keys that act on the pipeline ("key_" actions) are ignored
+    # while focus is in the settings form, where a Checkbox/Select/Slider
+    # would otherwise let a stray "r" start a full run. ctrl+r always works.
+    FORM_GUARDED = {"key_run_all", "key_stop", "key_quit"}
+
     BINDINGS = [
-        Binding("r", "run_all", "Run all"),
-        Binding("s", "stop", "Stop"),
+        Binding("r", "key_run_all", "Run all"),
+        Binding("ctrl+r", "run_all", "Run all", show=False),
+        Binding("s", "key_stop", "Stop"),
         Binding("o", "open_session", "Open folder"),
         Binding("ctrl+s", "save_defaults", "Save defaults"),
         Binding("l", "toggle_log", "Log ↕"),
@@ -72,8 +83,26 @@ class ReconApp(App):
         Binding("ctrl+down", "log_resize(-2)", "Log −", show=False),
         Binding("i", "icp_details", "ICP details", show=False),
         Binding("t", "cycle_theme", "Theme"),
-        Binding("q", "quit", "Quit"),
+        Binding("q", "key_quit", "Quit"),
     ]
+
+    def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
+        if action in self.FORM_GUARDED and self._focus_in_form():
+            return None           # shown in the footer, but inactive here
+        return True
+
+    def _focus_in_form(self) -> bool:
+        f = self.focused
+        return f is not None and any(a.id == "form" for a in f.ancestors_with_self)
+
+    async def action_key_run_all(self) -> None:
+        self.action_run_all()
+
+    async def action_key_stop(self) -> None:
+        self.action_stop()
+
+    async def action_key_quit(self) -> None:
+        await self.action_quit()
 
     def __init__(self, settings: S.Settings | None = None,
                  defaults_path: Path = DEFAULTS_PATH,
@@ -99,6 +128,9 @@ class ReconApp(App):
         )
         self._run_active = False
         self._run_results: dict[int, str] = {}
+        # Output folder the app filled in itself: it follows later input
+        # changes, whereas one the user typed or picked is left alone.
+        self._auto_output: str | None = None
 
     # ── layout ────────────────────────────────────────────────────────────────
     def compose(self) -> ComposeResult:
@@ -126,6 +158,8 @@ class ReconApp(App):
         self.theme = self.ui.theme if self.ui.theme in self.available_themes else "campbell"
         self.theme_changed_signal.subscribe(self, self._on_theme_changed)
         self._apply_log_height(self.ui.log_height)
+        # #main has no size yet; clamp the saved height once laid out.
+        self.call_after_refresh(self._fit_log)
         self.log_pane = self.query_one(LogPane)
         self.set_interval(1, self._tick)
         self.set_interval(EVENT_POLL, self._drain_events)
@@ -180,14 +214,16 @@ class ReconApp(App):
     def apply_input_change(self) -> None:
         """Input folder changed: default the output folder, detect sides."""
         inp = self.settings.text("input_var")
-        if not inp or plat.looks_like_windows_path(inp):
-            return            # a Windows path is converted when the field is left
+        if not inp or plat.needs_normalising(inp):
+            return            # quoted / Windows paths are converted when the field is left
         p = Path(inp)
-        if not p.is_dir():
+        if not is_dir(p):
             self._update_session_info(f"Folder not found: {inp}")
             return
-        if not self.settings.text("output_var"):
-            self.form.set_value("output_var", default_output_for(inp))
+        out = self.settings.text("output_var")
+        if not out or out == self._auto_output:
+            self._auto_output = default_output_for(inp)
+            self.form.set_value("output_var", self._auto_output)
         s1, s2, msg = describe_sides(detect_sides(p))
         self.form.set_value("side1_var", s1)
         self.form.set_value("side2_var", s2)
@@ -207,8 +243,8 @@ class ReconApp(App):
         st = S.BY_KEY.get(key)
         if st is None or st.type != S.PATH:
             return
-        value = event.input.value.strip()
-        if plat.looks_like_windows_path(value):
+        value = event.input.value
+        if plat.needs_normalising(value):
             conv = plat.to_posix_path(value)
             if conv != value:
                 self.form.set_value(key, conv, notify=True)
@@ -224,6 +260,13 @@ class ReconApp(App):
             h = min(h, self._max_log_height())
         self.query_one("#log-wrap").styles.height = h
         return h
+
+    def _fit_log(self) -> None:
+        if not self.screen.has_class("-log-max"):
+            self._apply_log_height(self.ui.log_height)
+
+    def on_resize(self) -> None:
+        self.call_after_refresh(self._fit_log)
 
     @on(LogHandle.Resized)
     def _log_dragged(self, event: LogHandle.Resized) -> None:
@@ -258,7 +301,16 @@ class ReconApp(App):
         self.ui.save(self.ui_state_path)
 
     # ── menu actions ──────────────────────────────────────────────────────────
+    def _refuse_if_invalid(self, what: str) -> bool:
+        bad = self.form.invalid_fields()
+        if bad:
+            self.notify(f"Fix these fields before you {what}: " + ", ".join(bad),
+                        title="Invalid settings", severity="error", timeout=8)
+        return bool(bad)
+
     def action_save_defaults(self) -> None:
+        if self._refuse_if_invalid("save"):
+            return
         try:
             self.settings.save(self.defaults_path)
         except OSError as e:
@@ -317,7 +369,7 @@ class ReconApp(App):
 
     def view_stage(self, idx: int) -> None:
         path = self.paths.expected_output_for_stage(idx)
-        if not path.exists():
+        if not (is_dir(path) or is_file(path)):
             self.notify(f"Not found:\n{path}", title="File not found", severity="warning")
             return
         if idx == 0:
@@ -336,23 +388,24 @@ class ReconApp(App):
     def spawn_viewer(self, path: Path) -> None:
         try:
             proc = plat.launch_viewer(path)
-        except (FileNotFoundError, OSError) as e:
+        except (FileNotFoundError, OSError):
             cmd, _ = plat.resolve_viewer_launch(path)
-            self._events.put(("log", f"[viewer] interpreter not found: {cmd[0]!r}", "info"))
-            self.call_from_thread(self.notify, f"Could not launch viewer: {e}",
+            self.runner.log(f"[viewer] interpreter not found: {cmd[0]!r}")
+            self.call_from_thread(self.notify,
+                                  f"Could not launch viewer: interpreter not found:\n{cmd[0]}",
                                   title="Viewer failed", severity="error", timeout=10)
             return
         failed, out = plat.wait_viewer(proc)
         if failed and out.strip():
-            self._events.put(("log", f"[viewer] {out.strip()}", "info"))
+            self.runner.log(f"[viewer] {out.strip()}")
         if failed:
             self.call_from_thread(self.notify,
-                                  f"Viewer could not open a window:\n\n{out.strip()[-600:]}",
+                                  f"Viewer could not open a window:\n\n{out.strip()[-1000:]}",
                                   title="Viewer failed", severity="error", timeout=15)
 
     def action_icp_details(self) -> None:
         rp = self.paths.icp_report_path()
-        if rp.exists():
+        if is_file(rp):
             self.show_icp_report(rp)
             return
 
@@ -362,7 +415,7 @@ class ReconApp(App):
 
         self.push_screen(PathPicker(
             "file", "No report for this session - pick an icp_report.json",
-            initial=str(rp.parent if rp.parent.is_dir() else ""), pattern="*.json",
+            initial=str(rp.parent if is_dir(rp.parent) else ""), pattern="*.json",
             recents=self.ui.recent_dirs, auto_native=self.ui.native_dialog), chosen)
 
     def show_icp_report(self, rp: Path) -> None:
@@ -370,6 +423,11 @@ class ReconApp(App):
             data = json.loads(rp.read_text())
         except (OSError, ValueError) as e:
             self.notify(f"Could not read {rp}:\n{e}", title="ICP details", severity="error")
+            return
+        problem = icp_report_problem(data)
+        if problem:
+            self.notify(f"{rp} is not an ICP report ({problem}).", title="ICP details",
+                        severity="error", timeout=8)
             return
         self.push_screen(IcpDetailsScreen(data, rp))
 
@@ -381,12 +439,16 @@ class ReconApp(App):
         self.query_one("#stop", Button).disabled = False
 
     def action_run_all(self) -> None:
+        if self._refuse_if_invalid("run"):
+            return
         if not self.runner.run_all():
             self.notify("Pipeline is already running.", title="Busy", severity="warning")
             return
         self._started()
 
     def run_stage(self, idx: int) -> None:
+        if self._refuse_if_invalid("run"):
+            return
         if not self.runner.run_stage(idx):
             self.notify("Another stage is already running.", title="Busy", severity="warning")
             return
@@ -401,11 +463,16 @@ class ReconApp(App):
         self.run_stage(event.idx)
 
     def _drain_events(self) -> None:
+        # Read this first: if the worker is already gone, everything it will
+        # ever queue is in the queue now, so draining it all means finished.
+        was_running = self.runner.is_running
+        drained = False
         batch = 0
         while batch < 2000:
             try:
                 ev = self._events.get_nowait()
             except queue.Empty:
+                drained = True
                 break
             batch += 1
             kind = ev[0]
@@ -419,7 +486,7 @@ class ReconApp(App):
             elif kind == "progress":
                 _, idx, pct, text = ev
                 self.cards[idx].set_progress(pct, text)
-        if self._run_active and not self.runner.is_running and batch == 0:
+        if self._run_active and not was_running and drained:
             self._finished()
 
     def _finished(self) -> None:
@@ -441,7 +508,9 @@ class ReconApp(App):
 
         def answer(yes: bool | None) -> None:
             if yes:
-                self.runner.stop()
+                # Wait for the process group to die (SIGKILL after the grace
+                # period): stop()'s own SIGKILL timer wouldn't outlive the app.
+                self.runner.shutdown()
                 self.exit()
 
         self.push_screen(ConfirmScreen(
@@ -457,7 +526,23 @@ class ReconApp(App):
 
 
 def main() -> None:
-    ReconApp().run()
+    app = ReconApp()
+
+    # Stage processes run in their own session, so closing the terminal
+    # (SIGHUP), an SSH drop or a crash would otherwise leave COLMAP running.
+    def cleanup() -> None:
+        app.runner.shutdown(grace=1.0)
+
+    def on_signal(signum, frame) -> None:
+        cleanup()
+        os._exit(128 + signum)
+
+    atexit.register(cleanup)
+    for name in ("SIGHUP", "SIGTERM"):
+        sig = getattr(signal, name, None)
+        if sig is not None:
+            signal.signal(sig, on_signal)
+    app.run()
 
 
 if __name__ == "__main__":

@@ -8,17 +8,36 @@ from typing import Mapping
 from .options import IMAGE_EXTS
 
 
+def is_dir(p: Path) -> bool:
+    """Path.is_dir() that treats unreadable parents (PermissionError) as False."""
+    try:
+        return Path(p).is_dir()
+    except OSError:
+        return False
+
+
+def is_file(p: Path) -> bool:
+    try:
+        return Path(p).is_file()
+    except OSError:
+        return False
+
+
 def has_images(d: Path) -> bool:
-    return any(f.suffix.lower() in IMAGE_EXTS for f in d.rglob("*") if f.is_file())
+    try:
+        return any(f.suffix.lower() in IMAGE_EXTS for f in d.rglob("*") if f.is_file())
+    except OSError:
+        return False
 
 
 def detect_sides(input_dir: Path) -> list[str]:
-    if not input_dir.is_dir():
+    if not is_dir(input_dir):
         return []
-    return sorted(
-        sub.name for sub in input_dir.iterdir()
-        if sub.is_dir() and has_images(sub)
-    )
+    try:
+        subs = list(input_dir.iterdir())
+    except OSError:
+        return []
+    return sorted(sub.name for sub in subs if is_dir(sub) and has_images(sub))
 
 
 def default_output_for(input_dir: str) -> str:

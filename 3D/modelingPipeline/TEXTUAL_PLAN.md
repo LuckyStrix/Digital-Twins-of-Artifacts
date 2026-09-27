@@ -247,6 +247,13 @@ Give seam 99 or reorder.
    is an existing folder (Tk reacted per keystroke, so typing a path set
    the output folder from its first character); Windows paths typed into
    path fields are converted when the field is left.
+   After review: an output folder the app filled in follows later input
+   changes (one the user set is kept); quoted pasted paths are unquoted;
+   out-of-range numbers are accepted as in Tk (spinbox ranges only limited
+   the arrows) but unparseable ones block Run/Save; runs use a snapshot of
+   the settings taken at start; bare `r`/`s`/`q` are ignored while a
+   settings field has focus (`ctrl+r` runs from anywhere); closing the
+   terminal (SIGHUP/SIGTERM) or quitting kills running stage processes.
 3. **Wire the runner** — run stage / run all / stop (process-group kill),
    live progress + log. **Done.** Runner events go through a queue drained
    every 50 ms. Quitting while a stage runs asks first.

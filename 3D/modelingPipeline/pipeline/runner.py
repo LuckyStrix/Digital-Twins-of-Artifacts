@@ -13,6 +13,7 @@ thread, e.g. Textual's ``app.call_from_thread``):
 
 from __future__ import annotations
 
+import copy
 import os
 import shutil
 import signal
@@ -231,6 +232,10 @@ class PipelineRunner:
                  on_log: LogFn | None = None,
                  on_stage_state: StateFn | None = None,
                  on_progress: ProgressFn | None = None):
+        # Runs started with run_stage()/run_all() work on a snapshot taken at
+        # start, so edits made in the UI mid-run can't move the session
+        # folder or change flags under stages that are still to come.
+        self._live_settings = settings
         self.settings = settings
         self.paths = SessionPaths(settings)
         self._on_log = on_log or (lambda text, kind: None)
@@ -304,6 +309,8 @@ class PipelineRunner:
             if self.is_running:
                 return False
             self._stop_req = False
+            self.settings = copy.copy(self._live_settings)
+            self.paths = SessionPaths(self.settings)
             self._thread = threading.Thread(target=target, daemon=True)
             self._thread.start()
         return True
@@ -312,6 +319,30 @@ class PipelineRunner:
         t = self._thread
         if t is not None:
             t.join(timeout)
+
+    def shutdown(self, grace: float = STOP_GRACE_SECONDS) -> None:
+        """Stop the running process group and wait for it (SIGKILL after
+        `grace` seconds). For app exit: stop()'s SIGKILL timer is a daemon
+        thread and would die with the interpreter."""
+        self._stop_req = True
+        proc = self._proc
+        if proc is None:
+            return
+        self._terminate(proc)
+        try:
+            proc.wait(timeout=grace)
+        except subprocess.TimeoutExpired:
+            pass
+        if _POSIX:
+            try:
+                os.killpg(proc.pid, signal.SIGKILL)   # pgid == pid (own session)
+            except (ProcessLookupError, OSError):
+                pass
+        else:
+            try:
+                proc.kill()
+            except Exception:
+                pass
 
     @staticmethod
     def _terminate(proc: subprocess.Popen) -> None:
@@ -361,6 +392,8 @@ class PipelineRunner:
             start_new_session=_POSIX,
         )
         self._proc = proc
+        if self._stop_req:          # stop() came in while the process was starting
+            self._terminate(proc)
         try:
             for line in proc.stdout:
                 if self._stop_req:

@@ -68,3 +68,13 @@ ModalScreen { align: center middle; }
 .dialog-body { margin: 1 0; }
 .dialog-btns { height: auto; align-horizontal: right; }
 .dialog-btns Button { margin-left: 1; }
+#picker { width: 90%; height: 85%; }
+#picker-body { height: 1fr; }
+#locations { width: 30; height: 1fr; margin-right: 1; }
+#tree { width: 1fr; height: 1fr; }
+#picker-path { margin: 1 0 0 0; }
+#picker .dialog-btns Checkbox { margin-right: 2; }
+#icp { width: 95%; height: 92%; }
+#icp VerticalScroll { height: 1fr; }
+#icp DataTable { height: auto; max-height: 12; margin: 1 0; }
+#icp-hist, #icp-conv { margin: 1 0; }

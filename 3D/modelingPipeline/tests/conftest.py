@@ -47,6 +47,14 @@ class RecordingRunner(PipelineRunner):
         return [t[11:] for t, k in self.logs if k == "info"]
 
 
+@pytest.fixture(autouse=True)
+def no_native_dialogs(monkeypatch):
+    """Never pop up real Windows pickers from tests run under WSL."""
+    from pipeline import platform as plat
+    monkeypatch.setattr(plat, "native_folder_dialog", lambda *a, **k: None)
+    monkeypatch.setattr(plat, "native_file_dialog", lambda *a, **k: None)
+
+
 @pytest.fixture
 def settings():
     return Settings.defaults()

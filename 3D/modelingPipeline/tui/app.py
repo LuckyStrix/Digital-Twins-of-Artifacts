@@ -3,12 +3,13 @@ form, the stage cards, the log and the pipeline runner."""
 
 from __future__ import annotations
 
+import json
 import queue
 from pathlib import Path
 from typing import Callable
 
-from textual import on
-from textual.app import App, ComposeResult
+from textual import on, work
+from textual.app import App, ComposeResult, SystemCommand
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.theme import Theme
@@ -21,7 +22,7 @@ from pipeline.options import STAGE_NAMES
 from pipeline.paths import SessionPaths, default_output_for, describe_sides, detect_sides
 from pipeline.runner import PipelineRunner
 
-from .screens import ConfirmScreen
+from .screens import ConfirmScreen, IcpDetailsScreen, PathPicker
 from .uistate import UI_STATE_PATH, UiState
 from .widgets import LOG_MIN_HEIGHT, LogHandle, LogPane, SettingsForm, StageCard
 
@@ -47,6 +48,14 @@ EVENT_POLL = 0.05       # seconds between draining runner events into the UI
 
 RunnerFactory = Callable[..., PipelineRunner]
 
+BROWSE_TITLES = {
+    "input_var": "Select input image directory",
+    "output_var": "Select output directory",
+    "intr_file_var": "Camera intrinsics JSON",
+    "align_a_var": "Select PLY file (A, fixed)",
+    "align_b_var": "Select PLY file (B, moving)",
+}
+
 
 class ReconApp(App):
     TITLE = "Tablet Reconstruction"
@@ -61,6 +70,7 @@ class ReconApp(App):
         Binding("l", "toggle_log", "Log ↕"),
         Binding("ctrl+up", "log_resize(2)", "Log +", show=False),
         Binding("ctrl+down", "log_resize(-2)", "Log −", show=False),
+        Binding("i", "icp_details", "ICP details", show=False),
         Binding("t", "cycle_theme", "Theme"),
         Binding("q", "quit", "Quit"),
     ]
@@ -262,6 +272,106 @@ class ReconApp(App):
         err = plat.open_folder(self.paths.session_dir())
         if err:
             self.notify(err, title="Open folder", severity="warning", timeout=10)
+
+    def get_system_commands(self, screen):
+        yield from super().get_system_commands(screen)
+        yield SystemCommand("Open session folder", "Open the output folder in the file manager",
+                            self.action_open_session)
+        yield SystemCommand("Save current settings as default",
+                            "Pre-fill these settings next time the app opens",
+                            self.action_save_defaults)
+        yield SystemCommand("Show ICP details", "Open the last alignment's icp_report.json",
+                            self.action_icp_details)
+        yield SystemCommand("Run all stages", "Run stages 1-4 in order", self.action_run_all)
+        yield SystemCommand("Stop", "Stop the running stage", self.action_stop)
+
+    # ── pickers ───────────────────────────────────────────────────────────────
+    def browse(self, key: str) -> None:
+        st = S.BY_KEY[key]
+
+        def chosen(path: str | None) -> None:
+            if not path:
+                return
+            self.ui.add_recent(path if st.path_kind == "dir" else str(Path(path).parent))
+            self.ui.save(self.ui_state_path)
+            self.form.set_value(key, path, notify=True)
+
+        self.push_screen(PathPicker(
+            st.path_kind, BROWSE_TITLES.get(key, st.label), initial=self.settings.text(key),
+            pattern=st.file_glob, recents=self.ui.recent_dirs, auto_native=self.ui.native_dialog,
+        ), chosen)
+
+    @on(SettingsForm.BrowseRequested)
+    def _browse_requested(self, event: SettingsForm.BrowseRequested) -> None:
+        self.browse(event.key)
+
+    @on(SettingsForm.ActionRequested)
+    def _form_action(self, event: SettingsForm.ActionRequested) -> None:
+        if event.action == "icp_details":
+            self.action_icp_details()
+
+    # ── view / ICP details ────────────────────────────────────────────────────
+    @on(StageCard.ViewPressed)
+    def _view_pressed(self, event: StageCard.ViewPressed) -> None:
+        self.view_stage(event.idx)
+
+    def view_stage(self, idx: int) -> None:
+        path = self.paths.expected_output_for_stage(idx)
+        if not path.exists():
+            self.notify(f"Not found:\n{path}", title="File not found", severity="warning")
+            return
+        if idx == 0:
+            # Photo gallery: the processed images in the desktop file manager.
+            err = plat.open_folder(path)
+            if err:
+                self.notify(err, title="Processed photos", timeout=15)
+            return
+        if not plat.has_display():
+            self.notify(f"No display available to open the 3D viewer. File:\n{path}",
+                        title="Viewer", timeout=15)
+            return
+        self.spawn_viewer(path)
+
+    @work(thread=True, group="viewer")
+    def spawn_viewer(self, path: Path) -> None:
+        try:
+            proc = plat.launch_viewer(path)
+        except (FileNotFoundError, OSError) as e:
+            cmd, _ = plat.resolve_viewer_launch(path)
+            self._events.put(("log", f"[viewer] interpreter not found: {cmd[0]!r}", "info"))
+            self.call_from_thread(self.notify, f"Could not launch viewer: {e}",
+                                  title="Viewer failed", severity="error", timeout=10)
+            return
+        failed, out = plat.wait_viewer(proc)
+        if failed and out.strip():
+            self._events.put(("log", f"[viewer] {out.strip()}", "info"))
+        if failed:
+            self.call_from_thread(self.notify,
+                                  f"Viewer could not open a window:\n\n{out.strip()[-600:]}",
+                                  title="Viewer failed", severity="error", timeout=15)
+
+    def action_icp_details(self) -> None:
+        rp = self.paths.icp_report_path()
+        if rp.exists():
+            self.show_icp_report(rp)
+            return
+
+        def chosen(path: str | None) -> None:
+            if path:
+                self.show_icp_report(Path(path))
+
+        self.push_screen(PathPicker(
+            "file", "No report for this session - pick an icp_report.json",
+            initial=str(rp.parent if rp.parent.is_dir() else ""), pattern="*.json",
+            recents=self.ui.recent_dirs, auto_native=self.ui.native_dialog), chosen)
+
+    def show_icp_report(self, rp: Path) -> None:
+        try:
+            data = json.loads(rp.read_text())
+        except (OSError, ValueError) as e:
+            self.notify(f"Could not read {rp}:\n{e}", title="ICP details", severity="error")
+            return
+        self.push_screen(IcpDetailsScreen(data, rp))
 
     # ── running ───────────────────────────────────────────────────────────────
     def _started(self) -> None:

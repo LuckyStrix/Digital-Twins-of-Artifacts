@@ -264,7 +264,9 @@ Give seam 99 or reorder.
    `requirements.txt`; update `README.md` (L4, L62–79, L321 describe the Tk
    GUI), add "Running on Linux / over SSH"; `SETUP.md` L116–122: WSLg is no
    longer needed for this app, but **keep `python3-tk`** because the capture
-   GUI still uses Tk (`SETUP.md` L38/L122).
+   GUI still uses Tk (`SETUP.md` L38/L122). **Done** (also `3D/README.md`,
+   which described the Tk GUI too). What's left from the definition of done
+   is the manual check in Windows Terminal under WSL with a real dataset.
 
 ## Definition of done
 

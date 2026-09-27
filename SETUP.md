@@ -66,7 +66,9 @@ it.
 ## WSL2 (for `3D/`)
 
 The `3D/` tablet pipeline runs under **WSL2 with an Ubuntu distro** (it uses
-WSLg for the GUI and CUDA-on-WSL for GPU-accelerated COLMAP).
+CUDA-on-WSL for GPU-accelerated COLMAP). The reconstruction app runs in the
+terminal, so it doesn't need WSLg; WSLg is only used by the optional 3D viewer
+when no Windows Python with `open3d` is installed.
 
 1. Install WSL2 + **Ubuntu 24.04 LTS** from an **elevated PowerShell** on Windows:
 
@@ -119,8 +121,9 @@ WSLg for the GUI and CUDA-on-WSL for GPU-accelerated COLMAP).
    sudo apt install exiftool python3-tk
    ```
 
-   - **python3-tk** — the capture and reconstruction GUIs use tkinter, which
-     Ubuntu's stock `python3` does not include.
+   - **python3-tk** — the capture GUI uses tkinter, which Ubuntu's stock
+     `python3` does not include. (The reconstruction app is a terminal UI and
+     doesn't need it.)
    - **exiftool** — COLMAP is fed metadata-stripped images.
 
 5. Install **cuDNN 9 for CUDA 12** (`cudnn9-cuda-12`). `rembg[gpu]` (background

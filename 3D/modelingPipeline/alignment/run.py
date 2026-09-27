@@ -99,7 +99,7 @@ def main():
         print("\n=== resolve seam ===")
         cAll = confidence.confidence_for_cloud(args.A, args.views_cap)
         cBll = confidence.confidence_for_cloud(args.B, args.views_cap)
-        if cAll is None or cBll is None or A.is_mesh or B.is_mesh or A.keep_idx is None:
+        if cAll is None or cBll is None or A.is_mesh or B.is_mesh or A.keep_idx is None or B.keep_idx is None:
             print("[seam] skipped: confidence data unavailable (need point-cloud PLYs with COLMAP .vis files)")
         else:
             cA, cB = cAll["conf"][A.keep_idx], cBll["conf"][B.keep_idx]

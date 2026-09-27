@@ -222,3 +222,165 @@ def test_theme_cycles_and_persists(tmp_path):
         assert app.theme == "one-half-dark"
         assert json.loads((tmp_path / "ui.json").read_text())["theme"] == "one-half-dark"
     run(make_app(tmp_path), body)
+
+
+# ── running (fake subprocesses, real stage logic) ─────────────────────────────
+
+import os  # noqa: E402
+import threading  # noqa: E402
+from pathlib import Path  # noqa: E402
+
+from pipeline import SCRIPT_DIR  # noqa: E402
+from pipeline.runner import PipelineRunner  # noqa: E402
+
+STAGE_OUTPUT = {
+    "process_photos.py": ["Processing 2 images", "[1/2] a.jpg", "[2/2] b.jpg", "[done]"],
+    "run.sh": ["[step] colmap feature_extractor", "[step] colmap mapper", "dense cloud output: fused.ply"],
+    "run.py": ["=== fpfh ===", "RANSAC fitness=0.8", "Saved merged cloud"],
+    "reconstruct_mesh.py": ["[step] input", "[step] poisson reconstruction", "gltf output: x.gltf"],
+}
+
+
+class FakeRunner(PipelineRunner):
+    """Runs the real stage methods; subprocesses print canned output and
+    create the files the next stage needs."""
+
+    block: threading.Event | None = None
+    commands: list
+
+    def _run_proc(self, cmd, cwd, env=None, on_line=None):
+        cmd = [str(c) for c in cmd]
+        self._on_log(f"$ {' '.join(cmd)}", "header")
+        FakeRunner.commands.append(cmd)
+        if FakeRunner.block is not None:
+            while not self._stop_req:
+                FakeRunner.block.wait(0.05)
+            return -15
+        script = next(k for k in STAGE_OUTPUT if any(c.endswith(k) for c in cmd))
+        for line in STAGE_OUTPUT[script]:
+            self._on_log(line, "output")
+            if on_line:
+                on_line(line)
+        arg = lambda flag: cmd[cmd.index(flag) + 1]
+        if script == "process_photos.py":
+            Path(arg("--output"), "side1").mkdir(parents=True, exist_ok=True)
+            Path(arg("--output"), "side1", "a.jpg").write_bytes(b"x")
+        elif script == "run.sh":
+            out = Path(SCRIPT_DIR, arg("-o"))
+            out.mkdir(parents=True, exist_ok=True)
+            (out / "fused.ply").write_bytes(b"ply")
+        elif script == "run.py":
+            Path(arg("-o")).write_bytes(b"ply")
+        else:
+            Path(arg("--output")).write_bytes(b"obj")
+        return 0
+
+
+@pytest.fixture
+def fake_runner():
+    FakeRunner.block = None
+    FakeRunner.commands = []
+    yield FakeRunner
+    FakeRunner.block = None
+
+
+async def wait_idle(app, pilot, timeout=10.0):
+    for _ in range(int(timeout / 0.05)):
+        await pilot.pause(0.05)
+        if not app.runner.is_running and not app._run_active:
+            return
+    raise AssertionError("run did not finish")
+
+
+def log_text(app) -> str:
+    return "\n".join(line.text for line in app.query_one("#log").lines)
+
+
+def test_run_all_through_four_stages(tmp_path, two_side_scan, fake_runner):
+    async def body(app, pilot):
+        app.form.set_value("input_var", str(two_side_scan))
+        app.form.set_value("output_var", str(tmp_path / "out"))
+        await pilot.press("r")
+        await wait_idle(app, pilot)
+        assert [c.state for c in app.cards] == ["done"] * 4
+        assert [c.status for c in app.cards] == ["Done"] * 4
+        assert not any(app.query_one(f"#view-{i}").disabled for i in range(4))
+        assert app.query_one("#stop").disabled and not app.query_one("#run-all").disabled
+        text = log_text(app)
+        assert "── $ " in text and "process_photos.py" in text
+        assert "[stage 3] Aligning fused.ply + fused.ply" in text
+        assert "dense cloud output: fused.ply" in text
+        assert len(fake_runner.commands) == 5           # stage 2 runs once per side
+        assert any("finished" in n.message for n in app._notifications)
+    run(make_app(tmp_path, runner_factory=fake_runner), body)
+
+
+def test_progress_updates_card(tmp_path, two_side_scan, fake_runner):
+    fake_runner.block = threading.Event()
+
+    async def body(app, pilot):
+        app.form.set_value("input_var", str(two_side_scan))
+        app.form.set_value("output_var", str(tmp_path / "out"))
+        app.query_one("#run-1").press()
+        await pilot.pause(0.3)
+        card = app.cards[1]
+        assert card.state == "running" and card.status == "Running…"
+        assert app.query_one("#run-all").disabled and not app.query_one("#stop").disabled
+        assert app.query_one("#run-1").disabled and not app.query_one("#run-0").disabled
+        assert app.query_one("#bar-1").total is None        # indeterminate
+        app.runner._on_progress(1, 42, "Feature matching")
+        await pilot.pause(0.2)
+        assert app.query_one("#bar-1").progress == 42 and card.status == "Feature matching"
+        await pilot.press("s")
+        await wait_idle(app, pilot)
+        assert card.state == "failed"
+        assert "[pipeline] stopped by user" in log_text(app)
+        assert any(n.severity == "error" for n in app._notifications)
+    run(make_app(tmp_path, runner_factory=fake_runner), body)
+
+
+def test_busy_message(tmp_path, two_side_scan, fake_runner):
+    fake_runner.block = threading.Event()
+
+    async def body(app, pilot):
+        app.form.set_value("input_var", str(two_side_scan))
+        app.run_stage(0)
+        await pilot.pause(0.2)
+        app.run_stage(2)
+        await pilot.pause(0.1)
+        assert any("Another stage is already running" in n.message for n in app._notifications)
+        app.action_stop()
+        await wait_idle(app, pilot)
+    run(make_app(tmp_path, runner_factory=fake_runner), body)
+
+
+def test_stage_failure_stops_run_all(tmp_path, two_side_scan, fake_runner):
+    async def body(app, pilot):
+        app.form.set_value("input_var", "")       # stage 1 fails: no input
+        await pilot.press("r")
+        await wait_idle(app, pilot)
+        assert [c.state for c in app.cards][:2] == ["failed", "waiting"]
+        assert "[error] No input directory specified" in log_text(app)
+        assert "[pipeline] stopped after stage 1 failed" in log_text(app)
+    run(make_app(tmp_path, runner_factory=fake_runner), body)
+
+
+def test_quit_while_running_asks_first(tmp_path, two_side_scan, fake_runner):
+    fake_runner.block = threading.Event()
+
+    async def body(app, pilot):
+        app.form.set_value("input_var", str(two_side_scan))
+        app.run_stage(0)
+        await pilot.pause(0.2)
+        await pilot.press("q")
+        await pilot.pause(0.1)
+        assert app.screen.__class__.__name__ == "ConfirmScreen"
+        await pilot.press("n")
+        await pilot.pause(0.1)
+        assert app.runner.is_running
+        await pilot.press("q")
+        await pilot.pause(0.1)
+        await pilot.press("y")
+        await pilot.pause(0.3)
+        assert app.runner._stop_req
+    run(make_app(tmp_path, runner_factory=fake_runner), body)

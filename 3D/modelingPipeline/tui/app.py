@@ -3,7 +3,9 @@ form, the stage cards, the log and the pipeline runner."""
 
 from __future__ import annotations
 
+import queue
 from pathlib import Path
+from typing import Callable
 
 from textual import on
 from textual.app import App, ComposeResult
@@ -17,7 +19,9 @@ from pipeline import platform as plat
 from pipeline import settings as S
 from pipeline.options import STAGE_NAMES
 from pipeline.paths import SessionPaths, default_output_for, describe_sides, detect_sides
+from pipeline.runner import PipelineRunner
 
+from .screens import ConfirmScreen
 from .uistate import UI_STATE_PATH, UiState
 from .widgets import LOG_MIN_HEIGHT, LogHandle, LogPane, SettingsForm, StageCard
 
@@ -39,6 +43,9 @@ ONE_HALF_DARK = Theme(
 THEMES = ["campbell", "one-half-dark", "tokyo-night", "textual-dark", "textual-light"]
 
 INPUT_DEBOUNCE = 0.4
+EVENT_POLL = 0.05       # seconds between draining runner events into the UI
+
+RunnerFactory = Callable[..., PipelineRunner]
 
 
 class ReconApp(App):
@@ -60,7 +67,8 @@ class ReconApp(App):
 
     def __init__(self, settings: S.Settings | None = None,
                  defaults_path: Path = DEFAULTS_PATH,
-                 ui_state_path: Path = UI_STATE_PATH):
+                 ui_state_path: Path = UI_STATE_PATH,
+                 runner_factory: RunnerFactory = PipelineRunner):
         super().__init__()
         self.defaults_path = Path(defaults_path)
         self.ui_state_path = Path(ui_state_path)
@@ -70,6 +78,17 @@ class ReconApp(App):
         self.register_theme(CAMPBELL)
         self.register_theme(ONE_HALF_DARK)
         self._debounce_timers: dict[str, object] = {}
+        # Runner callbacks arrive on its worker thread (and stop() logs from
+        # this one); queue them and apply them on a timer, in order.
+        self._events: queue.SimpleQueue = queue.SimpleQueue()
+        self.runner = runner_factory(
+            self.settings,
+            on_log=lambda text, kind: self._events.put(("log", text, kind)),
+            on_stage_state=lambda idx, state, status: self._events.put(("state", idx, state, status)),
+            on_progress=lambda idx, pct, text: self._events.put(("progress", idx, pct, text)),
+        )
+        self._run_active = False
+        self._run_results: dict[int, str] = {}
 
     # ── layout ────────────────────────────────────────────────────────────────
     def compose(self) -> ComposeResult:
@@ -99,6 +118,7 @@ class ReconApp(App):
         self._apply_log_height(self.ui.log_height)
         self.log_pane = self.query_one(LogPane)
         self.set_interval(1, self._tick)
+        self.set_interval(EVENT_POLL, self._drain_events)
         self._update_session_info()
         self.reconcile_stage_states()
         self.log_pane.add("Ready. Pick an input folder on the Inputs tab, then press r to "
@@ -243,15 +263,79 @@ class ReconApp(App):
         if err:
             self.notify(err, title="Open folder", severity="warning", timeout=10)
 
+    # ── running ───────────────────────────────────────────────────────────────
+    def _started(self) -> None:
+        self._run_active = True
+        self._run_results = {}
+        self.query_one("#run-all", Button).disabled = True
+        self.query_one("#stop", Button).disabled = False
+
     def action_run_all(self) -> None:
-        self.notify("Running is wired up in the next step.", severity="warning")
+        if not self.runner.run_all():
+            self.notify("Pipeline is already running.", title="Busy", severity="warning")
+            return
+        self._started()
+
+    def run_stage(self, idx: int) -> None:
+        if not self.runner.run_stage(idx):
+            self.notify("Another stage is already running.", title="Busy", severity="warning")
+            return
+        self._started()
 
     def action_stop(self) -> None:
-        pass
+        if self.runner.is_running:
+            self.runner.stop()
 
     @on(StageCard.RunPressed)
-    def _run_stage(self, event: StageCard.RunPressed) -> None:
-        self.notify("Running is wired up in the next step.", severity="warning")
+    def _run_stage_pressed(self, event: StageCard.RunPressed) -> None:
+        self.run_stage(event.idx)
+
+    def _drain_events(self) -> None:
+        batch = 0
+        while batch < 2000:
+            try:
+                ev = self._events.get_nowait()
+            except queue.Empty:
+                break
+            batch += 1
+            kind = ev[0]
+            if kind == "log":
+                self.log_pane.add(ev[1], ev[2])
+            elif kind == "state":
+                _, idx, state, status = ev
+                self.cards[idx].set_state(state, status)
+                if state in ("done", "failed"):
+                    self._run_results[idx] = state
+            elif kind == "progress":
+                _, idx, pct, text = ev
+                self.cards[idx].set_progress(pct, text)
+        if self._run_active and not self.runner.is_running and batch == 0:
+            self._finished()
+
+    def _finished(self) -> None:
+        self._run_active = False
+        self.query_one("#run-all", Button).disabled = False
+        self.query_one("#stop", Button).disabled = True
+        failed = [i for i, st in self._run_results.items() if st == "failed"]
+        if failed:
+            self.notify(f"Stage {failed[0] + 1} failed — see the log.", title="Pipeline",
+                        severity="error", timeout=8)
+        elif self._run_results:
+            last = max(self._run_results)
+            self.notify(f"{STAGE_NAMES[last]} finished.", title="Pipeline")
+
+    async def action_quit(self) -> None:
+        if not self.runner.is_running:
+            self.exit()
+            return
+
+        def answer(yes: bool | None) -> None:
+            if yes:
+                self.runner.stop()
+                self.exit()
+
+        self.push_screen(ConfirmScreen(
+            "Quit", "A stage is still running. Stop it and quit?", yes="Stop and quit"), answer)
 
     @on(Button.Pressed, "#run-all")
     def _run_all_btn(self) -> None:

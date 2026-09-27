@@ -60,3 +60,11 @@ Input.-invalid { border: none; background: $error 25%; }
 /* log maximised: hide the settings */
 Screen.-log-max #form { display: none; }
 Screen.-log-max #log-wrap { height: 1fr; }
+
+/* ── dialogs ─────────────────────────────────────────────────────────────── */
+ModalScreen { align: center middle; }
+.dialog { width: 64; height: auto; border: round $primary; background: $surface; padding: 0 1; }
+.dialog-title { text-style: bold; color: $secondary; }
+.dialog-body { margin: 1 0; }
+.dialog-btns { height: auto; align-horizontal: right; }
+.dialog-btns Button { margin-left: 1; }

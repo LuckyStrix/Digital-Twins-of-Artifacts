@@ -221,6 +221,23 @@ Give seam 99 or reorder.
    command/env construction for each stage compared against the exact
    commands the current `app.py` builds for the same settings (write these
    golden tests *before* deleting the Tk code).
+   **Done.** Notes for the next phases:
+   - `Settings` is a dict (`Settings.load()` / `.save()`); the form builder
+     iterates `settings.REGISTRY` (field `widget="slider"` marks seg quality,
+     `validate=` hints numeric `str` fields, `editable=True` marks the Type
+     combobox). Hole-reduction presets: `settings.hole_reduction_preset(on)`.
+   - `PipelineRunner(settings, on_log, on_stage_state, on_progress)`:
+     `run_stage(idx)` / `run_all()` start a thread and return `False` when a
+     run is already active; `stop()`. `on_log(text, kind)` with kind
+     `info` (timestamped), `header` (`$ cmd`), `output`.
+   - `paths.SessionPaths(settings)` (expected outputs / readiness for
+     reconcile), `paths.describe_sides()` for the "Detected sides…" line.
+   - `platform`: `has_display()`, `open_folder()`, `launch_viewer()` +
+     `wait_viewer()`, `native_folder_dialog()` / `native_file_dialog()`,
+     `to_posix_path()`, `browse_locations()`.
+   - The Tk `app.py` now imports parsers/helpers from `pipeline/`; its own
+     command building stays until phase 5 (golden tests cover it).
+   - Tests: `python3 -m pytest tests` from this folder.
 2. **Textual shell** — `tui/` layout, themes, generated settings forms,
    stage cards, log pane (resizable), footer bindings, save/load defaults,
    input-change behaviour, reconcile.

@@ -388,10 +388,26 @@ class PipelineRunner:
             except (ProcessLookupError, OSError):
                 pass
         else:
-            try:
-                proc.kill()
-            except Exception:
-                pass
+            self._kill_windows_tree(proc)
+
+    @staticmethod
+    def _kill_windows_tree(proc: subprocess.Popen) -> None:
+        """Kill `proc` and its whole descendant tree on Windows.
+
+        Mirrors the POSIX process-group kill below: Stage 2 runs
+        ``bash run.sh``, whose COLMAP children would survive a plain
+        ``proc.kill()`` of the parent alone. ``taskkill /T`` walks the
+        process tree; ``/F`` forces it.
+        """
+        try:
+            subprocess.run(["taskkill", "/F", "/T", "/PID", str(proc.pid)],
+                           capture_output=True, timeout=10)
+        except Exception:
+            pass
+        try:
+            proc.kill()
+        except Exception:
+            pass
 
     @staticmethod
     def _terminate(proc: subprocess.Popen) -> None:
@@ -403,10 +419,7 @@ class PipelineRunner:
         after a grace period.
         """
         if not _POSIX:
-            try:
-                proc.kill()
-            except Exception:
-                pass
+            PipelineRunner._kill_windows_tree(proc)
             return
         try:
             pgid = os.getpgid(proc.pid)
@@ -626,8 +639,8 @@ class PipelineRunner:
         # Write the website's info.txt metadata file, if a name was given
         name = str(self.settings["meta_name_var"]).strip()
         if name:
-            from src.artifact_info import write_info_txt
             try:
+                from src.artifact_info import write_info_txt
                 info_path = write_info_txt(
                     session,
                     name=name,
@@ -637,7 +650,7 @@ class PipelineRunner:
                     link_label=str(self.settings["meta_link_label_var"]).strip(),
                 )
                 self.log(f"[stage 4] info.txt → {info_path}")
-            except ValueError as e:
+            except (ValueError, ImportError) as e:
                 self.log(f"[stage 4] Warning: skipped info.txt ({e})")
         else:
             self.log("[stage 4] No artifact name set — skipping info.txt")

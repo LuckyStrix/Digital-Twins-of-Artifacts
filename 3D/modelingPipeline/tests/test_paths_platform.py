@@ -58,6 +58,9 @@ def test_stage_paths_and_readiness(tmp_path):
     (tmp_path / "colmap_side1" / "fused.ply").write_bytes(b"")
     assert not p.stage_output_ready(1)      # empty file doesn't count
     (tmp_path / "colmap_side1" / "fused.ply").write_bytes(b"ply")
+    assert not p.stage_output_ready(1)      # side2 (default "side2") isn't ready yet
+    (tmp_path / "colmap_side2").mkdir()
+    (tmp_path / "colmap_side2" / "fused.ply").write_bytes(b"ply")
     assert p.stage_output_ready(1)
 
     s["side1_var"], s["side2_var"] = "", ""

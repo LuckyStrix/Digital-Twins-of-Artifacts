@@ -126,6 +126,17 @@ class SessionPaths:
         return self.recon_dir() / "recon_mesh_recon.obj"
 
     def stage_output_ready(self, idx: int) -> bool:
+        if idx == 1:
+            # Both sides' COLMAP output must be ready in a two-sided session,
+            # not just side1's (which is all expected_output_for_stage(1) checks).
+            s1, s2 = self.active_sides()
+            paths = [self.colmap_dir(s1) / "fused.ply" if s1 else self.colmap_dir() / "fused.ply"]
+            if s2:
+                paths.append(self.colmap_dir(s2) / "fused.ply")
+            try:
+                return all(p.is_file() and p.stat().st_size > 0 for p in paths)
+            except OSError:
+                return False
         p = self.expected_output_for_stage(idx)
         try:
             if idx == 0:

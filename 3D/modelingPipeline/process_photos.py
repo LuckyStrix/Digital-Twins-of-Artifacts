@@ -595,6 +595,25 @@ def collect_images(input_dir: Path, stride: int = 1) -> list[tuple[Path, Path]]:
     return result
 
 
+def _report_device(session) -> None:
+    """Say whether rembg got the GPU. onnxruntime-gpu falls back to the CPU
+    (roughly 10x slower) when it can't load CUDA/cuDNN, e.g. libcudnn.so.9 not
+    on LD_LIBRARY_PATH, and only prints an easy-to-miss error when it does."""
+    try:
+        providers = session.inner_session.get_providers()
+    except AttributeError:
+        return
+    if "CUDAExecutionProvider" in providers:
+        print("[rembg] Device: GPU (CUDA)")
+    else:
+        import onnxruntime as ort
+        if "CUDAExecutionProvider" in ort.get_available_providers():
+            print("[warn]  rembg is running on the CPU: CUDA/cuDNN failed to load "
+                  "(see the onnxruntime error above; is libcudnn.so.9 on LD_LIBRARY_PATH?)")
+        else:
+            print(f"[rembg] Device: CPU ({', '.join(providers)})")
+
+
 def run_local(input_dir: Path, output_dir: Path, model: str, background: str,
               black_threshold: int = 0, white_threshold: int = 0,
               value_threshold: int = 0, chroma_threshold: int = 0,
@@ -660,6 +679,7 @@ def run_local(input_dir: Path, output_dir: Path, model: str, background: str,
     print(f"[rembg] Loading model '{model}' ...")
 
     session = new_session(model)
+    _report_device(session)
 
     print(f"[rembg] Processing {len(pairs)} image(s) ...")
     errors = 0

@@ -14,6 +14,12 @@ def test_photos_parser():
     assert p.feed("unrelated") is None
 
 
+def test_photos_parser_flags_cpu_fallback():
+    p = PhotosParser()
+    assert p.feed("[warn]  rembg is running on the CPU: CUDA/cuDNN failed to load") ==         (2, "rembg fell back to the CPU - slow")
+    assert p.feed("[1/40] IMG_0001.JPG") == (7, "Image 1/40 (on CPU - slow)")
+
+
 def test_colmap_parser_sparse_and_dense_single_component():
     p = ColmapParser()
     out = feed_all(p, [

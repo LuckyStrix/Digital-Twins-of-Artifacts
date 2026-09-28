@@ -252,6 +252,8 @@ class LogPane(RichLog):
             style = theme.error if ("[error]" in body or "failed" in body) else (theme.secondary or "")
             t.append(" " + body if t else body, style=style)
             self.write(t)
+        elif text.startswith("[warn]"):
+            self.write(Text(text, style=f"bold {theme.warning}"))
         else:
             self.write(Text(text))
 

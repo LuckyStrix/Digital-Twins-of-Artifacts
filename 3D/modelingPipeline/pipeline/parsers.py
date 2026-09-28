@@ -10,8 +10,12 @@ import re
 class PhotosParser:
     def __init__(self):
         self._total = 0
+        self._note = ""
 
     def feed(self, line: str):
+        if line.startswith("[warn]") and "running on the CPU" in line:
+            self._note = " (on CPU - slow)"
+            return (2, "rembg fell back to the CPU - slow")
         m = re.search(r'Processing (\d+) image', line)
         if m:
             self._total = int(m.group(1))
@@ -21,7 +25,7 @@ class PhotosParser:
             i, n = int(m.group(1)), int(m.group(2))
             if n > 0:
                 self._total = n
-                return (int(5 + 90 * i / n), f"Image {i}/{n}")
+                return (int(5 + 90 * i / n), f"Image {i}/{n}{self._note}")
         if re.search(r'\[done\]', line, re.IGNORECASE):
             return (100, "Complete")
         return None

@@ -179,13 +179,19 @@ def _jsonable(settings: Mapping) -> dict:
 class RunRecorder:
     """Records one run (``mode`` is "all" or "stage N") into ``session_dir``."""
 
+    # Class-level: every RunRecorder writes the same pipeline_runs.json via a
+    # read-modify-write, so the lock must be shared across instances (e.g. two
+    # back-to-back runs, or a run's own background environment-collection
+    # thread saving late) — a per-instance lock lets concurrent saves clobber
+    # each other's entries.
+    _save_lock = threading.Lock()
+
     def __init__(self, session_dir: Path, settings: Mapping, mode: str):
         self.dir = Path(session_dir)
         self.settings = settings
         self.paths = SessionPaths(settings)
         self.mode = mode
         self._lock = threading.Lock()
-        self._save_lock = threading.Lock()
         self._log = None
         self._t0 = time.monotonic()
         self._stage_t0: dict[int, float] = {}

@@ -1,8 +1,9 @@
 # Modeling — Tablet Reconstruction
 
 The reconstruction half of the `3D/` pipeline: from captured photos to a meshed
-model, driven by a Tkinter GUI (`app.py`, run under WSL with WSLg). See the
-[repo setup guide](../../SETUP.md) for first-time install.
+model, driven by a terminal UI (`app.py`, built with [Textual](https://textual.textualize.io/)).
+It runs in any terminal: Windows Terminal under WSL, a Linux desktop, or over
+SSH. See the [repo setup guide](../../SETUP.md) for first-time install.
 
 ## Prerequisites
 
@@ -24,7 +25,8 @@ python3 -m pip install --break-system-packages -r requirements.txt
 ```
 
 `requirements.txt` pulls `open3d`, `numpy<2.5`, `rembg[gpu]` (use plain `rembg`
-on a CPU-only machine) with `onnxruntime-gpu<1.27` and `torch`, and `pillow`.
+on a CPU-only machine) with `onnxruntime-gpu<1.27` and `torch`, `pillow`,
+`textual` (the terminal UI) and `pytest` (tests).
 rembg downloads its `birefnet-general` model on first use. For the cuDNN runtime
 that `onnxruntime-gpu` needs, and for raising WSL's RAM/swap limits if runs get
 OOM-killed, see [`../README.md`](../README.md#setup).
@@ -62,6 +64,64 @@ bash src/check_config.sh python3 colmap -- numpy open3d
 python3 app.py
 ```
 
+The left sidebar has one card per stage (blue = running, green = done, red =
+failed) with **Run Stage** and **View …** buttons, plus **Run all** / **Stop**.
+Settings are in tabs on the right; the output log is underneath. Mouse and
+keyboard both work. Keys (also listed in the footer; ctrl+p opens the command
+palette with the menu items):
+
+| Key | Action |
+| --- | --- |
+| `r` (or `ctrl+r`) / `s` | Run all stages / stop the running stage (stops COLMAP and everything else it started). `r`, `s` and `q` are ignored while a settings field has focus; `ctrl+r` works anywhere |
+| `o` | Open the session (output) folder in the file manager |
+| `ctrl+s` | Save current settings as default (`app_defaults.json`) |
+| `i` | Show ICP details (the last alignment's `icp_report.json`) |
+| `l` | Maximise / restore the log; `ctrl+↑` / `ctrl+↓` resize it, or drag the bar above it |
+| `t` | Cycle colour themes (Campbell, One Half Dark, ...) |
+| `q` | Quit (asks first if a stage is running) |
+
+The `…` buttons next to path fields open a folder/file browser: drives and
+mounts on the left, recent folders, a folder tree, and a path box that also
+takes Windows paths (`D:\scans`, `\\server\share`). Under WSL it opens the
+Windows folder picker first (untick "Open Windows dialog first" to use the
+in-terminal browser only). "New folder…" (Ctrl+N) makes a folder inside the one
+in the path box; typing a folder that doesn't exist yet and pressing Select
+offers to create it. Clicking a folder opens it; collapse it with its arrow or
+Space. Windows paths typed straight into a path field are converted when you
+leave the field.
+
+The log height, theme, recent folders and that choice are kept in
+`.tui_state.json` (not committed).
+
+A run uses the settings as they were when it started; edits made while it
+runs apply to the next run. Run and Save defaults refuse while a numeric
+field holds something that isn't a number (it's shown in red). Quitting,
+closing the terminal or losing the SSH connection stops any running stage,
+including COLMAP.
+
+### Running on Linux / over SSH
+
+The app itself only needs a terminal, so it works over SSH or on a plain Linux
+box. The Windows-only extras switch off automatically outside WSL. Only the
+**View** buttons need a display:
+
+- **View Photos** opens the processed-images folder: Explorer under WSL,
+  `xdg-open` on a Linux desktop. Over SSH it shows the folder path instead.
+- **View Cloud / Merged / Mesh** launch `viewer.py` (an Open3D window). Under
+  WSL a native Windows Python with `open3d` installed is used if one is found,
+  otherwise the WSL Python through WSLg. On Linux they need `DISPLAY` or
+  `WAYLAND_DISPLAY`; over SSH they show the file path instead.
+
+### Tests
+
+```bash
+python3 -m pytest tests
+```
+
+Tests cover the progress parsers, `app_defaults.json` load/save, the exact
+command lines and env vars each stage builds, stopping, and the UI (run
+headless). They don't need COLMAP, CUDA or a GPU.
+
 ## Pipeline stages
 
 Mirrors the `app.py` module docstring:
@@ -74,13 +134,29 @@ Mirrors the `app.py` module docstring:
    `output/model.gltf` (plus `output/model_simplified.glb` and, if the Inputs
    tab's Artifact info Name is set, `output/info.txt`)
 
+### Run records
+
+Every run started from the app (one stage or Run all) also writes to the
+output folder:
+
+- `pipeline.log`: every log line with a millisecond timestamp, including all
+  subprocess output. Each run is appended under a `===== run started … =====`
+  header.
+- `pipeline_runs.json`: `{"runs": [...]}`, one entry per run with every
+  setting, the machine and package versions (git commit, stage venv packages,
+  GPU), input image counts and sizes, and for each stage its start/end,
+  `duration_s`, result (`done`/`failed`/`stopped`), the time each progress step
+  was reached, and output sizes (processed images, point counts). It is
+  rewritten after each stage, so a crash keeps the stages that finished.
+
 ## GUI reference
 
-`app.py` is one window with four tabs (Inputs, COLMAP, Reconstruct, Alignment)
-plus a run panel that walks the four stages in order and streams live output to
-the log pane. Settings persist between runs in `app_defaults.json` (delete it
-to reset to the values below). Where a field has a longer explanation, the app
-shows it inline under the control — this section is a quicker reference, not a
+`app.py` has four settings tabs (Inputs, COLMAP, Reconstruct, Alignment)
+plus the stage sidebar that walks the four stages in order and streams live
+output to the log pane. Settings persist between runs in `app_defaults.json`
+(delete it to reset to the values below). Where a field has a longer
+explanation, the app shows it under the control (the longer ones fold away
+under an "About: …" line). This section is a quicker reference, not a
 replacement for those.
 
 ### Inputs tab
@@ -92,7 +168,7 @@ replacement for those.
 - **Primary / Secondary** side folder names (default `side1`/`side2`) — the
   subfolder names under the input dir holding each side's photos. Leave
   Secondary blank to skip Stage 3 (alignment) and reconstruct a single side.
-  Auto-detected from the input dir's structure when you browse to it.
+  Auto-detected from the input dir's structure when you pick or type it.
 
 **Artifact info** (optional, not persisted in `app_defaults.json` — specific
 to one artifact, unlike the rest of this tab) — **Name**, **Type**,
@@ -147,8 +223,9 @@ generated standalone, without the GUI: `python3 -m src.artifact_info
 **Experimental: COLMAP-side masking** — `process_photos.py --save-masks`
 writes each photo's final binary mask as its own PNG (default `--mask-dir
 <output>_masks`). If Stage 2 finds a matching `<processed-dir>_masks` folder
-it passes it to `run.sh -m`/`-n` automatically, which feeds
-`run_colmap_mvs.py --mask-path`/`--mask-path-secondary` so `feature_extractor`
+it passes it to `run.sh -m` automatically (per side: `-m <processed-dir>_masks/<side>`,
+since each side runs through `run.sh` on its own), which feeds
+`run_colmap_mvs.py --mask-path` so `feature_extractor`
 and `stereo_fusion` ignore background pixels directly, instead of COLMAP
 guessing from RGB alone. No GUI toggle for this — it's CLI/env-only
 (`--save-masks`) and off by default, because it was found to be able to
@@ -318,8 +395,12 @@ set on the Inputs tab).
 ## Structure
 
 ```
-app.py                  Tkinter reconstruction-pipeline GUI (4 stages)
-app_defaults.json       Last-used GUI field values, saved/restored between runs
+app.py                  Starts the terminal UI (4 stages)
+app_defaults.json       Saved default settings, pre-filled when the app opens
+pipeline/               UI-free core: settings registry, stage runner, parsers, paths, WSL helpers,
+                        run records (runlog.py)
+tui/                    Textual UI: layout, widgets, pickers, ICP details
+tests/                  pytest suite (python3 -m pytest tests)
 process_photos.py       Stage 1: background removal
 erode_masks.py          Re-erode already-generated masks without rerunning Stage 1
 run.sh                  Stage 2 orchestrator (COLMAP; resolves colmap binary)

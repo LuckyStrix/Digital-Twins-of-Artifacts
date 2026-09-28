@@ -9,7 +9,7 @@ the rig): multi-camera capture → COLMAP reconstruction → meshed model. See t
 <img src="../docs/diagrams/3d-pipeline.svg" alt="Diagram: the multi-camera turntable rig feeds the 4-stage COLMAP reconstruction pipeline (1 Clean, 2 Reconstruct, 3 Align, 4 Mesh), which produces the model.gltf mesh.">
 
 **How it runs day to day:**
-- `modelingPipeline/app.py` is a single Tkinter GUI that runs the four stages
+- `modelingPipeline/app.py` is a terminal UI (Textual) that runs the four stages
   above in order against one working folder in `data/`, one photo set per side.
 - **Stage 1** removes each photo's background (`rembg`, GPU-accelerated when
   available) and writes masked PNGs to `processed/`. By default it also
@@ -38,8 +38,9 @@ the rig): multi-camera capture → COLMAP reconstruction → meshed model. See t
 
 ## Prerequisites
 
-- **OS: WSL2 (Ubuntu 24.04 LTS)** — the reconstruction runs under WSL with WSLg
-  for the GUI. Use **24.04**, not the latest Ubuntu — newer releases ship a GCC
+- **OS: WSL2 (Ubuntu 24.04 LTS)** — the reconstruction runs under WSL (its UI
+  runs in the terminal; the optional 3D viewer uses WSLg or a native Windows
+  Python). Use **24.04**, not the latest Ubuntu — newer releases ship a GCC
   too new for CUDA and COLMAP won't build. See [`../SETUP.md`](../SETUP.md) for the
   WSL2 install steps.
 - **NVIDIA GPU + Windows-host driver**, with `nvidia-smi` working inside WSL.
@@ -48,8 +49,9 @@ the rig): multi-camera capture → COLMAP reconstruction → meshed model. See t
   [`modelingPipeline/BUILDING_COLMAP.md`](modelingPipeline/BUILDING_COLMAP.md).
 - **exiftool** (`sudo apt install exiftool`) — COLMAP is fed metadata-stripped
   images.
-- **python3-tk** (`sudo apt install python3-tk`) — the capture and reconstruction
-  GUIs use tkinter, which Ubuntu's stock `python3` does not bundle.
+- **python3-tk** (`sudo apt install python3-tk`) — the capture GUI uses tkinter,
+  which Ubuntu's stock `python3` does not bundle. (The reconstruction app is a
+  terminal UI and doesn't need it.)
 - **Capture only** (running `captureApp/capture_app_parallel.py` against the
   physical rig): `gphoto2` on PATH, plus the `pyserial` and `pillow` Python
   packages. See [Capture setup](#capture-setup) below — not needed if you only
@@ -122,8 +124,7 @@ Arduino over a **serial port**, so on the capture workstation you need:
   sudo apt install gphoto2
   ```
 
-- **python3-tk** — the capture GUI is tkinter (same package as the reconstruction
-  GUI above; `sudo apt install python3-tk`).
+- **python3-tk** — the capture GUI is tkinter (`sudo apt install python3-tk`).
 
 - **pyserial** and **pillow** Python packages — `pyserial` for the Arduino serial
   link, `pillow` for the in-app camera preview thumbnails:

@@ -4,7 +4,9 @@ numpy<2.5           # open3d / onnxruntime have no wheels built against numpy 2.
 rembg[gpu]          # background removal; use rembg (no [gpu]) on CPU-only machines
 onnxruntime-gpu<1.27  # rembg GPU backend; 1.27+ requires a newer cuDNN/CUDA combo than we install
 torch               # required by rembg's birefnet-general model
-pillow              # photo gallery in the GUI
+pillow              # image I/O in process_photos.py / erode_masks.py / COLMAP prep
+textual             # terminal UI (app.py)
+pytest              # tests/ (python3 -m pytest tests)
 
 # Install with python3, e.g.:  python3 -m pip install -r requirements.txt
 #

@@ -6,6 +6,8 @@ data/
 # 3D: locally built CUDA COLMAP binary + its source/build tree (see 3D/modelingPipeline/BUILDING_COLMAP.md)
 3D/modelingPipeline/colmap_local
 3D/modelingPipeline/colmap-src/
+# 3D: Textual app's per-user UI state (log height, theme, recent folders)
+3D/modelingPipeline/.tui_state.json
 
 # KiCad: local history (nested git repo), auto-backups, lock files
 .history/
@@ -22,3 +24,7 @@ data/
 2D/backend/calibration/scross.tiff
 2D/backend/calibration/wco.tiff
 2D/backend/calibration/wcross.tiff
+
+# Python bytecode caches
+__pycache__/
+*.pyc

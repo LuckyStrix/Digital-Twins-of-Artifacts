@@ -84,8 +84,11 @@ The `…` buttons next to path fields open a folder/file browser: drives and
 mounts on the left, recent folders, a folder tree, and a path box that also
 takes Windows paths (`D:\scans`, `\\server\share`). Under WSL it opens the
 Windows folder picker first (untick "Open Windows dialog first" to use the
-in-terminal browser only). Windows paths typed straight into a path field are
-converted when you leave the field.
+in-terminal browser only). "New folder…" (Ctrl+N) makes a folder inside the one
+in the path box; typing a folder that doesn't exist yet and pressing Select
+offers to create it. Clicking a folder opens it; collapse it with its arrow or
+Space. Windows paths typed straight into a path field are converted when you
+leave the field.
 
 The log height, theme, recent folders and that choice are kept in
 `.tui_state.json` (not committed).

@@ -10,7 +10,9 @@ pytest.importorskip("textual")
 
 from pipeline import platform as plat  # noqa: E402
 from test_tui import log_text, make_app, run  # noqa: E402
-from tui.screens import IcpDetailsScreen, PathPicker, convergence_rows, histogram_text  # noqa: E402
+from tui.screens import (  # noqa: E402
+    ConfirmScreen, IcpDetailsScreen, NewFolderScreen, PathPicker, convergence_rows, histogram_text,
+)
 
 
 @pytest.fixture
@@ -72,12 +74,76 @@ def test_picker_rejects_missing_folder_and_converts_windows_paths(tmp_path, monk
     async def body(app, pilot):
         app.browse("output_var")
         await pilot.pause()
-        await submit_path(app, pilot, str(tmp_path / "nope"))
+        (tmp_path / "a_file").write_text("")
+        await submit_path(app, pilot, str(tmp_path / "a_file"))
         await pilot.pause()
         assert isinstance(app.screen, PathPicker)          # still open
+        await submit_path(app, pilot, str(tmp_path / "nope"))
+        await pilot.pause()
+        assert isinstance(app.screen, ConfirmScreen)       # offers to create it
+        await pilot.press("n")
+        await pilot.pause()
+        assert isinstance(app.screen, PathPicker)
+        assert not (tmp_path / "nope").exists()
         await submit_path(app, pilot, win)
         await pilot.pause()
         assert app.settings["output_var"] == str(target)
+    run(make_app(tmp_path), body)
+
+
+def test_picker_creates_missing_output_folder(tmp_path, no_wsl):
+    target = tmp_path / "new" / "out"
+
+    async def body(app, pilot):
+        app.browse("output_var")
+        await pilot.pause()
+        await submit_path(app, pilot, str(target))
+        await pilot.pause()
+        assert isinstance(app.screen, ConfirmScreen)
+        await pilot.press("y")
+        await pilot.pause()
+        assert target.is_dir()
+        assert app.settings["output_var"] == str(target)
+    run(make_app(tmp_path), body)
+
+
+def test_picker_new_folder_button(tmp_path, no_wsl):
+    async def body(app, pilot):
+        app.browse("output_var")
+        await pilot.pause()
+        app.screen.query_one("#picker-path").value = str(tmp_path)
+        await pilot.click("#new-folder-btn")
+        await pilot.pause()
+        assert isinstance(app.screen, NewFolderScreen)
+        app.screen.query_one("#folder-name").value = "results"
+        await pilot.press("enter")
+        await pilot.pause()
+        assert isinstance(app.screen, PathPicker)
+        assert (tmp_path / "results").is_dir()
+        assert app.screen.query_one("#picker-path").value == str(tmp_path / "results")
+        await pilot.click("#ok")
+        await pilot.pause()
+        assert app.settings["output_var"] == str(tmp_path / "results")
+    run(make_app(tmp_path), body)
+
+
+def test_picker_tree_select_expands_but_never_collapses(tmp_path, no_wsl):
+    (tmp_path / "outer" / "inner").mkdir(parents=True)
+
+    async def body(app, pilot):
+        app.browse("output_var")
+        await pilot.pause()
+        tree = app.screen.query_one("#tree")
+        tree.path = tmp_path
+        await pilot.pause(0.3)
+        node = next(n for n in tree.root.children if n.data.path.name == "outer")
+        for _ in range(3):                      # repeated clicks/enters keep it open
+            tree.move_cursor(node)
+            tree.action_select_cursor()
+            await pilot.pause(0.2)
+            assert node.is_expanded
+        assert [c.data.path.name for c in node.children] == ["inner"]
+        assert app.screen.query_one("#picker-path").value == str(tmp_path / "outer")
     run(make_app(tmp_path), body)
 
 

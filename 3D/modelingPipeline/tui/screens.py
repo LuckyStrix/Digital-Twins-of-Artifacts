@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import fnmatch
+import os
 from pathlib import Path
-from typing import Iterable
+from typing import Iterable, Iterator
 
 from rich.text import Text
 from textual import on, work
@@ -13,7 +14,7 @@ from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen
 from textual.widgets import (
-    Button, Checkbox, DataTable, DirectoryTree, Input, OptionList, Static,
+    Button, Checkbox, DataTable, DirectoryTree, Input, OptionList, Static, Tree,
 )
 from textual.widgets.option_list import Option
 
@@ -26,16 +27,18 @@ class ConfirmScreen(ModalScreen[bool]):
                 Binding("y", "dismiss(True)", "Yes", show=False),
                 Binding("n", "dismiss(False)", "No", show=False)]
 
-    def __init__(self, title: str, message: str, yes: str = "Yes", no: str = "Cancel"):
+    def __init__(self, title: str, message: str, yes: str = "Yes", no: str = "Cancel",
+                 yes_variant: str = "error"):
         super().__init__()
         self._title, self._message, self._yes, self._no = title, message, yes, no
+        self._yes_variant = yes_variant
 
     def compose(self) -> ComposeResult:
         with Vertical(id="confirm", classes="dialog"):
             yield Static(self._title, classes="dialog-title")
             yield Static(self._message, classes="dialog-body")
             with Horizontal(classes="dialog-btns"):
-                yield Button(self._yes, variant="error", id="yes", compact=True)
+                yield Button(self._yes, variant=self._yes_variant, id="yes", compact=True)
                 yield Button(self._no, id="no", compact=True)
 
     def on_mount(self) -> None:
@@ -50,22 +53,98 @@ class ConfirmScreen(ModalScreen[bool]):
         self.dismiss(False)
 
 
+class NewFolderScreen(ModalScreen["str | None"]):
+    """Ask for a folder name; returns it, or None on cancel."""
+
+    BINDINGS = [Binding("escape", "dismiss(None)", "Cancel")]
+
+    def __init__(self, parent: Path):
+        super().__init__()
+        self.parent_dir = parent
+
+    def compose(self) -> ComposeResult:
+        with Vertical(id="new-folder", classes="dialog"):
+            yield Static("New folder", classes="dialog-title")
+            yield Static(f"In {self.parent_dir}", classes="dialog-body")
+            yield Input(id="folder-name", compact=True, placeholder="Folder name")
+            with Horizontal(classes="dialog-btns"):
+                yield Button("Create", variant="primary", id="create", compact=True)
+                yield Button("Cancel", id="cancel", compact=True)
+
+    def on_mount(self) -> None:
+        self.query_one("#folder-name", Input).focus()
+
+    @on(Input.Submitted, "#folder-name")
+    @on(Button.Pressed, "#create")
+    def _create(self) -> None:
+        name = self.query_one("#folder-name", Input).value.strip()
+        if not name:
+            self.notify("Type a folder name.", severity="warning")
+        elif name in (".", "..") or "/" in name or "\\" in name:
+            self.notify("A folder name can't contain / or \\.", severity="warning")
+        else:
+            self.dismiss(name)
+
+    @on(Button.Pressed, "#cancel")
+    def _cancel(self) -> None:
+        self.dismiss(None)
+
+
 # ── folder / file picker ──────────────────────────────────────────────────────
 
 class _FilteredTree(DirectoryTree):
+    """DirectoryTree that filters, lists folders quickly, and opens on click.
+
+    Clicking a folder only ever expands it; collapse with its arrow, space or
+    left. (With Textual's toggle-on-select, a second click made while a slow
+    folder was still loading queued up behind the loader and collapsed it
+    again, so it took a third click to see the contents.)"""
+
     def __init__(self, path, *, dirs_only: bool, pattern: str = "", **kw):
         self.dirs_only, self.pattern = dirs_only, pattern
+        self._is_dir_cache: dict[Path, bool] = {}
         super().__init__(path, **kw)
+        self.auto_expand = False
+
+    @on(Tree.NodeSelected)
+    def _expand_on_select(self, event: Tree.NodeSelected) -> None:
+        if event.node.allow_expand and not event.node.is_expanded:
+            event.node.expand()
+
+    def _directory_content(self, location: Path, worker) -> Iterator[Path]:
+        # scandir says whether each entry is a folder without a stat per entry
+        # (DirectoryTree stats every entry three times, which is slow on
+        # /mnt/c and network drives); remember the answer for _safe_is_dir.
+        try:
+            with os.scandir(location) as it:
+                for entry in it:
+                    if worker.is_cancelled:
+                        break
+                    try:
+                        entry_is_dir = entry.is_dir()
+                    except OSError:
+                        entry_is_dir = False
+                    p = location / entry.name
+                    self._is_dir_cache[p] = entry_is_dir
+                    yield p
+        except OSError:
+            pass
+
+    def _safe_is_dir(self, path: Path) -> bool:
+        cached = self._is_dir_cache.get(path)
+        if cached is not None:
+            return cached
+        try:
+            return path.is_dir()
+        except OSError:
+            return False
 
     def filter_paths(self, paths: Iterable[Path]) -> Iterable[Path]:
         out = []
         for p in paths:
             if p.name.startswith("."):
                 continue
-            try:
-                is_dir = p.is_dir()
-            except OSError:
-                continue
+            is_dir = self._safe_is_dir(p)
             if is_dir or (not self.dirs_only and (
                     not self.pattern or fnmatch.fnmatch(p.name.lower(), self.pattern.lower()))):
                 out.append(p)
@@ -93,7 +172,8 @@ class PathPicker(ModalScreen["str | None"]):
     takes Windows paths. Under WSL a "Windows dialog…" button opens the
     native Explorer picker (automatically on open, if enabled)."""
 
-    BINDINGS = [Binding("escape", "dismiss(None)", "Cancel")]
+    BINDINGS = [Binding("escape", "dismiss(None)", "Cancel"),
+                Binding("ctrl+n", "new_folder", "New folder")]
 
     def __init__(self, mode: str, title: str, initial: str = "", pattern: str = "",
                  recents: list[str] | None = None, auto_native: bool = False):
@@ -125,6 +205,7 @@ class PathPicker(ModalScreen["str | None"]):
             yield Input(self.initial or str(self.start), id="picker-path", compact=True,
                         placeholder="Type or paste a path (Windows paths work too)")
             with Horizontal(classes="dialog-btns"):
+                yield Button("New folder…", id="new-folder-btn", compact=True)
                 if plat.running_under_wsl():
                     yield Checkbox("Open Windows dialog first", self.auto_native,
                                    id="auto-native", compact=True)
@@ -206,15 +287,74 @@ class PathPicker(ModalScreen["str | None"]):
         except RuntimeError:          # ~unknownuser
             return p
 
+    def current_folder(self) -> Path:
+        """The folder a new folder goes in: the path box's folder, else the tree's."""
+        p = self.typed_path()
+        if is_dir(p):
+            return p
+        if is_dir(p.parent):
+            return p.parent
+        return Path(self.query_one("#tree", _FilteredTree).path)
+
+    def action_new_folder(self) -> None:
+        base = self.current_folder()
+
+        def named(name: str | None) -> None:
+            if not name:
+                return
+            new = base / name
+            try:
+                new.mkdir()
+            except FileExistsError:
+                if not is_dir(new):
+                    self.notify(f"A file named {name} already exists.", severity="warning")
+                    return
+            except OSError as e:
+                self.notify(f"Could not create {new}:\n{e}", severity="error")
+                return
+            else:
+                self.notify(f"Created {new}", timeout=3)
+            tree = self.query_one("#tree", _FilteredTree)
+            if Path(tree.path) == base:
+                tree.reload()
+            else:
+                tree.path = base
+            self.query_one("#picker-path", Input).value = str(new)
+
+        self.app.push_screen(NewFolderScreen(base), named)
+
+    @on(Button.Pressed, "#new-folder-btn")
+    def _new_folder_pressed(self) -> None:
+        self.action_new_folder()
+
     def accept(self) -> None:
         p = self.typed_path()
         if self.mode == "dir" and not is_dir(p):
-            self.notify(f"Not a folder: {p}", severity="warning")
+            if p.is_absolute() and not is_file(p):
+                self.offer_create(p)
+            else:
+                self.notify(f"Not a folder: {p}", severity="warning")
             return
         if self.mode == "file" and not is_file(p):
             self.notify(f"Not a file: {p}", severity="warning")
             return
         self.dismiss(str(p))
+
+    def offer_create(self, p: Path) -> None:
+        """A typed folder that doesn't exist yet: offer to create and use it."""
+        def answered(yes: bool | None) -> None:
+            if not yes:
+                return
+            try:
+                p.mkdir(parents=True, exist_ok=True)
+            except OSError as e:
+                self.notify(f"Could not create {p}:\n{e}", severity="error")
+                return
+            self.dismiss(str(p))
+
+        self.app.push_screen(ConfirmScreen(
+            "Create folder?", f"{p}\ndoesn't exist yet. Create it and use it?",
+            yes="Create", yes_variant="primary"), answered)
 
     @on(Button.Pressed, "#ok")
     def _ok(self) -> None:

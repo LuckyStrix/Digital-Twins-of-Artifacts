@@ -39,6 +39,9 @@ ProgressFn = Callable[[int, int, str], None]
 # After SIGTERM, how long a stopped process group gets before SIGKILL.
 STOP_GRACE_SECONDS = 3.0
 
+# `nice` level for stage subprocesses (0 = normal, 19 = lowest priority).
+STAGE_NICENESS = 10
+
 _POSIX = os.name == "posix"
 
 
@@ -447,8 +450,13 @@ class PipelineRunner:
         if self._stop_req:
             return -1
         e = {**(env or os.environ.copy()), "PYTHONUNBUFFERED": "1"}
+        # Lower CPU priority so the UI stays responsive while a stage keeps
+        # every core busy. nice execs the command, so the pid (and the
+        # process group _terminate signals) is still the stage's own.
+        nice = shutil.which("nice") if _POSIX else None
+        launch = [nice, "-n", str(STAGE_NICENESS), *cmd] if nice else cmd
         proc = subprocess.Popen(
-            cmd, cwd=str(cwd), env=e,
+            launch, cwd=str(cwd), env=e,
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
             text=True, bufsize=1, errors="replace",
             start_new_session=_POSIX,

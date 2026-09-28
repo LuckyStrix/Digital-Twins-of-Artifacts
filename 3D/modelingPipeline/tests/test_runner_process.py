@@ -7,7 +7,7 @@ import time
 
 import pytest
 
-from pipeline.runner import PipelineRunner
+from pipeline.runner import STAGE_NICENESS, PipelineRunner
 from pipeline.settings import Settings
 
 POSIX = os.name == "posix"
@@ -36,6 +36,16 @@ def test_run_proc_sets_unbuffered(tmp_path):
     code = "import os; print(os.environ['PYTHONUNBUFFERED'], os.environ.get('X'))"
     r._run_proc([sys.executable, "-c", code], cwd=tmp_path, env={**os.environ, "X": "y"})
     assert ("1 y", "output") in logs
+
+
+@pytest.mark.skipif(not POSIX, reason="nice is POSIX-only")
+def test_run_proc_lowers_cpu_priority(tmp_path):
+    r, logs = make_runner()
+    code = "import os; print('nice', os.nice(0) - PARENT)".replace("PARENT", str(os.nice(0)))
+    r._run_proc([sys.executable, "-c", code], cwd=tmp_path)
+    assert logs[0] == (f"$ {sys.executable} -c {code}", "header")   # log shows the real command
+    expected = min(STAGE_NICENESS, 19 - os.nice(0))                 # capped at 19
+    assert (f"nice {expected}", "output") in logs
 
 
 def _stop_soon(r, delay=0.5):

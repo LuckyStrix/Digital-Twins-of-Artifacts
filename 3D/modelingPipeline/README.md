@@ -131,6 +131,21 @@ Mirrors the `app.py` module docstring:
    `output/model.gltf` (plus `output/model_simplified.glb` and, if the Inputs
    tab's Artifact info Name is set, `output/info.txt`)
 
+### Run records
+
+Every run started from the app (one stage or Run all) also writes to the
+output folder:
+
+- `pipeline.log`: every log line with a millisecond timestamp, including all
+  subprocess output. Each run is appended under a `===== run started … =====`
+  header.
+- `pipeline_runs.json`: `{"runs": [...]}`, one entry per run with every
+  setting, the machine and package versions (git commit, stage venv packages,
+  GPU), input image counts and sizes, and for each stage its start/end,
+  `duration_s`, result (`done`/`failed`/`stopped`), the time each progress step
+  was reached, and output sizes (processed images, point counts). It is
+  rewritten after each stage, so a crash keeps the stages that finished.
+
 ## GUI reference
 
 `app.py` has four settings tabs (Inputs, COLMAP, Reconstruct, Alignment)
@@ -379,7 +394,8 @@ set on the Inputs tab).
 ```
 app.py                  Starts the terminal UI (4 stages)
 app_defaults.json       Saved default settings, pre-filled when the app opens
-pipeline/               UI-free core: settings registry, stage runner, parsers, paths, WSL helpers
+pipeline/               UI-free core: settings registry, stage runner, parsers, paths, WSL helpers,
+                        run records (runlog.py)
 tui/                    Textual UI: layout, widgets, pickers, ICP details
 tests/                  pytest suite (python3 -m pytest tests)
 process_photos.py       Stage 1: background removal

@@ -9,6 +9,9 @@ thread, e.g. Textual's ``app.call_from_thread``):
                                           "output" – subprocess stdout/stderr
     on_stage_state(idx, state, status)    state: waiting/running/done/failed
     on_progress(idx, pct, text)
+
+Runs started with ``run_stage``/``run_all`` are also recorded in the session
+folder (``pipeline.log`` and ``pipeline_runs.json``; see ``runlog``).
 """
 
 from __future__ import annotations
@@ -27,6 +30,7 @@ from . import ALIGN_DIR, SCRIPT_DIR
 from .parsers import AlignParser, ColmapParser, PhotosParser, ReconParser
 from .paths import SessionPaths
 from .platform import venv_python
+from .runlog import RunRecorder
 
 LogFn = Callable[[str, str], None]
 StateFn = Callable[[int, str, str], None]
@@ -238,9 +242,10 @@ class PipelineRunner:
         self._live_settings = settings
         self.settings = settings
         self.paths = SessionPaths(settings)
-        self._on_log = on_log or (lambda text, kind: None)
-        self._on_stage_state = on_stage_state or (lambda idx, state, status: None)
-        self._on_progress = on_progress or (lambda idx, pct, text: None)
+        self._ui_log = on_log or (lambda text, kind: None)
+        self._ui_stage_state = on_stage_state or (lambda idx, state, status: None)
+        self._ui_progress = on_progress or (lambda idx, pct, text: None)
+        self._recorder: RunRecorder | None = None
 
         self._proc: subprocess.Popen | None = None
         self._stop_req = False
@@ -254,11 +259,11 @@ class PipelineRunner:
 
     def run_stage(self, idx: int) -> bool:
         """Run one stage in a background thread. False if already running."""
-        return self._start(lambda: self.execute_stage(idx))
+        return self._start(lambda: self.execute_stage(idx), f"stage {idx + 1}")
 
     def run_all(self) -> bool:
         """Run all stages in a background thread. False if already running."""
-        return self._start(self.execute_all)
+        return self._start(self.execute_all, "all")
 
     def stop(self) -> None:
         self._stop_req = True
@@ -303,15 +308,59 @@ class PipelineRunner:
         ts = datetime.now().strftime("%H:%M:%S")
         self._on_log(f"[{ts}] {msg}", "info")
 
+    # ── callbacks: to the UI, and to the run record while one is open ─────────
+    def _on_log(self, text: str, kind: str) -> None:
+        self._ui_log(text, kind)
+        rec = self._recorder
+        if rec:
+            rec.log(text, kind)
+
+    def _on_stage_state(self, idx: int, state: str, status: str) -> None:
+        self._ui_stage_state(idx, state, status)
+        rec = self._recorder
+        if rec:
+            rec.stage_state(idx, state, stopped=self._stop_req)
+
+    def _on_progress(self, idx: int, pct: int, text: str) -> None:
+        self._ui_progress(idx, pct, text)
+        rec = self._recorder
+        if rec:
+            rec.progress(idx, pct, text)
+
+    def _recorded(self, target: Callable[[], object], mode: str) -> None:
+        """Run `target`, recording it in the session folder when there is one.
+
+        With neither an input nor an output folder set there is nothing to
+        run on (stage 1 fails at once), so nothing is written to the default
+        folder in the home directory."""
+        rec = None
+        if any(str(self.settings.get(k, "")).strip() for k in ("output_var", "input_var")):
+            rec = RunRecorder(self.paths.session_dir(), self.settings, mode)
+            rec.start()
+            if rec.enabled:
+                self._recorder = rec
+            else:
+                self.log(f"[pipeline] Warning: can't write the run log ({rec.error})")
+        ok = False
+        try:
+            ok = bool(target())
+        finally:
+            if self._recorder:
+                self._recorder = None
+                rec.finish("done" if ok else "stopped" if self._stop_req else "failed")
+                if not rec.enabled:
+                    self.log(f"[pipeline] Warning: run log incomplete ({rec.error})")
+
     # ── threading / processes ─────────────────────────────────────────────────
-    def _start(self, target: Callable[[], object]) -> bool:
+    def _start(self, target: Callable[[], object], mode: str) -> bool:
         with self._lock:
             if self.is_running:
                 return False
             self._stop_req = False
             self.settings = copy.copy(self._live_settings)
             self.paths = SessionPaths(self.settings)
-            self._thread = threading.Thread(target=target, daemon=True)
+            self._thread = threading.Thread(target=self._recorded, args=(target, mode),
+                                            daemon=True)
             self._thread.start()
         return True
 

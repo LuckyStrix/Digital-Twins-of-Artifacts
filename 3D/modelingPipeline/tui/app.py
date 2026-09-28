@@ -245,9 +245,13 @@ class ReconApp(App):
             return
         value = event.input.value
         if plat.needs_normalising(value):
-            conv = plat.to_posix_path(value)
-            if conv != value:
-                self.form.set_value(key, conv, notify=True)
+            self._convert_path_field(key, value)
+
+    @work(thread=True, group="path-convert")
+    def _convert_path_field(self, key: str, value: str) -> None:
+        conv = plat.to_posix_path(value)
+        if conv != value:
+            self.call_from_thread(self.form.set_value, key, conv, notify=True)
 
     # ── log pane ──────────────────────────────────────────────────────────────
     def _max_log_height(self) -> int:
@@ -321,9 +325,15 @@ class ReconApp(App):
                     "They'll be pre-filled next time the app opens.", title="Save defaults")
 
     def action_open_session(self) -> None:
-        err = plat.open_folder(self.paths.session_dir())
+        self._open_folder(self.paths.session_dir(), title="Open folder",
+                           severity="warning", timeout=10)
+
+    @work(thread=True, group="open-folder")
+    def _open_folder(self, path: Path, *, title: str, severity: str, timeout: float) -> None:
+        err = plat.open_folder(path)
         if err:
-            self.notify(err, title="Open folder", severity="warning", timeout=10)
+            self.call_from_thread(self.notify, err, title=title,
+                                  severity=severity, timeout=timeout)
 
     def get_system_commands(self, screen):
         yield from super().get_system_commands(screen)
@@ -374,9 +384,8 @@ class ReconApp(App):
             return
         if idx == 0:
             # Photo gallery: the processed images in the desktop file manager.
-            err = plat.open_folder(path)
-            if err:
-                self.notify(err, title="Processed photos", timeout=15)
+            self._open_folder(path, title="Processed photos",
+                               severity="information", timeout=15)
             return
         if not plat.has_display():
             self.notify(f"No display available to open the 3D viewer. File:\n{path}",

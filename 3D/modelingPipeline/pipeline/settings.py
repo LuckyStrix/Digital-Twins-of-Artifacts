@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import math
+import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -469,7 +470,10 @@ class Settings(dict):
 
     def save(self, path: Path = DEFAULTS_PATH) -> None:
         """Write the persisted settings. Raises OSError on failure."""
-        Path(path).write_text(json.dumps(self.persisted(), indent=2))
+        path = Path(path)
+        tmp = path.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(self.persisted(), indent=2))
+        os.replace(tmp, path)
 
     def text(self, key: str) -> str:
         """String value, stripped (like ``var.get().strip()`` in the Tk GUI)."""

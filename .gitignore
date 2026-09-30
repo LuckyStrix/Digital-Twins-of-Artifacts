@@ -2,6 +2,7 @@ data/
 
 # Per-pillar Python virtualenvs
 .venv/
+.venv-colorfit/
 
 # 3D: locally built CUDA COLMAP binary + its source/build tree (see 3D/modelingPipeline/BUILDING_COLMAP.md)
 3D/modelingPipeline/colmap_local
@@ -15,15 +16,7 @@ data/
 ~*.lck
 
 # 2D: local calibration photos
-2D/backend/calibration/eco.tiff
-2D/backend/calibration/allLight.tiff
-2D/backend/calibration/ecross.tiff
-2D/backend/calibration/nco.tiff
-2D/backend/calibration/ncross.tiff
-2D/backend/calibration/sco.tiff
-2D/backend/calibration/scross.tiff
-2D/backend/calibration/wco.tiff
-2D/backend/calibration/wcross.tiff
+2D/backend/calibration/
 
 # Python bytecode caches
 __pycache__/

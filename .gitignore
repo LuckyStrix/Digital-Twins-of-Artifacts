@@ -17,7 +17,7 @@ data/
 # Colour-fit environment (see 2D/backend/modeling/requirements-colorfit.txt)
 .venv-colorfit/
 
-# 2D: local calibration photos
+# Local calibration data (user specific)
 2D/backend/calibration/
 
 # Python bytecode caches

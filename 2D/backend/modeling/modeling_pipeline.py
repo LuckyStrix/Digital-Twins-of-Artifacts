@@ -15,10 +15,14 @@ stage to turn into a textured 3D model.
     scroll from the background, producing the binary AlphaMask used by all
     subsequent stages.
 
-  Stage 1 - Lighting Calibration
+  Stage 1 - Lighting Calibration + Registration
     Corrects vignetting and per-light illumination falloff using photos of flat
     copy paper, producing corrected scroll images that behave as if lit by
-    uniform, infinitely distant lights with a perfect lens.
+    uniform, infinitely distant lights with a perfect lens.  Each corrected
+    image is then shifted into allLight's pixel frame, undoing the jump when
+    the polariser rotates between the cross and co sets and the slow camera
+    drift across a scan, so the co - cross subtraction and the alpha mask
+    (also built from allLight) line up pixel for pixel.
 
   Stage 2 - Core Maps (Normal, Diffuse, Specular, Roughness)
     Derives the normal map from the calibrated cross-polarised images using
@@ -65,7 +69,7 @@ OUTPUTS WRITTEN BY THIS SCRIPT (into output/ next to this file):
 ─────────────────────────────────────────────────────────────────────────────
 
   output/
-    1_calibrated/        ← Stage 1: illumination-corrected images
+    1_calibrated/        ← Stage 1: illumination-corrected, registered to allLight
       nco_cal.tiff  ncross_cal.tiff  sco_cal.tiff  scross_cal.tiff
       eco_cal.tiff  ecross_cal.tiff  wco_cal.tiff  wcross_cal.tiff
 
@@ -157,6 +161,17 @@ MASK_DILATE_PX  = 0
 # envelopes.  Must be large enough to erase paper grain while keeping the slow
 # illumination gradient.  200 px is appropriate for ~5 Mpx images.
 SMOOTH_SIGMA = 200.0
+
+# Register every scroll image to allLight after correction.  Rotating the
+# polariser between the cross and co sets shifts the image ~10 px, and the
+# camera drifts a few px over a scan; unregistered, co - cross turns into an
+# emboss (bright ghost offset from dark ink) in the specular map.
+REGISTER_TO_ALLLIGHT = True
+REGISTER_IMG         = "allLight.tiff"
+# Shifts larger than this are treated as a failed match and not applied.
+REGISTER_MAX_SHIFT   = 60.0
+# Phase-correlation peak response below this is reported as unreliable.
+REGISTER_MIN_RESPONSE = 0.1
 
 # ── Stage 2: Specular map parameters ──────────────────────────────────────────
 SPECULAR_BOOST = 3
@@ -440,8 +455,51 @@ def apply_correction(scroll_uint16: np.ndarray, envelope: np.ndarray) -> np.ndar
     return (np.clip(corrected, 0.0, 1.0) * 65535).astype(np.uint16)
 
 
+# ── Registration ────────────────────────────────────────────────────────────
+#   The cross and co sets are shot either side of a polariser rotation, which
+#   shifts the image on the sensor by ~10 px; the camera also drifts a few px
+#   across the capture sequence.  Every image is translated into allLight's
+#   frame, the frame the alpha mask is built in.  allLight is lit from all four
+#   sides, so it has no directional shading to bias the match.
+#
+#   Translation is estimated by phase correlation on log-luminance with the
+#   low frequencies removed: the log turns lighting into an additive term and
+#   the high-pass strips it, leaving the surface texture shared by all images.
+#   Measured rotation between shots is <0.03°, so translation alone is enough.
+
+def _registration_signal(img_uint16: np.ndarray) -> np.ndarray:
+    """High-passed log-luminance, windowed, for phase correlation."""
+    f = img_uint16.astype(np.float32) / 65535.0
+    if f.ndim == 3:
+        f = 0.0722 * f[:, :, 0] + 0.7152 * f[:, :, 1] + 0.2126 * f[:, :, 2]
+    f  = np.log(f + 1e-3)
+    hp = f - cv2.GaussianBlur(f, (0, 0), 10)
+    hp /= max(float(hp.std()), 1e-10)
+    return hp * cv2.createHanningWindow(hp.shape[::-1], cv2.CV_32F)
+
+
+def estimate_shift(ref_sig: np.ndarray, img_uint16: np.ndarray) -> tuple[float, float, float]:
+    """Return (dx, dy, response): how far img's content sits from ref's."""
+    sig = _registration_signal(img_uint16)
+    if sig.shape != ref_sig.shape:
+        raise ValueError(
+            f"Image size {sig.shape[::-1]} does not match {REGISTER_IMG} "
+            f"{ref_sig.shape[::-1]} - cannot register."
+        )
+    (dx, dy), response = cv2.phaseCorrelate(ref_sig, sig)
+    return float(dx), float(dy), float(response)
+
+
+def apply_shift(img_uint16: np.ndarray, dx: float, dy: float) -> np.ndarray:
+    """Translate img by (-dx, -dy) so its content lands on the reference frame."""
+    h, w = img_uint16.shape[:2]
+    M = np.float32([[1, 0, -dx], [0, 1, -dy]])
+    return cv2.warpAffine(img_uint16, M, (w, h), flags=cv2.INTER_CUBIC,
+                          borderMode=cv2.BORDER_REPLICATE)
+
+
 def run_calibration() -> None:
-    """Stage 1: produce illumination-corrected versions of all 8 scroll images."""
+    """Stage 1: illumination-correct all 8 scroll images and register them to allLight."""
     print("\n")
     print("  STAGE 1 - LIGHTING CALIBRATION")
     print("\n")
@@ -476,11 +534,34 @@ def run_calibration() -> None:
         print(f"  {'allLight.tiff':<20s}  range [{al_env.min():.3f}, "
               f"{al_env.max():.3f}]  (reference only, not applied)")
 
-    # Divide each scroll image by its matching envelope
+    # Registration reference: allLight from the scroll scan (not calibration)
+    ref_sig = None
+    if REGISTER_TO_ALLLIGHT:
+        ref_path = SCROLL_DIR / REGISTER_IMG
+        if ref_path.exists():
+            ref_sig = _registration_signal(load16(ref_path))
+        else:
+            print(f"\n  WARNING: {ref_path} not found - skipping registration. "
+                  "Specular map will show emboss artifacts if co/cross are offset.")
+
+    # Divide each scroll image by its matching envelope (in the sensor frame,
+    # where the envelope was measured), then shift it into allLight's frame.
     print("\nApplying corrections to scroll images...")
     for name in LIGHT_IMAGES:
         scroll    = load16(SCROLL_DIR / name)
         corrected = apply_correction(scroll, envelopes[name])
+
+        if ref_sig is not None:
+            dx, dy, resp = estimate_shift(ref_sig, scroll)
+            note = ""
+            if np.hypot(dx, dy) > REGISTER_MAX_SHIFT:
+                note = f"  WARNING: exceeds {REGISTER_MAX_SHIFT:.0f} px - not applied"
+            else:
+                corrected = apply_shift(corrected, dx, dy)
+                if resp < REGISTER_MIN_RESPONSE:
+                    note = "  WARNING: weak match - check this image"
+            print(f"  {name:<14s} shift to {REGISTER_IMG}: "
+                  f"dx={-dx:+6.2f} dy={-dy:+6.2f} px  (response {resp:.2f}){note}")
 
         stem, ext = os.path.splitext(name)
         out_path  = CAL_OUT / f"{stem}_cal{ext}"

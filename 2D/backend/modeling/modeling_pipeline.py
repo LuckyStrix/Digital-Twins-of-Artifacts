@@ -15,10 +15,14 @@ stage to turn into a textured 3D model.
     scroll from the background, producing the binary AlphaMask used by all
     subsequent stages.
 
-  Stage 1 - Lighting Calibration
+  Stage 1 - Lighting Calibration + Registration
     Corrects vignetting and per-light illumination falloff using photos of flat
     copy paper, producing corrected scroll images that behave as if lit by
-    uniform, infinitely distant lights with a perfect lens.
+    uniform, infinitely distant lights with a perfect lens.  Each corrected
+    image is then shifted into allLight's pixel frame, undoing the jump when
+    the polariser rotates between the cross and co sets and the slow camera
+    drift across a scan, so the co - cross subtraction and the alpha mask
+    (also built from allLight) line up pixel for pixel.
 
   Stage 2 - Core Maps (Normal, Diffuse, Specular, Roughness)
     Derives the normal map from the calibrated cross-polarised images using
@@ -65,7 +69,7 @@ OUTPUTS WRITTEN BY THIS SCRIPT (into output/ next to this file):
 ─────────────────────────────────────────────────────────────────────────────
 
   output/
-    1_calibrated/        ← Stage 1: illumination-corrected images
+    1_calibrated/        ← Stage 1: illumination-corrected, registered to allLight
       nco_cal.tiff  ncross_cal.tiff  sco_cal.tiff  scross_cal.tiff
       eco_cal.tiff  ecross_cal.tiff  wco_cal.tiff  wcross_cal.tiff
 
@@ -200,6 +204,17 @@ CAL_CLIP_WARN_FRAC = 0.001
 # Apply the fitted ColorChecker correction at the end of Stage 1. Set False to
 # process with an identity correction (useful for A/B against older output).
 COLOR_CORRECTION = True
+
+# Register every scroll image to allLight after correction.  Rotating the
+# polariser between the cross and co sets shifts the image ~10 px, and the
+# camera drifts a few px over a scan; unregistered, co - cross turns into an
+# emboss (bright ghost offset from dark ink) in the specular map.
+REGISTER_TO_ALLLIGHT = True
+REGISTER_IMG         = "allLight.tiff"
+# Shifts larger than this are treated as a failed match and not applied.
+REGISTER_MAX_SHIFT   = 60.0
+# Phase-correlation peak response below this is reported as unreliable.
+REGISTER_MIN_RESPONSE = 0.1
 
 # ── Stage 2: Specular map parameters ──────────────────────────────────────────
 SPECULAR_BOOST = 3
@@ -532,8 +547,51 @@ def _warn_if_clipped(img_uint16: np.ndarray, name: str) -> float:
     return frac
 
 
+# ── Registration ────────────────────────────────────────────────────────────
+#   The cross and co sets are shot either side of a polariser rotation, which
+#   shifts the image on the sensor by ~10 px; the camera also drifts a few px
+#   across the capture sequence.  Every image is translated into allLight's
+#   frame, the frame the alpha mask is built in.  allLight is lit from all four
+#   sides, so it has no directional shading to bias the match.
+#
+#   Translation is estimated by phase correlation on log-luminance with the
+#   low frequencies removed: the log turns lighting into an additive term and
+#   the high-pass strips it, leaving the surface texture shared by all images.
+#   Measured rotation between shots is <0.03°, so translation alone is enough.
+
+def _registration_signal(img_uint16: np.ndarray) -> np.ndarray:
+    """High-passed log-luminance, windowed, for phase correlation."""
+    f = img_uint16.astype(np.float32) / 65535.0
+    if f.ndim == 3:
+        f = 0.0722 * f[:, :, 0] + 0.7152 * f[:, :, 1] + 0.2126 * f[:, :, 2]
+    f  = np.log(f + 1e-3)
+    hp = f - cv2.GaussianBlur(f, (0, 0), 10)
+    hp /= max(float(hp.std()), 1e-10)
+    return hp * cv2.createHanningWindow(hp.shape[::-1], cv2.CV_32F)
+
+
+def estimate_shift(ref_sig: np.ndarray, img_uint16: np.ndarray) -> tuple[float, float, float]:
+    """Return (dx, dy, response): how far img's content sits from ref's."""
+    sig = _registration_signal(img_uint16)
+    if sig.shape != ref_sig.shape:
+        raise ValueError(
+            f"Image size {sig.shape[::-1]} does not match {REGISTER_IMG} "
+            f"{ref_sig.shape[::-1]} - cannot register."
+        )
+    (dx, dy), response = cv2.phaseCorrelate(ref_sig, sig)
+    return float(dx), float(dy), float(response)
+
+
+def apply_shift(img_uint16: np.ndarray, dx: float, dy: float) -> np.ndarray:
+    """Translate img by (-dx, -dy) so its content lands on the reference frame."""
+    h, w = img_uint16.shape[:2]
+    M = np.float32([[1, 0, -dx], [0, 1, -dy]])
+    return cv2.warpAffine(img_uint16, M, (w, h), flags=cv2.INTER_CUBIC,
+                          borderMode=cv2.BORDER_REPLICATE)
+
+
 def run_calibration() -> None:
-    """Stage 1: produce illumination-corrected versions of all 8 scroll images."""
+    """Stage 1: illumination-correct all 8 scroll images and register them to allLight."""
     cal_enc  = cc.read_capture_info(CAL_DIR)
     scan_enc = cc.read_capture_info(SCROLL_DIR)
     ccm_path = cc.find_ccm(CAL_DIR)
@@ -600,8 +658,24 @@ def run_calibration() -> None:
         print(f"  {'allLight.tiff':<20s}  range [{al_env.min():.3f}, "
               f"{al_env.max():.3f}]  (reference only, not applied)")
 
-    def corrected_image(name: str, report: bool = False) -> np.ndarray:
-        """Linearise -> flat-field -> colour-correct. The whole of Stage 1."""
+    # Registration reference: allLight from the scroll scan (not calibration)
+    ref_sig = None
+    if REGISTER_TO_ALLLIGHT:
+        ref_path = SCROLL_DIR / REGISTER_IMG
+        if ref_path.exists():
+            ref_sig = _registration_signal(load16(ref_path))
+        else:
+            print(f"\n  WARNING: {ref_path} not found - skipping registration. "
+                  "Specular map will show emboss artifacts if co/cross are offset.")
+
+    def corrected_image(name: str, report: bool = False,
+                        register: bool = False) -> np.ndarray:
+        """Linearise -> flat-field -> colour-correct -> register to allLight.
+
+        Registration is off for the headroom-measuring pass: a shift of a few
+        pixels cannot move a 99.99th percentile, and it saves 8 phase
+        correlations.
+        """
         raw = load16(SCROLL_DIR / name)
         if report:
             # Per-CHANNEL, unlike the calibration check: a warm subject under a
@@ -616,7 +690,22 @@ def run_calibration() -> None:
                           "recovered there - re-shoot with less exposure.")
         linear  = cc.to_linear(raw.astype(np.float32) / 65535.0, scan_enc)
         divided = apply_correction(linear, envelopes[name])
-        return corr_bgr.apply(divided)   # <- END OF STAGE 1 (identity until fitted)
+        out     = corr_bgr.apply(divided)   # identity until fitted
+
+        # Shift into allLight's frame. The envelope above was measured in the
+        # sensor frame, so this must come after the divide, never before.
+        if register and ref_sig is not None:
+            dx, dy, resp = estimate_shift(ref_sig, raw)
+            note = ""
+            if np.hypot(dx, dy) > REGISTER_MAX_SHIFT:
+                note = f"  WARNING: exceeds {REGISTER_MAX_SHIFT:.0f} px - not applied"
+            else:
+                out = apply_shift(out, dx, dy)
+                if resp < REGISTER_MIN_RESPONSE:
+                    note = "  WARNING: weak match - check this image"
+            print(f"    shift to {REGISTER_IMG}: "
+                  f"dx={-dx:+6.2f} dy={-dy:+6.2f} px  (response {resp:.2f}){note}")
+        return out    # <- END OF STAGE 1
 
     # Pass 1: how much headroom does this data actually need? Only scalars are
     # kept, so memory stays flat; the expensive part (the envelopes) is already
@@ -642,11 +731,11 @@ def run_calibration() -> None:
                   "the calibration set is over-exposed, which inflates the "
                   "flat-field divide in the dim corners.")
 
-    # Pass 2: write.
+    # Pass 2: correct, register and write.
     print("\nApplying corrections to scroll images...")
     for name in LIGHT_IMAGES:
         print(f"  {name}")
-        corrected = corrected_image(name, report=True)
+        corrected = corrected_image(name, report=True, register=True)
         over = float((corrected > headroom).mean())
         u16  = (np.clip(corrected / headroom, 0.0, 1.0) * 65535).astype(np.uint16)
 

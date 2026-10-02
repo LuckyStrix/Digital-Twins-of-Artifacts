@@ -283,6 +283,40 @@ def resolve_cal_dir(scroll_dir: Path, global_fallback: Path) -> Path:
     return Path(global_fallback)
 
 
+# The flat-field envelope is a sigma-200 blur, i.e. it keeps only the slow
+# illumination gradient. It is computed at 1/ENVELOPE_DOWNSAMPLE resolution
+# (sigma scaled to match) and upsampled: a full-resolution blur was ~25 s per
+# 24 Mpx image, two thirds of the whole pipeline, for a visually identical
+# result (max error ~0.1% of the envelope). 1 = exact full-resolution blur.
+#
+# This lives here, not in either caller, because Stage 1 and the colour fit
+# MUST build the envelope identically (see the invariant in the header).
+ENVELOPE_DOWNSAMPLE = 8
+
+
+def smooth_luminance(lum: np.ndarray, sigma: float,
+                     downsample: int | None = None) -> np.ndarray:
+    """Heavily blurred copy of a 2-D luminance image, float32, same shape.
+
+    INTER_AREA averages the source pixels, so grain and small dark spots on the
+    copy paper are already gone before the blur runs. cv2/scipy are imported
+    lazily so the rest of this module stays numpy-only.
+    """
+    import cv2
+    from scipy.ndimage import gaussian_filter
+
+    f = ENVELOPE_DOWNSAMPLE if downsample is None else downsample
+    h, w = lum.shape
+    if f <= 1:
+        return gaussian_filter(np.asarray(lum, dtype=np.float64),
+                               sigma=sigma).astype(np.float32)
+    small = cv2.resize(np.asarray(lum, dtype=np.float32),
+                       (max(w // f, 1), max(h // f, 1)),
+                       interpolation=cv2.INTER_AREA)
+    small = gaussian_filter(small, sigma=sigma / f)
+    return cv2.resize(small, (w, h), interpolation=cv2.INTER_LINEAR)
+
+
 def find_ccm(cal_dir: Path) -> Path | None:
     """The fitted matrix for a calibration set, or None if it has not been fitted."""
     p = Path(cal_dir) / CCM_NAME

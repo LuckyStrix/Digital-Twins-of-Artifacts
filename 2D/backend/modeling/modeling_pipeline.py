@@ -116,7 +116,7 @@ import cv2
 import tifffile
 from PIL import Image
 from pathlib import Path
-from scipy.ndimage import gaussian_filter
+import scipy.fft as sfft
 
 import color_correction as cc
 
@@ -465,7 +465,9 @@ def illumination_envelope(cal_linear_bgr: np.ndarray) -> np.ndarray:
     else:
         lum = f
 
-    smooth = gaussian_filter(lum, sigma=SMOOTH_SIGMA)
+    # Blurred at reduced resolution; shared with color_fit.py, which must build
+    # the envelope identically (see color_correction.smooth_luminance).
+    smooth = cc.smooth_luminance(lum, SMOOTH_SIGMA)
 
     # Sanity check only - the envelope itself is left in absolute (white-referenced)
     # units so the correction rescales the scroll to relative albedo.
@@ -981,7 +983,8 @@ def frankot_chellappa(p: np.ndarray, q: np.ndarray) -> np.ndarray:
     fx = np.fft.fftfreq(cols)[None, :]
     fy = np.fft.fftfreq(rows)[:, None]
 
-    P, Q = np.fft.fft2(p), np.fft.fft2(q)
+    # scipy.fft is multithreaded (workers=-1 = all cores); np.fft is not.
+    P, Q = sfft.fft2(p, workers=-1), sfft.fft2(q, workers=-1)
 
     denom       = fx**2 + fy**2
     denom[0, 0] = 1.0   # avoid divide-by-zero at DC; Z[0,0] forced to 0 below
@@ -989,7 +992,7 @@ def frankot_chellappa(p: np.ndarray, q: np.ndarray) -> np.ndarray:
     Z       = (-1j * fx * P - 1j * fy * Q) / (2 * np.pi * denom)
     Z[0, 0] = 0.0
 
-    return np.real(np.fft.ifft2(Z))
+    return np.real(sfft.ifft2(Z, workers=-1))
 
 
 def weighted_frankot_chellappa(p: np.ndarray, q: np.ndarray,

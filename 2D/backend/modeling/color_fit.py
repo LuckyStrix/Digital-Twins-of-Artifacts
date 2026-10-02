@@ -341,7 +341,6 @@ def flat_field_chart(cal_dir: Path, frame: str = "allLight.tiff",
     that lets the fitted matrix transfer to Stage 1 unchanged.
     """
     import tifffile
-    from scipy.ndimage import gaussian_filter
 
     chart_dir = cal_dir / cc.CHART_SUBDIR
     chart_path = chart_dir / frame
@@ -377,7 +376,8 @@ def flat_field_chart(cal_dir: Path, frame: str = "allLight.tiff",
     # tifffile gives RGB; the BT.709 weights below are in that order.
     lum = (0.2126 * paper[..., 0] + 0.7152 * paper[..., 1]
            + 0.0722 * paper[..., 2])
-    env = gaussian_filter(lum.astype(np.float64), sigma=smooth_sigma)
+    # Same blur as Stage 1 (shared helper) - the two must stay identical.
+    env = cc.smooth_luminance(lum, smooth_sigma)
     env = np.maximum(env, 0.02 * float(env.max()))
 
     diag.update({"flat_fielded": True, "paper_encoding": paper_enc.kind,

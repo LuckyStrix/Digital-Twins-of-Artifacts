@@ -1,0 +1,471 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Phone Cam Control</title>
+<style>
+  :root {
+    --bg: #f6f7f9; --panel: #fff; --text: #1b1f24; --muted: #667085; --line: #d9dde3;
+    --accent: #1f6feb; --ok: #1a8f5a; --bad: #d92d20; --warn: #b54708;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #0d0f12; --panel: #171a1f; --text: #e8eaed; --muted: #8b929c; --line: #2a2f37;
+            --accent: #4da3ff; --ok: #3ecf8e; --bad: #ff5d5d; --warn: #f5a524; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+    font: 15px/1.45 system-ui, sans-serif; padding: 20px 16px 40px; }
+  main { max-width: 1100px; margin: 0 auto; display: grid; gap: 16px; }
+  h1 { font-size: 20px; margin: 0; }
+  h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 0 0 10px; }
+  section { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 16px; }
+  .muted { color: var(--muted); }
+  code { font-size: 13px; }
+  .bar { display: flex; flex-wrap: wrap; gap: 10px; align-items: end; }
+  label { display: flex; flex-direction: column; gap: 3px; font-size: 13px; color: var(--muted); }
+  input { width: 90px; padding: 7px 9px; border-radius: 8px; border: 1px solid var(--line);
+    background: var(--bg); color: var(--text); font: inherit; }
+  button { padding: 8px 16px; border-radius: 8px; border: 0; background: var(--accent); color: #fff;
+    font: inherit; font-weight: 600; cursor: pointer; }
+  button.secondary { background: transparent; color: var(--text); border: 1px solid var(--line); }
+  button:disabled { opacity: .45; cursor: default; }
+  table { border-collapse: collapse; width: 100%; }
+  th, td { text-align: left; padding: 6px 10px 6px 0; border-bottom: 1px solid var(--line); font-size: 14px; }
+  th { color: var(--muted); font-weight: 500; }
+  #grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 12px; }
+  .card { border: 1px solid var(--line); border-radius: 10px; overflow: hidden; background: var(--bg); }
+  .card img { display: block; width: 100%; aspect-ratio: 4 / 3; object-fit: contain; background: #000; }
+  .card div { padding: 6px 10px; font-size: 13px; }
+  .card .fail { color: var(--bad); }
+  .card .warn { color: var(--warn); }
+  #log { margin: 0; max-height: 240px; overflow: auto; font: 12.5px/1.4 ui-monospace, monospace;
+    white-space: pre-wrap; color: var(--muted); }
+  progress { width: 200px; }
+  h3 { font-size: 14px; margin: 18px 0 8px; }
+  select { padding: 7px 9px; border-radius: 8px; border: 1px solid var(--line);
+    background: var(--bg); color: var(--text); font: inherit; }
+  #camCtl { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 12px 24px; }
+  .ctl { color: var(--text); }
+  .ctl b { font-weight: 600; color: var(--muted); float: right; }
+  .ctl input, .ctl select { width: 100%; padding: 0; accent-color: var(--accent); }
+  .ctl select { padding: 7px 9px; }
+  .warnText { color: var(--warn); white-space: pre-line; }
+  #camOffers { white-space: pre-line; font-size: 13px; }
+  #zoomTarget { width: auto; }
+  #zoomBtns { gap: 6px; }
+  #zoomBtns button.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+  #zoomSlider { width: 220px; padding: 0; accent-color: var(--accent); }
+  #zoomVal { min-width: 8em; }
+</style>
+</head>
+<body>
+<main>
+  <div>
+    <h1>Phone camera control</h1>
+    <div class="muted">Phones open <code id="phoneUrl"></code> and press <b>Start camera</b>.</div>
+  </div>
+
+  <section>
+    <h2>Connected phones (<span id="count">0</span>)</h2>
+    <table>
+      <thead><tr><th>Name</th><th>Frame</th><th>Zoom</th><th>Connected</th><th>Last upload</th></tr></thead>
+      <tbody id="phones"><tr><td colspan="5" class="muted">none yet</td></tr></tbody>
+    </table>
+  </section>
+
+  <section>
+    <h2>Phone camera settings</h2>
+    <div class="bar">
+      <label>Phone <select id="zoomTarget"></select></label>
+      <button id="lockBtn" class="secondary" title="Hold exposure, focus and white balance where they are now">Lock exposure / focus / WB</button>
+      <button id="autoBtn" class="secondary" title="Put everything below back to the camera's auto behaviour">Reset to auto</button>
+    </div>
+
+    <h3>Zoom</h3>
+    <div class="bar">
+      <div id="zoomBtns" class="bar"></div>
+      <input id="zoomSlider" type="range" aria-label="Zoom">
+      <span id="zoomVal" class="muted"></span>
+    </div>
+    <p class="muted" style="margin:10px 0 0">The Zoom column shows what each phone reports back.
+      <b>crop</b> means that phone has no sensor zoom for that level, so it crops the centre of the frame
+      and saves fewer pixels (2× saves a quarter of the pixels). Set zoom before a scan: changing it mid-scan changes the frame size.</p>
+
+    <h3>Exposure, focus &amp; white balance</h3>
+    <div id="camCtl"></div>
+    <p id="camIssue" class="warnText" style="margin:10px 0 0"></p>
+    <p id="camNote" class="muted" style="margin:10px 0 0"></p>
+    <p id="camOffers" class="muted" style="margin:10px 0 0"></p>
+  </section>
+
+  <section>
+    <h2>Capture</h2>
+    <div class="bar">
+      <button id="testBtn">Test shot</button>
+      <label>Shots <input id="count_in" type="number" min="1" value="10"></label>
+      <label>Interval (s) <input id="interval" type="number" min="0" step="0.1" value="1"></label>
+      <label>Side <input id="side" type="number" min="1" max="9" value="1"></label>
+      <button id="seqBtn" class="secondary">Run sequence</button>
+      <button id="stopBtn" class="secondary" disabled>Stop</button>
+      <progress id="prog" value="0" max="1" hidden></progress>
+    </div>
+    <p class="muted" style="margin:10px 0 0">Test shot overwrites <code>captures/_test_shots/&lt;cam&gt;/latest.jpg</code>.
+      A sequence writes <code>captures/&lt;run&gt;/side&lt;N&gt;/&lt;cam&gt;/0001.jpg…</code> — the same layout as the DSLR rig.</p>
+  </section>
+
+  <section>
+    <h2>Latest frames</h2>
+    <div id="grid"><span class="muted">No shots yet.</span></div>
+  </section>
+
+  <section>
+    <h2>Log</h2>
+    <pre id="log"></pre>
+  </section>
+</main>
+
+<script>
+"use strict";
+const $ = id => document.getElementById(id);
+let busy = false, stopRequested = false;
+
+$("phoneUrl").textContent = location.protocol === "https:" ? location.origin + "/" : "https://<this-pc>.<tailnet>.ts.net/";
+
+function log(msg) {
+  const el = $("log");
+  el.textContent += `[${new Date().toLocaleTimeString([], {hour12: false})}] ${msg}\n`;
+  el.scrollTop = el.scrollHeight;
+}
+const pad = (n, w = 2) => String(n).padStart(w, "0");
+function stamp() {
+  const d = new Date();
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}_${pad(d.getHours())}-${pad(d.getMinutes())}-${pad(d.getSeconds())}`;
+}
+function ago(sec) {
+  if (sec < 60) return `${Math.round(sec)} s`;
+  if (sec < 3600) return `${Math.round(sec / 60)} min`;
+  return `${(sec / 3600).toFixed(1)} h`;
+}
+function td(text, cls) {
+  const c = document.createElement("td");
+  c.textContent = text;
+  if (cls) c.className = cls;
+  return c;
+}
+
+async function refreshStatus() {
+  try {
+    const s = await (await fetch("/api/status")).json();
+    $("count").textContent = s.phones.length;
+    const body = $("phones");
+    body.replaceChildren();
+    if (!s.phones.length) {
+      const tr = document.createElement("tr");
+      const c = td("none yet", "muted");
+      c.colSpan = 5;
+      tr.append(c);
+      body.append(tr);
+    }
+    const now = Date.now() / 1000;
+    for (const p of s.phones) {
+      const last = s.last[p.cam];
+      const tr = document.createElement("tr");
+      tr.append(
+        td(p.cam),
+        td(p.info.width ? `${p.info.width}×${p.info.height}` : "—"),
+        td(zoomText(p)),
+        td(ago(now - p.connected_at) + " ago"),
+        td(last ? `${ago(now - last.at)} ago · ${(last.bytes / 1e6).toFixed(1)} MB` : "—"),
+      );
+      body.append(tr);
+    }
+    $("testBtn").disabled = $("seqBtn").disabled = busy || !s.phones.length;
+    updateZoomUi(s.phones);
+  } catch (_) { /* server restarting */ }
+}
+setInterval(refreshStatus, 1500);
+refreshStatus();
+
+// ---- zoom --------------------------------------------------------------------------------------
+// The status poll replaces the table every 1.5 s, so the zoom controls live outside it and are
+// only touched when something actually changed (a rebuilt button can swallow a click).
+const ZOOM_PRESETS = [0.5, 1, 2, 3, 5];
+let zoomPhones = [], zoomSig = "", camSig = "", dragging = false;
+
+function zoomOf(p) { const z = (p.info.settings || {}).zoom; return typeof z === "number" ? z : null; }
+function zoomText(p) {
+  const z = zoomOf(p);
+  return z === null ? "—" : `${z.toFixed(1)}×` + (((p.info.settings || {}).digitalZoom || 1) > 1 ? " crop" : "");
+}
+
+function zoomTargets() {
+  const cam = $("zoomTarget").value;
+  return cam ? zoomPhones.filter(p => p.cam === cam) : zoomPhones;
+}
+
+function updateZoomUi(phones) {
+  zoomPhones = phones;
+  const sel = $("zoomTarget"), cams = phones.map(p => p.cam);
+  if (camSig !== cams.join("|")) {  // rebuild only when phones come or go, keeping the selection
+    const keep = cams.includes(sel.value) ? sel.value : "";
+    sel.replaceChildren(new Option("All phones", ""), ...cams.map(c => new Option(c, c)));
+    sel.value = keep;
+    camSig = cams.join("|");
+  }
+  const targets = zoomTargets();
+  // A range every targeted phone can reach; phones that haven't reported one yet count as 1–4×.
+  let min = Math.max(1e-9, ...targets.map(p => (p.info.settings || {}).zoomMin ?? 1));
+  let max = Math.min(...targets.map(p => (p.info.settings || {}).zoomMax ?? 4), Infinity);
+  if (!targets.length) { min = 1; max = 4; }
+  max = Math.max(min, max);
+  const step = Math.max(0.01, ...targets.map(p => (p.info.settings || {}).zoomStep ?? 0.1));
+  const sig = `${min}|${max}|${step}`;
+  const box = $("zoomBtns"), slider = $("zoomSlider");
+  if (sig !== zoomSig) {
+    zoomSig = sig;
+    box.replaceChildren(...ZOOM_PRESETS.filter(z => z >= min - 1e-6 && z <= max + 1e-6).map(z => {
+      const b = document.createElement("button");
+      b.className = "secondary"; b.textContent = z + "×"; b.dataset.zoom = z;
+      b.onclick = () => sendZoom(z);
+      return b;
+    }));
+    slider.min = min; slider.max = max; slider.step = step;
+  }
+  const zs = targets.map(zoomOf).filter(z => z !== null);
+  const cur = zs.length && zs.every(z => Math.abs(z - zs[0]) < 0.05) ? zs[0] : null;
+  for (const b of box.children) b.classList.toggle("active", cur !== null && Math.abs(+b.dataset.zoom - cur) < 0.05);
+  if (!dragging && cur !== null) slider.value = cur;
+  const crop = targets.some(p => ((p.info.settings || {}).digitalZoom || 1) > 1);
+  $("zoomVal").textContent = !zs.length ? "" : cur === null ? "mixed" : `${cur.toFixed(1)}×` + (crop ? " crop" : "");
+  slider.disabled = sel.disabled = !phones.length;
+  for (const b of box.children) b.disabled = !phones.length;
+  $("lockBtn").disabled = $("autoBtn").disabled = !phones.length;
+  updateCamUi(targets);
+}
+
+async function sendZoom(z) {
+  const cam = $("zoomTarget").value;
+  try {
+    const r = await fetch("/api/zoom", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(cam ? { zoom: z, cams: [cam] } : { zoom: z }),
+    });
+    const d = await r.json();
+    log(r.ok ? `zoom ${z}× → ${d.cams.join(", ")}` : `zoom failed: ${d.error}`);
+  } catch (e) { log(`zoom failed: ${e.message}`); }
+  setTimeout(refreshStatus, 600);  // the phone reports what it really got a moment later
+}
+// ---- exposure / focus / white balance ----------------------------------------------------------
+// Which of these a phone can do depends on its browser, so the controls are built from the
+// capabilities each phone reports (info.caps), not from a fixed list. For "All phones" a control
+// appears only if every phone has it, with the range they all share.
+const num = (v, d = 2) => String(+v.toFixed(d));
+const CAM_CTLS = [
+  { key: "exposureCompensation", label: "Exposure compensation", fmt: v => (v > 0 ? "+" : "") + v.toFixed(1) + " EV",
+    hint: "Negative = darker. The usual fix for washed-out shots against a black backdrop." },
+  { key: "exposureMode", label: "Exposure mode" },
+  { key: "exposureTime", label: "Shutter time (manual)", manual: "exposureMode", fmt: v => `1/${Math.round(1e4 / v)} s` },  // reported in 100 µs units
+  { key: "iso", label: "ISO (manual)", manual: "exposureMode", fmt: v => String(Math.round(v)) },
+  { key: "focusMode", label: "Focus mode" },
+  { key: "focusDistance", label: "Focus distance (manual)", manual: "focusMode", fmt: v => num(v) },
+  { key: "whiteBalanceMode", label: "White balance mode" },
+  { key: "colorTemperature", label: "Colour temperature (manual)", manual: "whiteBalanceMode", fmt: v => Math.round(v) + " K" },
+  { key: "brightness", label: "Brightness", fmt: v => num(v) },
+  { key: "contrast", label: "Contrast", fmt: v => num(v) },
+  { key: "saturation", label: "Saturation", fmt: v => num(v) },
+  { key: "sharpness", label: "Sharpness", fmt: v => num(v) },
+];
+let camEls = [], camCtlSig = "";
+
+function camDescriptors(reported) {
+  if (!reported.length) return [];
+  return CAM_CTLS.flatMap(ctl => {
+    const cs = reported.map(p => p.info.caps[ctl.key]);
+    if (cs.some(c => c === undefined || c === null)) return [];
+    if (cs.every(Array.isArray)) {
+      const opts = cs[0].filter(o => cs.every(c => c.includes(o)));
+      return opts.length > 1 ? [{ ...ctl, opts }] : [];  // a single option is nothing to choose
+    }
+    if (cs.every(c => typeof c.min === "number" && typeof c.max === "number")) {
+      const min = Math.max(...cs.map(c => c.min)), max = Math.min(...cs.map(c => c.max));
+      const step = Math.max(...cs.map(c => c.step || 0)) || (max - min) / 100;
+      return max > min ? [{ ...ctl, min, max, step }] : [];
+    }
+    return [];
+  });
+}
+
+function updateCamUi(targets) {
+  const reported = targets.filter(p => p.info.caps), stale = targets.filter(p => !p.info.caps);
+  const descs = camDescriptors(reported);
+  const sig = JSON.stringify(descs.map(d => [d.key, d.opts, d.min, d.max, d.step]));
+  if (sig !== camCtlSig) { camCtlSig = sig; buildCamCtl(descs); }
+  syncCamCtl(targets);
+  const notes = [];
+  if (stale.length) notes.push(`${stale.map(p => p.cam).join(", ")} ${stale.length > 1 ? "haven't" : "hasn't"} reported camera capabilities. Reload the page on ${stale.length > 1 ? "those phones" : "that phone"}.`);
+  if (reported.length && !descs.length) {
+    const has = [...new Set(reported.flatMap(p => Object.keys(p.info.caps)))].join(", ") || "nothing";
+    notes.push("The browser on " + (reported.length > 1 ? "these phones" : "this phone") +
+      ` offers no exposure, focus or white-balance controls it can change (it reports: ${has}). ` +
+      "Android Chrome usually exposes them; Safari on iPhone exposes few or none.");
+  }
+  $("camNote").textContent = notes.join(" ");
+  $("camIssue").textContent = targets.filter(p => (p.info.settings || {}).cameraNotice)
+    .map(p => `⚠ ${p.cam}: ${p.info.settings.cameraNotice}`).join("\n");
+  $("camOffers").textContent = reported.map(p => {
+    const has = CAM_CTLS.filter(c => p.info.caps[c.key] != null).map(c => c.label.replace(" (manual)", ""));
+    const not = CAM_CTLS.filter(c => p.info.caps[c.key] == null).map(c => c.label.replace(" (manual)", ""));
+    return `${p.cam} browser offers: ${has.join(", ") || "none of these"}.` + (not.length && has.length ? ` Not offered: ${not.join(", ")}.` : "");
+  }).join("\n");
+}
+
+function buildCamCtl(descs) {
+  camEls = descs.map(d => {
+    const wrap = document.createElement("label"), head = document.createElement("span"), val = document.createElement("b");
+    wrap.className = "ctl"; wrap.title = d.hint || "";
+    head.append(d.label, val);
+    let input;
+    if (d.opts) {
+      input = document.createElement("select");
+      input.replaceChildren(...d.opts.map(o => new Option(o, o)));
+    } else {
+      input = document.createElement("input");
+      input.type = "range"; input.min = d.min; input.max = d.max; input.step = d.step;
+    }
+    wrap.append(head, input);
+    const el = { d, wrap, input, val, down: false, touched: 0 };
+    const touch = () => { el.touched = Date.now(); };
+    if (d.opts) {
+      input.onchange = () => { touch(); sendCamera({ set: { [d.key]: input.value } }); };
+    } else {
+      input.oninput = () => { touch(); el.down = true; val.textContent = d.fmt(+input.value); };
+      input.onchange = () => { touch(); el.down = false; sendCamera({ set: { [d.key]: +input.value } }); };
+      input.onpointerup = input.onpointercancel = () => { el.down = false; };
+    }
+    return el;
+  });
+  $("camCtl").replaceChildren(...camEls.map(e => e.wrap));
+}
+
+function syncCamCtl(targets) {
+  for (const el of camEls) {
+    const vs = targets.map(p => (p.info.settings || {})[el.d.key]).filter(v => v !== undefined);
+    const same = vs.length > 0 && vs.every(v => typeof v === "number"
+      ? Math.abs(v - vs[0]) <= Math.max(1e-6, Math.abs(vs[0]) * 0.01) : v === vs[0]);
+    // Leave a control alone while it's being dragged, and briefly after, so the status poll
+    // can't yank it back before the phone has reported the new value.
+    if (el.d.manual) {
+      const modes = targets.map(p => (p.info.settings || {})[el.d.manual]).filter(v => v !== undefined);
+      const locked = modes.length > 0 && modes.some(m => m !== "manual");
+      el.wrap.style.opacity = locked ? "0.55" : "";
+      el.wrap.title = locked ? `Only takes effect in manual mode. Moving it switches ${el.d.manual} to manual for you.` : "";
+    }
+    if (el.down || Date.now() - el.touched < 2500) continue;
+    if (same) el.input.value = vs[0];
+    el.val.textContent = el.d.opts || !vs.length ? "" : same ? el.d.fmt(vs[0]) : "mixed";
+  }
+}
+
+async function sendCamera(body) {
+  const cam = $("zoomTarget").value;
+  const payload = { ...body, ...(cam ? { cams: [cam] } : {}) };
+  try {
+    const r = await fetch("/api/camera", {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload),
+    });
+    const d = await r.json();
+    const what = body.reset ? "reset to auto" : JSON.stringify(body.set);
+    log(r.ok ? `camera ${what} → ${d.cams.join(", ")}` : `camera change failed: ${d.error}`);
+  } catch (e) { log(`camera change failed: ${e.message}`); }
+  setTimeout(refreshStatus, 700);  // the phone reports what it really got a moment later
+}
+$("lockBtn").onclick = () => sendCamera({ set: { exposureMode: "manual", focusMode: "manual", whiteBalanceMode: "manual" } });
+$("autoBtn").onclick = () => sendCamera({ reset: true });
+$("zoomTarget").onchange = () => updateZoomUi(zoomPhones);
+$("zoomSlider").oninput = e => { dragging = true; $("zoomVal").textContent = `${(+e.target.value).toFixed(1)}×`; };
+$("zoomSlider").onchange = e => { dragging = false; sendZoom(+e.target.value); };
+
+async function shoot(dir, name) {
+  const r = await fetch("/api/shoot", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ dir, name }),
+  });
+  return { status: r.status, data: await r.json() };
+}
+
+function showResults(results) {
+  const grid = $("grid");
+  grid.replaceChildren();
+  for (const cam of Object.keys(results).sort()) {
+    const r = results[cam];
+    const card = document.createElement("div");
+    card.className = "card";
+    if (r.ok) {
+      const img = document.createElement("img");
+      img.src = `/captures/${r.path}?t=${Date.now()}`;
+      card.append(img);
+    }
+    const cap = document.createElement("div");
+    cap.textContent = r.ok ? `${cam} — ${r.width}×${r.height}, ${(r.bytes / 1e6).toFixed(2)} MB` : `${cam} — ${r.error}`;
+    if (!r.ok) cap.className = "fail";
+    card.append(cap);
+    if (r.warning) {
+      const w = document.createElement("div");
+      w.className = "warn";
+      w.textContent = r.warning;
+      card.append(w);
+    }
+    grid.append(card);
+  }
+}
+
+function summarize(res) {
+  if (res.status !== 200) return `error: ${res.data.error}`;
+  const rs = Object.values(res.data.results);
+  return `${rs.filter(r => r.ok).length}/${rs.length} ok`;
+}
+
+$("testBtn").onclick = async () => {
+  busy = true; $("testBtn").disabled = $("seqBtn").disabled = true;
+  try {
+    const t0 = performance.now();
+    const res = await shoot("_test_shots", "latest");
+    log(`test shot: ${summarize(res)} (${((performance.now() - t0) / 1000).toFixed(2)} s)`);
+    if (res.data.results) showResults(res.data.results);
+  } finally { busy = false; refreshStatus(); }
+};
+
+$("seqBtn").onclick = async () => {
+  const n = Math.max(1, parseInt($("count_in").value) || 1);
+  const interval = Math.max(0, parseFloat($("interval").value) || 0);
+  const side = Math.min(9, Math.max(1, parseInt($("side").value) || 1));
+  const dir = `${stamp()}/side${side}`;
+  busy = true; stopRequested = false;
+  $("testBtn").disabled = $("seqBtn").disabled = true;
+  $("stopBtn").disabled = false;
+  $("prog").hidden = false; $("prog").max = n; $("prog").value = 0;
+  log(`sequence: ${n} shots -> captures/${dir}/`);
+  let failures = 0;
+  try {
+    for (let i = 1; i <= n && !stopRequested; i++) {
+      const res = await shoot(dir, pad(i, 4));
+      if (res.data.results) showResults(res.data.results);
+      const ok = res.status === 200 && res.data.ok;
+      if (!ok) { failures++; log(`shot ${i}/${n}: ${summarize(res)}`); }
+      $("prog").value = i;
+      if (res.status !== 200) break;
+      if (i < n && interval) await new Promise(r => setTimeout(r, interval * 1000));
+    }
+    log(stopRequested ? "sequence stopped" : `sequence done — ${failures} shot(s) with failures`);
+  } finally {
+    busy = false;
+    $("stopBtn").disabled = true;
+    $("prog").hidden = true;
+    refreshStatus();
+  }
+};
+$("stopBtn").onclick = () => { stopRequested = true; };
+</script>
+</body>
+</html>

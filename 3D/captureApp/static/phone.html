@@ -1,0 +1,543 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Phone Cam</title>
+<style>
+  :root {
+    --bg: #0d0f12; --panel: #1a1d22; --text: #e8eaed; --muted: #8b929c;
+    --accent: #4da3ff; --ok: #3ecf8e; --warn: #f5a524; --bad: #ff5d5d;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
+    font: 16px/1.4 -apple-system, system-ui, sans-serif; }
+  body { display: flex; flex-direction: column; padding: env(safe-area-inset-top) 16px env(safe-area-inset-bottom); }
+  h1 { font-size: 18px; margin: 14px 0 4px; }
+  .muted { color: var(--muted); font-size: 14px; }
+
+  #setup { display: flex; flex-direction: column; gap: 12px; padding-top: 8px; }
+  label { display: flex; flex-direction: column; gap: 4px; font-size: 14px; color: var(--muted); }
+  input, select, button { font: inherit; border-radius: 10px; border: 1px solid #333a44;
+    background: var(--panel); color: var(--text); padding: 12px; }
+  button { background: var(--accent); color: #041018; border: 0; font-weight: 600; }
+  button.secondary { background: var(--panel); color: var(--text); border: 1px solid #333a44; font-weight: 500; }
+
+  #live { display: none; flex: 1; min-height: 0; flex-direction: column; gap: 10px; padding-bottom: 12px; }
+  #stage { position: relative; flex: 1; min-height: 0; background: #000; border-radius: 12px; overflow: hidden; }
+  video { width: 100%; height: 100%; object-fit: contain; display: block; }
+  #flash { position: absolute; inset: 0; background: #fff; opacity: 0; pointer-events: none; transition: opacity .35s; }
+  #flash.on { opacity: .85; transition: none; }
+  #pill { position: absolute; top: 10px; left: 10px; padding: 4px 10px; border-radius: 999px;
+    background: rgba(0,0,0,.6); font-size: 13px; }
+  #pill::before { content: ""; display: inline-block; width: 9px; height: 9px; border-radius: 50%;
+    background: var(--muted); margin-right: 7px; }
+  #pill.ok::before { background: var(--ok); }
+  #pill.wait::before { background: var(--warn); }
+  #pill.bad::before { background: var(--bad); }
+  #row { display: flex; gap: 8px; }
+  #row button { flex: 1; padding: 10px; font-size: 14px; }
+  video { transform-origin: 50% 50%; }
+  #opts { display: flex; flex-direction: column; gap: 8px; }
+  #opts select { padding: 8px 10px; font-size: 14px; }
+  #zoomRow { display: flex; align-items: center; gap: 8px; }
+  #zoomBtns { display: flex; gap: 6px; }
+  #zoomBtns button { padding: 8px 12px; font-size: 14px; }
+  #zoomBtns button.active { background: var(--accent); color: #041018; border-color: var(--accent); }
+  #zoomSlider { flex: 1; min-width: 0; padding: 0; accent-color: var(--accent); }
+  #zoomVal { font-size: 13px; color: var(--muted); min-width: 9.5em; text-align: right; }
+  #log { max-height: 22vh; overflow: auto; margin: 0; padding: 8px 10px; background: var(--panel);
+    border-radius: 10px; font: 12px/1.35 ui-monospace, Menlo, monospace; color: var(--muted); white-space: pre-wrap; }
+  #err { color: var(--bad); font-size: 14px; }
+</style>
+</head>
+<body>
+
+<div id="setup">
+  <h1>Phone camera</h1>
+  <p class="muted">Give this phone a name, start the camera, then leave it on a stand
+    with the screen on and this page in the foreground.</p>
+  <label>Camera name
+    <input id="camName" autocapitalize="off" autocorrect="off" spellcheck="false" maxlength="32" placeholder="cam1">
+  </label>
+  <label>Resolution request
+    <select id="res">
+      <option value="4032x3024">4032 × 3024 (max)</option>
+      <option value="3840x2160">3840 × 2160</option>
+      <option value="1920x1080">1920 × 1080</option>
+    </select>
+  </label>
+  <button id="startBtn">Start camera</button>
+  <div id="err"></div>
+</div>
+
+<div id="live">
+  <div id="stage">
+    <video id="video" playsinline muted autoplay></video>
+    <div id="flash"></div>
+    <div id="pill" class="wait">starting…</div>
+  </div>
+  <div id="row">
+    <button class="secondary" id="snapBtn">Snap test</button>
+    <button class="secondary" id="lockBtn">Lock focus/exposure</button>
+    <button class="secondary" id="stopBtn">Stop</button>
+  </div>
+  <div id="opts">
+    <select id="lensSel" aria-label="Camera lens"></select>
+    <div id="zoomRow">
+      <div id="zoomBtns"></div>
+      <input id="zoomSlider" type="range" aria-label="Zoom">
+      <span id="zoomVal"></span>
+    </div>
+  </div>
+  <pre id="log"></pre>
+</div>
+
+<canvas id="canvas" hidden></canvas>
+
+<script>
+"use strict";
+const $ = id => document.getElementById(id);
+const CAM_RE = /^[A-Za-z0-9_-]{1,32}$/;
+
+let cam = "", stream = null, track = null, es = null, wakeLock = null;
+const inflight = new Set();
+
+// Zoom is total magnification. The browser's own zoom (real sensor/lens zoom) is used when the
+// track exposes it; whatever it doesn't deliver is made up by a centre crop ("digital"), so the
+// preview and the uploaded JPEG always show the same thing.
+const DIGITAL_MAX = 4;
+const PRESETS = [0.5, 1, 2, 3, 5];
+let zoom = 1;            // total zoom asked for
+let hwApplied = 1;       // part of it the browser zoomed itself
+let digital = 1;         // remaining centre-crop factor (>= 1)
+let camSettings = {};    // exposure/focus/white-balance values we have set (a record; only changes are ever sent)
+let camNotice = "";      // what the last change couldn't do, e.g. "exposureTime: asked 100, got 333"; shown on the control page
+let baseSettings = {};   // what the camera reported when it started (its auto values), used to reset
+let hubReady = false;    // the hub has said hello, so /api/info updates are welcome
+
+function store(key, value) { try { localStorage.setItem(key, value); } catch (_) {} }
+function recall(key) { try { return localStorage.getItem(key) || ""; } catch (_) { return ""; } }
+
+function log(msg) {
+  const el = $("log");
+  const t = new Date().toLocaleTimeString([], {hour12: false});
+  el.textContent += `[${t}] ${msg}\n`;
+  el.scrollTop = el.scrollHeight;
+}
+function status(text, cls) {
+  const p = $("pill");
+  p.textContent = text;
+  p.className = cls;
+}
+
+const params = new URLSearchParams(location.search);
+$("camName").value = params.get("cam") || recall("cam") || "";
+$("res").value = recall("res") || "4032x3024";
+
+$("startBtn").onclick = startCamera;
+$("stopBtn").onclick = stopCamera;
+$("snapBtn").onclick = async () => {
+  const t0 = performance.now();
+  const blob = await grabFrame();
+  log(`snap: ${$("canvas").width}x${$("canvas").height}, ${(blob.size / 1024).toFixed(0)} KB, ${(performance.now() - t0).toFixed(0)} ms`);
+  flash();
+};
+$("lockBtn").onclick = lockFocusExposure;
+
+async function startCamera() {
+  const name = $("camName").value.trim();
+  $("err").textContent = "";
+  if (!CAM_RE.test(name)) { $("err").textContent = "Name: letters, digits, - and _ (max 32)."; return; }
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    $("err").textContent = "Camera API unavailable — this page must be opened over HTTPS.";
+    return;
+  }
+  cam = name;
+  store("cam", cam);
+  store("res", $("res").value);
+
+  let s;
+  try {
+    try {
+      s = await openStream(recall("lens"));  // the lens picked last time, if it's still there
+    } catch (e) {
+      if (!recall("lens")) throw e;
+      s = await openStream("");
+    }
+  } catch (e) {
+    $("err").textContent = `Camera error: ${e.name} — ${e.message}`;
+    return;
+  }
+  $("setup").style.display = "none";
+  $("live").style.display = "flex";
+  await attach(s);
+
+  const st = track.getSettings(), video = $("video");
+  log(`camera "${cam}" ready: ${video.videoWidth}x${video.videoHeight}` +
+      (st.frameRate ? ` @ ${Math.round(st.frameRate)} fps` : "") + (track.label ? ` — ${track.label}` : ""));
+  try { log("capabilities: " + JSON.stringify(track.getCapabilities ? track.getCapabilities() : {})); } catch (_) {}
+
+  await listLenses();
+  await setZoom(parseFloat(recall("zoom")) || 1);
+  keepAwake();
+  connect();
+}
+
+// Ask for a camera: a specific lens by deviceId, or the default back camera when deviceId is "".
+function openStream(deviceId) {
+  const [w, h] = $("res").value.split("x").map(Number);
+  const video = { width: { ideal: w }, height: { ideal: h } };
+  if (deviceId) video.deviceId = { exact: deviceId };
+  else video.facingMode = { ideal: "environment" };
+  return navigator.mediaDevices.getUserMedia({ audio: false, video });
+}
+
+async function attach(s) {
+  const video = $("video");
+  const loaded = new Promise(r => video.addEventListener("loadedmetadata", r, { once: true }));
+  stream = s;
+  track = s.getVideoTracks()[0];
+  video.srcObject = s;
+  await loaded;  // videoWidth is stale until this fires when swapping streams
+  await video.play();
+  baseSettings = track.getSettings();
+}
+
+function stopCamera() {
+  if (es) { es.close(); es = null; }
+  if (stream) stream.getTracks().forEach(t => t.stop());
+  if (wakeLock) { wakeLock.release().catch(() => {}); wakeLock = null; }
+  stream = track = null;
+  hubReady = false;
+  zoom = hwApplied = digital = 1;
+  camSettings = {};
+  camNotice = "";
+  $("video").srcObject = null;
+  $("video").style.transform = "";
+  $("live").style.display = "none";
+  $("setup").style.display = "flex";
+}
+
+// ---- lens + zoom -------------------------------------------------------------------------------
+
+async function listLenses() {
+  const sel = $("lensSel");
+  let devs = [];
+  try {
+    devs = (await navigator.mediaDevices.enumerateDevices()).filter(d => d.kind === "videoinput");
+  } catch (_) {}
+  const cur = track.getSettings().deviceId;
+  sel.textContent = "";
+  devs.forEach((d, i) => {
+    const o = document.createElement("option");
+    o.value = d.deviceId;
+    o.textContent = d.label || `Camera ${i + 1}`;
+    o.selected = d.deviceId === cur;
+    sel.appendChild(o);
+  });
+  sel.style.display = devs.length > 1 ? "" : "none";
+  log(`lenses: ${devs.map(d => d.label || "(unnamed)").join(" | ") || "none listed"}`);
+}
+
+$("lensSel").onchange = async e => {
+  const id = e.target.value, prev = track.getSettings().deviceId;
+  log("switching lens…");
+  stream.getTracks().forEach(t => t.stop());  // some phones can't run two cameras at once
+  try {
+    await attach(await openStream(id));
+    store("lens", id);
+  } catch (err) {
+    log(`lens switch failed (${err.name}); back to the previous lens`);
+    try { await attach(await openStream(prev)); }
+    catch (e2) { log(`couldn't reopen the camera (${e2.name}): tap Stop, then Start camera`); return; }
+  }
+  if (Object.keys(camSettings).length) log("exposure/focus/white-balance settings cleared by the lens switch");
+  camSettings = {};
+  camNotice = "";
+  hwApplied = 1;
+  await listLenses();
+  log(`lens: ${track.label || "?"}, ${$("video").videoWidth}x${$("video").videoHeight}`);
+  await setZoom(1);  // zoom scales differ between lenses, so start from 1x
+};
+
+// The browser's zoom range, or the digital-crop range when it has none.
+function zoomRange() {
+  const z = track && track.getCapabilities ? track.getCapabilities().zoom : null;
+  return z && z.max > z.min ? { min: z.min, max: z.max, step: z.step || 0.1, hw: true }
+                            : { min: 1, max: DIGITAL_MAX, step: 0.1, hw: false };
+}
+
+// One applyConstraints call, one `advanced` entry per setting: an entry the browser can't satisfy
+// is skipped whole, so bundling settings together could lose all of them.
+async function applyNow(entries) {
+  const advanced = Object.entries(entries).map(([k, v]) => ({ [k]: v }));
+  if (advanced.length) await track.applyConstraints({ advanced });
+}
+
+// Chrome ignores a manual-only value (shutter, ISO, ...) that arrives in the same call as the
+// switch to manual mode, so modes go first in their own call and the numbers follow in another.
+// Only what changed is sent; the browser keeps the rest.
+async function applyInOrder(entries) {
+  const modes = {}, nums = {};
+  for (const [k, v] of Object.entries(entries)) (CAM_MODES.includes(k) ? modes : nums)[k] = v;
+  await applyNow(modes);
+  await applyNow(nums);
+}
+
+// Camera requests (buttons, sliders, the control page) run one at a time, so a dragged slider can't
+// interleave two applyConstraints calls.
+let zoomChain = Promise.resolve();
+function serial(fn) {
+  zoomChain = zoomChain.then(() => track && fn()).catch(e => log(`camera request failed: ${e.message}`));
+  return zoomChain;
+}
+const queueZoom = z => serial(() => setZoom(z));
+
+async function setZoom(z) {
+  const r = zoomRange();
+  zoom = Math.min(r.max, Math.max(r.min, z));
+  if (r.hw) {
+    try {
+      await applyNow({ zoom });
+      const got = track.getSettings().zoom;  // constraints are best-effort, so check what stuck
+      hwApplied = typeof got === "number" ? got : zoom;
+    } catch (e) {
+      log(`sensor zoom failed (${e.message}); cropping instead`);
+    }
+  } else {
+    hwApplied = 1;
+  }
+  const d = zoom / hwApplied;
+  digital = d < 1.02 ? 1 : Math.min(d, DIGITAL_MAX);
+  $("video").style.transform = digital > 1 ? `scale(${digital})` : "";
+  store("zoom", zoom);
+  renderZoom(r);
+  const c = cropRect();
+  log(`zoom ${zoom.toFixed(1)}× — ${zoomMode()}, frames ${c.w}x${c.h}`);
+  reportInfo();
+}
+
+function zoomMode() {
+  return digital > 1 ? (hwApplied !== 1 ? "sensor + crop" : "digital crop, fewer pixels") : "sensor";
+}
+
+function renderZoom(r) {
+  const box = $("zoomBtns"), slider = $("zoomSlider");
+  box.textContent = "";
+  for (const p of PRESETS.filter(p => p >= r.min - 1e-6 && p <= r.max + 1e-6)) {
+    const b = document.createElement("button");
+    b.className = "secondary" + (Math.abs(p - zoom) < 0.05 ? " active" : "");
+    b.textContent = p + "×";
+    b.onclick = () => queueZoom(p);
+    box.appendChild(b);
+  }
+  slider.min = r.min; slider.max = r.max; slider.step = r.step; slider.value = zoom;
+  $("zoomVal").textContent = `${zoom.toFixed(1)}× · ${zoomMode()}`;
+}
+$("zoomSlider").oninput = e => { $("zoomVal").textContent = `${(+e.target.value).toFixed(1)}×`; };
+$("zoomSlider").onchange = e => queueZoom(+e.target.value);
+
+// The centre crop that digital zoom applies (the whole frame at 1x).
+function cropRect() {
+  const v = $("video");
+  const w = Math.round(v.videoWidth / digital), h = Math.round(v.videoHeight / digital);
+  return { sx: Math.round((v.videoWidth - w) / 2), sy: Math.round((v.videoHeight - h) / 2), w, h };
+}
+
+function reportInfo() {
+  if (!hubReady || !track) return;
+  const c = cropRect(), r = zoomRange();
+  fetch("/api/info", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ cam, width: c.w, height: c.h, ua: navigator.userAgent,
+                           settings: { ...track.getSettings(), zoom, digitalZoom: digital,
+                                       zoomMin: r.min, zoomMax: r.max, zoomStep: r.step,
+                                       cameraNotice: camNotice },
+                           caps: camCaps() }),
+  }).catch(() => {});
+}
+
+function connect() {
+  status("connecting…", "wait");
+  es = new EventSource("/events?cam=" + encodeURIComponent(cam));
+  es.onopen = () => status(`${cam} · connected`, "ok");
+  es.onerror = () => status(`${cam} · reconnecting…`, "wait");  // EventSource retries by itself
+  es.addEventListener("hello", () => {
+    log("connected to hub");
+    hubReady = true;
+    reportInfo();
+  });
+  es.addEventListener("shoot", ev => takeShot(JSON.parse(ev.data)));
+  es.addEventListener("zoom", ev => {
+    const z = Number(JSON.parse(ev.data).zoom);
+    if (!Number.isFinite(z)) return;
+    log(`control page asked for ${z.toFixed(1)}× zoom`);
+    queueZoom(z);
+  });
+  es.addEventListener("camera", ev => {
+    const m = JSON.parse(ev.data);
+    log("control page: " + (m.reset ? "reset to auto" : "") + (m.set ? " " + JSON.stringify(m.set) : ""));
+    serial(async () => {
+      if (m.reset) await resetCamera();
+      if (m.set) await setCamera(m.set);
+    });
+  });
+  es.addEventListener("replaced", () => {
+    es.close(); es = null;
+    status(`${cam} · name in use elsewhere`, "bad");
+    log(`another device connected as "${cam}" — this one is disconnected. Stop and pick a different name.`);
+  });
+}
+
+async function grabFrame() {
+  const v = $("video"), c = $("canvas"), r = cropRect();
+  c.width = r.w;
+  c.height = r.h;
+  c.getContext("2d").drawImage(v, r.sx, r.sy, r.w, r.h, 0, 0, r.w, r.h);
+  return new Promise((resolve, reject) =>
+    c.toBlob(b => b ? resolve(b) : reject(new Error("toBlob failed")), "image/jpeg", 0.95));
+}
+
+async function takeShot({ shot, attempt }) {
+  if (inflight.has(shot)) return;  // the hub's retry can overlap a slow upload
+  inflight.add(shot);
+  try {
+    const t0 = performance.now();
+    const blob = await grabFrame();
+    flash();
+    const c = $("canvas");
+    const r = await fetch(`/api/upload?cam=${encodeURIComponent(cam)}&shot=${shot}&w=${c.width}&h=${c.height}`,
+      { method: "POST", headers: { "Content-Type": "image/jpeg" }, body: blob });
+    const ms = (performance.now() - t0).toFixed(0);
+    if (r.ok) log(`shot ${shot.slice(0, 6)}${attempt ? " (retry)" : ""}: ${c.width}x${c.height}, ${(blob.size / 1024).toFixed(0)} KB, ${ms} ms`);
+    else log(`shot ${shot.slice(0, 6)}: upload rejected (${r.status})`);
+  } catch (e) {
+    log(`shot ${shot.slice(0, 6)} failed: ${e.message}`);
+  } finally {
+    inflight.delete(shot);
+  }
+}
+
+function flash() {
+  const f = $("flash");
+  f.classList.add("on");
+  requestAnimationFrame(() => requestAnimationFrame(() => f.classList.remove("on")));
+}
+
+// ---- exposure / focus / white balance ---------------------------------------------------------
+// Which of these exist depends on the browser (Chrome on Android offers most; Safari far fewer),
+// so everything is checked against getCapabilities() and the control page builds itself from what
+// this phone reports in `caps`.
+
+const CAM_MODES = ["focusMode", "exposureMode", "whiteBalanceMode"];
+const CAM_NUMBERS = ["exposureCompensation", "exposureTime", "iso", "colorTemperature",
+                     "focusDistance", "brightness", "contrast", "saturation", "sharpness"];
+// Numbers that only take effect in manual mode, and the mode that has to be "manual" for them.
+const MANUAL_ONLY = { exposureTime: "exposureMode", iso: "exposureMode",
+                      colorTemperature: "whiteBalanceMode", focusDistance: "focusMode" };
+
+function camCaps() {
+  try { return track && track.getCapabilities ? track.getCapabilities() : {}; } catch (_) { return {}; }
+}
+
+// Apply {key: value} changes the browser supports, keep them in camSettings, and log what stuck.
+async function setCamera(change) {
+  const caps = camCaps(), want = {}, problems = [];
+  for (const [k, v] of Object.entries(change)) {
+    const c = caps[k];
+    if (c === undefined) { problems.push(`${k} isn't offered by this browser`); continue; }
+    if (CAM_MODES.includes(k)) {
+      if (!Array.isArray(c) || !c.includes(v)) { problems.push(`${k} "${v}" isn't available (has: ${[].concat(c).join(", ")})`); continue; }
+      want[k] = v;
+    } else if (CAM_NUMBERS.includes(k) && Number.isFinite(v) && typeof c.min === "number") {
+      want[k] = Math.min(c.max, Math.max(c.min, v));
+    }
+  }
+  // Moving a manual-only number means manual mode, so switch to it (unless it already is).
+  const isManual = mode => (camSettings[mode] ?? track.getSettings()[mode]) === "manual";
+  for (const [k, mode] of Object.entries(MANUAL_ONLY)) {
+    if (k in want && !(mode in want) && Array.isArray(caps[mode]) && caps[mode].includes("manual") && !isManual(mode)) want[mode] = "manual";
+  }
+  if (!Object.keys(want).length) {
+    problems.forEach(m => log(m));
+    camNotice = problems.join("; ");
+    reportInfo();
+    return;
+  }
+
+  const prev = camSettings, merged = { ...camSettings, ...want };
+  for (const [k, mode] of Object.entries(MANUAL_ONLY)) {  // back to auto: drop that mode's manual numbers
+    if (merged[mode] !== undefined && merged[mode] !== "manual") delete merged[k];
+  }
+  camSettings = {};
+  for (const k of [...CAM_MODES, ...CAM_NUMBERS]) if (k in merged) camSettings[k] = merged[k];
+  try {
+    await applyInOrder(want);
+  } catch (e) {
+    camSettings = prev;
+    log(`camera settings failed: ${e.message}`);
+    camNotice = `failed: ${e.message}`;
+    reportInfo();
+    return;
+  }
+  const got = track.getSettings();  // constraints are best-effort, so check what stuck
+  const parts = Object.entries(want).map(([k, v]) => {
+    if (got[k] === undefined) return `${k} → ${v}`;
+    const tol = typeof v === "number" ? Math.max(1e-6, Math.abs(v) * 0.01, caps[k].step || 0) : 0;
+    if (typeof v === "number" ? Math.abs(got[k] - v) <= tol : got[k] === v) return `${k} = ${got[k]}`;
+    problems.push(`${k}: asked ${v}, got ${got[k]}`);
+    return `${k}: asked ${v}, got ${got[k]}`;
+  });
+  log("camera: " + parts.join(", "));
+  problems.filter(m => !m.includes("asked")).forEach(m => log(m));
+  camNotice = problems.join("; ");
+  reportInfo();
+}
+
+// Back to the camera's own auto behaviour for everything that setCamera has touched.
+async function resetCamera() {
+  const caps = camCaps(), revert = {};
+  for (const k of Object.keys(camSettings)) {
+    if (CAM_MODES.includes(k)) { if (Array.isArray(caps[k]) && caps[k].includes("continuous")) revert[k] = "continuous"; }
+    else if (!(k in MANUAL_ONLY) && typeof baseSettings[k] === "number") revert[k] = baseSettings[k];
+  }
+  camSettings = revert;
+  camNotice = "";
+  try {
+    await applyInOrder(revert);
+    log("camera settings reset to auto");
+  } catch (e) {
+    log(`reset failed: ${e.message}`);
+    camNotice = `reset failed: ${e.message}`;
+  }
+  reportInfo();
+}
+
+// Lock exposure, focus and white balance where they are (whichever the browser lets us).
+async function lockFocusExposure() {
+  if (!track || !track.getCapabilities) { log("lock: getCapabilities not supported here"); return; }
+  const caps = camCaps(), lock = {};
+  for (const k of CAM_MODES) if (Array.isArray(caps[k]) && caps[k].includes("manual")) lock[k] = "manual";
+  if (!Object.keys(lock).length) { log("lock: this browser exposes no manual focus/exposure/white-balance"); return; }
+  await setCamera(lock);
+}
+
+async function keepAwake() {
+  try {
+    if ("wakeLock" in navigator) {
+      wakeLock = await navigator.wakeLock.request("screen");
+      log("screen wake lock on");
+    } else {
+      log("no Wake Lock API — set Settings > Display > Auto-Lock to Never");
+    }
+  } catch (e) {
+    log(`wake lock failed: ${e.message}`);
+  }
+}
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible" && stream) keepAwake();
+});
+</script>
+</body>
+</html>

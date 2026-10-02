@@ -5,10 +5,18 @@ import subprocess
 import time
 import os
 import re
-import serial
-import serial.tools.list_ports
+import sys
 from datetime import datetime
 from pathlib import Path
+
+# The turntable/LED Arduino is optional: without pyserial the app still runs
+# phone-only (and DSLR-only) scans, just without turntable or LED control.
+try:
+    import serial
+    import serial.tools.list_ports
+    SERIAL_AVAILABLE = True
+except ImportError:
+    SERIAL_AVAILABLE = False
 
 try:
     from PIL import Image, ImageTk
@@ -16,24 +24,52 @@ try:
 except ImportError:
     PIL_AVAILABLE = False
 
+# The phone hub (phone_server.py) lives next to this file.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import phone_server  # noqa: E402
+
 CAMERA_FOLDER = "/store_00020001/DCIM/100CANON/"
 PREVIEW_SIZE = (320, 240)
+PHONE_PORT = 8000        # `tailscale serve --bg 8000` forwards the phones' HTTPS to this port
+PHONE_POLL_MS = 1000     # how often the phone list in the UI refreshes
+PHONE_TIMEOUT_S = 15     # per-attempt wait for a phone's upload (the hub retries once)
 # Opening the serial port toggles DTR, which resets the Arduino; the sketch
 # needs about this long to reboot before it will listen for commands again.
 ARDUINO_RESET_S = 2.0
+# Port-list entry meaning "no Arduino": scans then fire the cameras at an
+# interval (the Settle time) with nothing advancing between shots.
+NO_TURNTABLE = "(none — no turntable)"
 
 
 class CaptureApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("T-Capture Multi-Camera Scanner (Parallel Capture)")
-        self.root.minsize(720, 600)
+        self.root.title("T-Capture Multi-Camera Scanner (Parallel Capture + Phones)")
+        self.root.minsize(720, 720)
         self.capture_thread = None
         self.stop_event = threading.Event()
         self._photo_refs = []  # keep Tk image refs alive
         self.detected_cam_ports = []  # last camera ports found by the Refresh button
+        self._warned_no_gphoto2 = False
         self.leds_on = False  # desired LED state, re-asserted after every board reset
+        self.ser = None  # shared Arduino connection, opened on first use (see _get_serial)
+        self.ser_port = None
+        self._ser_lock = threading.RLock()
+        self.hub = None  # phone hub, run in this process; None if its port was unavailable
+        self.hub_error = ""
+        self._start_hub()
         self._build_ui()
+
+    def _start_hub(self):
+        """Run the phone hub inside the app so scans can call it directly."""
+        try:
+            self.hub, server = phone_server.make_server(
+                "127.0.0.1", PHONE_PORT, Path.home() / "T-Capture")
+        except OSError as exc:
+            self.hub_error = (f"port {PHONE_PORT} unavailable ({exc.strerror}) — "
+                              f"is phone_server.py still running? Stop it and restart this app.")
+            return
+        threading.Thread(target=server.serve_forever, daemon=True).start()
 
     # ------------------------------------------------------------------ UI build
 
@@ -50,14 +86,15 @@ class CaptureApp:
         ttk.Entry(cfg, textvariable=self.folder_var).grid(row=0, column=1, sticky="ew", padx=6)
         ttk.Button(cfg, text="Browse…", command=self._browse_folder).grid(row=0, column=2)
 
-        ttk.Label(cfg, text="Serial Port:").grid(row=1, column=0, sticky="w", pady=(6, 0))
-        self.port_var = tk.StringVar()
+        ttk.Label(cfg, text="Turntable Port:").grid(row=1, column=0, sticky="w", pady=(6, 0))
+        self.port_var = tk.StringVar(value=NO_TURNTABLE)
+        self.port_var.trace_add("write", self._on_port_change)
         self.port_combo = ttk.Combobox(cfg, textvariable=self.port_var, width=22)
         self.port_combo.grid(row=1, column=1, sticky="w", padx=6, pady=(6, 0))
         ttk.Button(cfg, text="↻ Refresh Ports & Cameras", command=self._refresh_all).grid(
             row=1, column=2, pady=(6, 0))
 
-        ttk.Label(cfg, text="Cameras:").grid(row=2, column=0, sticky="w", pady=(6, 0))
+        ttk.Label(cfg, text="DSLR Cameras:").grid(row=2, column=0, sticky="w", pady=(6, 0))
         self.cameras_var = tk.StringVar(value="(click Refresh to detect)")
         ttk.Label(cfg, textvariable=self.cameras_var, foreground="#1a6ea8").grid(
             row=2, column=1, columnspan=2, sticky="w", padx=6, pady=(6, 0))
@@ -74,9 +111,43 @@ class CaptureApp:
         ttk.Label(delay_row, text="delay between each camera's shot (0 = all at once)",
                   foreground="#666").grid(row=0, column=1, padx=(8, 0))
 
+        self.both_sides_var = tk.BooleanVar(value=True)
+        ttk.Checkbutton(cfg, text="Scan both sides (asks you to flip the object after side 1; "
+                                  "untick for a single-side scan)",
+                        variable=self.both_sides_var).grid(
+            row=5, column=0, columnspan=3, sticky="w", pady=(6, 0))
+
+        # --- Phone cameras ---
+        ph = ttk.LabelFrame(self.root, text="Phone Cameras (iPhones over Tailscale)", padding=10)
+        ph.grid(row=1, column=0, sticky="ew", padx=10, pady=4)
+        ph.columnconfigure(1, weight=1)
+
+        self.use_phones_var = tk.BooleanVar(value=self.hub is not None)
+        use_cb = ttk.Checkbutton(ph, text="Use phones in scan", variable=self.use_phones_var)
+        use_cb.grid(row=0, column=0, sticky="w")
+        if self.hub is None:
+            use_cb.configure(state="disabled")
+        self.phones_var = tk.StringVar(value="")
+        ttk.Label(ph, textvariable=self.phones_var, foreground="#1a6ea8").grid(
+            row=0, column=1, sticky="w", padx=6)
+
+        ttk.Label(ph, text="Phone URL:").grid(row=1, column=0, sticky="w", pady=(6, 0))
+        self.phone_url_var = tk.StringVar(value="(looking up Tailscale name…)")
+        ttk.Entry(ph, textvariable=self.phone_url_var, state="readonly").grid(
+            row=1, column=1, sticky="ew", padx=6, pady=(6, 0))
+
+        ttk.Label(ph, text="Settle (s):").grid(row=2, column=0, sticky="w", pady=(6, 0))
+        settle_row = ttk.Frame(ph)
+        settle_row.grid(row=2, column=1, sticky="w", padx=6, pady=(6, 0))
+        self.settle_var = tk.StringVar(value="0.5")
+        ttk.Entry(settle_row, textvariable=self.settle_var, width=8).grid(row=0, column=0)
+        ttk.Label(settle_row, text="wait before each shot so phone autofocus can settle "
+                                   "(with no turntable: the time between shots)",
+                  foreground="#666").grid(row=0, column=1, padx=(8, 0))
+
         # --- Controls ---
         ctrl = ttk.Frame(self.root, padding=(10, 4))
-        ctrl.grid(row=1, column=0, sticky="ew", padx=10)
+        ctrl.grid(row=2, column=0, sticky="ew", padx=10)
 
         self.start_btn = ttk.Button(ctrl, text="▶  Start", command=self._start_capture, width=12)
         self.start_btn.grid(row=0, column=0, padx=(0, 6))
@@ -95,7 +166,7 @@ class CaptureApp:
 
         # --- Progress ---
         prog = ttk.Frame(self.root, padding=(10, 0))
-        prog.grid(row=2, column=0, sticky="ew", padx=10, pady=(0, 4))
+        prog.grid(row=3, column=0, sticky="ew", padx=10, pady=(0, 4))
         prog.columnconfigure(0, weight=1)
 
         self.progress_var = tk.DoubleVar(value=0)
@@ -106,14 +177,14 @@ class CaptureApp:
         # --- Preview ---
         self.prev_frame = ttk.LabelFrame(
             self.root, text="Camera Preview  (updated after each side download)", padding=10)
-        self.prev_frame.grid(row=3, column=0, sticky="ew", padx=10, pady=4)
+        self.prev_frame.grid(row=4, column=0, sticky="ew", padx=10, pady=4)
         self.cam_img_labels = []
-        self._build_preview_slots(1)  # placeholder; rebuilt once cameras are detected
+        self._build_preview_slots(self._camera_labels(0, []))  # placeholder; rebuilt once cameras are detected
 
         # --- Log ---
         log_frame = ttk.LabelFrame(self.root, text="Log", padding=5)
-        log_frame.grid(row=4, column=0, sticky="nsew", padx=10, pady=(4, 10))
-        self.root.rowconfigure(4, weight=1)
+        log_frame.grid(row=5, column=0, sticky="nsew", padx=10, pady=(4, 10))
+        self.root.rowconfigure(5, weight=1)
 
         self.log_text = scrolledtext.ScrolledText(log_frame, height=10, state="disabled",
                                                    wrap="word", font=("Courier", 9))
@@ -121,6 +192,82 @@ class CaptureApp:
 
         # Populate the port and camera lists now that the whole UI exists.
         self._refresh_all()
+        self._poll_phones()
+        threading.Thread(target=self._lookup_phone_url, daemon=True).start()
+
+    # ------------------------------------------------------------------ phones
+
+    def _poll_phones(self):
+        """Keep the connected-phones line current."""
+        if self.hub is None:
+            self.phones_var.set(f"⚠ phones unavailable: {self.hub_error}")
+        else:
+            phones = self.hub.status()["phones"]
+            if phones:
+                desc = ", ".join(
+                    p["cam"] + (f" ({p['info']['width']}×{p['info']['height']})"
+                                if p["info"].get("width") else "")
+                    for p in phones)
+                self.phones_var.set(f"{len(phones)} connected — {desc}")
+            else:
+                self.phones_var.set("none connected")
+        self.root.after(PHONE_POLL_MS, self._poll_phones)
+
+    def _lookup_phone_url(self):
+        dns = phone_server.tailscale_dns_name()
+        url = (f"https://{dns}/   (needs `tailscale serve --bg {PHONE_PORT}` running)"
+               if dns else "(Tailscale name not found — is tailscale up?)")
+        self.root.after(0, lambda: self.phone_url_var.set(url))
+
+    def _active_phones(self):
+        """Names of the phones this scan will use ([] if 'Use phones' is off)."""
+        if self.hub is None or not self.use_phones_var.get():
+            return []
+        return self.hub.connected()
+
+    def _camera_labels(self, n_dslr, phone_names):
+        labels = [f"Camera {i + 1}" for i in range(n_dslr)] + [f"📱 {p}" for p in phone_names]
+        return labels or ["Camera 1"]
+
+    def _phone_shoot(self, root, dest_dir, name, phone_names):
+        """Fire the given phones and wait for their uploads.
+
+        Files land at <root>/<dest_dir>/<phone>/<name>.jpg. Returns
+        {phone: {"ok": bool, "path": ..., "error": ...}}; a phone that dropped
+        out reports ok=False rather than raising.
+        """
+        self.hub.out_dir = Path(root)
+        try:
+            return self.hub.shoot(dest_dir, name, timeout=PHONE_TIMEOUT_S, cams=phone_names)["results"]
+        except phone_server.NoPhones:
+            return {}
+
+    def _ensure_phones(self, expected):
+        """Block until every phone in `expected` is connected again.
+
+        Returns False if the user gives up, which stops the scan. Runs on the
+        capture thread; the dialog is shown on the Tk thread, like _ask_flip.
+        """
+        while True:
+            missing = sorted(set(expected) - set(self.hub.connected()))
+            if not missing:
+                return True
+            self._log(f"⚠ Phone(s) not connected: {', '.join(missing)}")
+            answer = []
+            done = threading.Event()
+
+            def _do():
+                answer.append(messagebox.askretrycancel(
+                    "Phone Disconnected",
+                    f"Not connected: {', '.join(missing)}\n\n"
+                    "Reconnect them (open the Phone URL, tap Start camera), then click Retry.\n"
+                    "Cancel stops the scan."))
+                done.set()
+
+            self.root.after(0, _do)
+            done.wait()
+            if not answer[0]:
+                return False
 
     # ------------------------------------------------------------------ helpers
 
@@ -134,19 +281,23 @@ class CaptureApp:
         self._refresh_ports()
         self._refresh_cameras()
 
+    def _turntable_port(self):
+        """The selected Arduino serial port, or "" when running without a turntable."""
+        port = self.port_var.get().strip()
+        return "" if port in ("", NO_TURNTABLE) else port
+
     def _refresh_ports(self):
-        ports = [p.device for p in serial.tools.list_ports.comports()]
-        self.port_combo["values"] = ports
-        # Keep the current selection if it is still present; otherwise pick a sensible default.
-        if self.port_var.get() not in ports:
-            self.port_var.set("")
-            if ports:
-                for p in ports:
-                    if any(tag in p for tag in ("ACM", "USB", "COM", "tty")):
-                        self.port_var.set(p)
-                        break
-                else:
-                    self.port_var.set(ports[0])
+        ports = [p.device for p in serial.tools.list_ports.comports()] if SERIAL_AVAILABLE else []
+        self.port_combo["values"] = [NO_TURNTABLE] + ports
+        # Keep the current selection if it is still present; otherwise auto-pick
+        # an Arduino-looking port, and fall back to "no turntable" rather than a
+        # random tty so a phone-only setup works without touching this box.
+        if self.port_var.get() not in [NO_TURNTABLE] + ports:
+            self.port_var.set(NO_TURNTABLE)
+            for p in ports:
+                if any(tag in p.upper() for tag in ("ACM", "USB", "COM")):
+                    self.port_var.set(p)
+                    break
 
     def _refresh_cameras(self):
         """Detect cameras with gphoto2 in the background and update the UI."""
@@ -162,9 +313,9 @@ class CaptureApp:
                 if n:
                     self.cameras_var.set(f"{n} detected — " + ", ".join(ports))
                 else:
-                    self.cameras_var.set("No cameras detected")
+                    self.cameras_var.set("none detected (phones only)")
                 # Show one preview slot per camera (at least one placeholder).
-                self._build_preview_slots(max(n, 1))
+                self._build_preview_slots(self._camera_labels(n, self._active_phones()))
                 self._set_status("Ready")
 
             self.root.after(0, update)
@@ -189,8 +340,10 @@ class CaptureApp:
             self.pct_label.configure(text=f"{pct:.0f} %")
         self.root.after(0, _do)
 
-    def _build_preview_slots(self, n):
-        """(Re)build one preview slot per detected camera. Runs on the main thread."""
+    def _build_preview_slots(self, labels):
+        """(Re)build one preview slot per camera, captioned with `labels`. Runs on the main thread."""
+        n = len(labels)
+
         def _do():
             for child in self.prev_frame.winfo_children():
                 child.destroy()
@@ -208,7 +361,7 @@ class CaptureApp:
                 lbl = ttk.Label(self.prev_frame, text=placeholder, relief="sunken",
                                 anchor="center", width=44, padding=4)
                 lbl.grid(row=0, column=c, padx=padx, sticky="nsew")
-                ttk.Label(self.prev_frame, text=f"Camera {c + 1}", font=("", 9, "bold")).grid(
+                ttk.Label(self.prev_frame, text=labels[c], font=("", 9, "bold")).grid(
                     row=1, column=c, pady=(4, 0))
                 self.cam_img_labels.append(lbl)
 
@@ -228,6 +381,7 @@ class CaptureApp:
                 if path and os.path.isfile(path):
                     try:
                         img = Image.open(path)
+                        img.draft("RGB", PREVIEW_SIZE)  # JPEG: decode at reduced size (phone frames are ~12 MP)
                         img.thumbnail(PREVIEW_SIZE, Image.LANCZOS)
                         photo = ImageTk.PhotoImage(img)
                         self._photo_refs.append(photo)
@@ -272,8 +426,25 @@ class CaptureApp:
             messagebox.showerror("Invalid Input", "Camera delay must be a number ≥ 0 (seconds).")
             return
 
-        if not self.port_var.get():
-            messagebox.showerror("Invalid Input", "Please select a serial port.")
+        try:
+            if float(self.settle_var.get()) < 0:
+                raise ValueError()
+        except ValueError:
+            messagebox.showerror("Invalid Input", "Phone settle time must be a number ≥ 0 (seconds).")
+            return
+
+        if self._turntable_port() and not SERIAL_AVAILABLE:
+            messagebox.showerror("pyserial Missing",
+                                 "A turntable port is selected but pyserial is not installed.\n\n"
+                                 "Install it (pip install pyserial) or choose "
+                                 f"'{NO_TURNTABLE}'.")
+            return
+
+        if self.use_phones_var.get() and not self._active_phones():
+            messagebox.showerror(
+                "No Phones",
+                "'Use phones in scan' is ticked but no phone is connected.\n\n"
+                "Open the Phone URL on each iPhone and tap Start camera, or untick the box.")
             return
 
         self.stop_event.clear()
@@ -325,18 +496,31 @@ class CaptureApp:
         try:
             self._log("Test shot: detecting cameras…")
             cam_ports = self._detect_camera_ports_safe()
-            if not cam_ports:
-                self._log("Test shot: no cameras detected.")
+            phone_names = self._active_phones()
+            if not cam_ports and not phone_names:
+                self._log("Test shot: no cameras detected and no phones connected.")
                 self._set_status("No cameras")
                 return
 
             n_cams = len(cam_ports)
             cam_names = [f"cam{i + 1}" for i in range(n_cams)]
-            self._build_preview_slots(n_cams)
+            self._build_preview_slots(self._camera_labels(n_cams, phone_names))
 
             # Dedicated folder that is overwritten on each test shot.
-            dest = os.path.join(self.folder_var.get(), "_test_shots")
+            base = self.folder_var.get()
+            dest = os.path.join(base, "_test_shots")
             os.makedirs(dest, exist_ok=True)
+
+            # Phones fire at the same time as the DSLRs; their files land in
+            # _test_shots/<phone>/latest.jpg.
+            phone_results = {}
+            phone_thread = None
+            if phone_names:
+                phone_thread = threading.Thread(
+                    target=lambda: phone_results.update(
+                        self._phone_shoot(base, "_test_shots", "latest", phone_names)),
+                    daemon=True)
+                phone_thread.start()
 
             results = {}
             lock = threading.Lock()
@@ -369,6 +553,8 @@ class CaptureApp:
                 t.start()
             for t in threads:
                 t.join()
+            if phone_thread:
+                phone_thread.join()
 
             preview_paths = []
             n_ok = 0
@@ -381,8 +567,18 @@ class CaptureApp:
                 else:
                     self._log(f"⚠ Test shot: {name} FAILED: {msg or 'unknown error'}")
 
+            for pname in phone_names:
+                r = phone_results.get(pname, {"ok": False, "error": "no result"})
+                if r["ok"]:
+                    n_ok += 1
+                    preview_paths.append(os.path.join(base, r["path"]))
+                    self._log(f"Test shot: phone {pname} captured ({r['width']}×{r['height']}).")
+                else:
+                    preview_paths.append(None)
+                    self._log(f"⚠ Test shot: phone {pname} FAILED: {r.get('error') or 'unknown error'}")
+
             self._update_preview(preview_paths)
-            self._set_status(f"Test shot: {n_ok}/{n_cams} cameras")
+            self._set_status(f"Test shot: {n_ok}/{n_cams + len(phone_names)} cameras")
         finally:
             self.root.after(0, lambda: (self.test_btn.configure(state="normal"),
                                         self.start_btn.configure(state="normal")))
@@ -396,18 +592,22 @@ class CaptureApp:
         self._send_led_command(False)
 
     def _send_led_command(self, on):
-        """Toggle the capture LEDs via a short-lived serial connection.
+        """Toggle the capture LEDs over the shared serial connection.
 
         Independent of the turntable/scan flow, like _test_shot. Refused while
-        a scan is running since _run_capture holds the serial port for its
-        whole duration.
+        a scan is running since _run_capture is using the serial port.
         """
         if self.capture_thread and self.capture_thread.is_alive():
             messagebox.showinfo("Busy", "A scan is currently running. Stop it before controlling the LEDs.")
             return
-        port = self.port_var.get()
+        port = self._turntable_port()
         if not port:
-            messagebox.showerror("Invalid Input", "Please select a serial port.")
+            messagebox.showinfo("No Turntable",
+                                "The LEDs are switched by the Arduino. Select its port under "
+                                "Turntable Port to control them.")
+            return
+        if not SERIAL_AVAILABLE:
+            messagebox.showerror("pyserial Missing", "Install pyserial to control the LEDs:\n\npip install pyserial")
             return
 
         self.start_btn.configure(state="disabled")
@@ -416,28 +616,72 @@ class CaptureApp:
         self.leds_off_btn.configure(state="disabled")
         threading.Thread(target=self._run_led_command, args=(port, on), daemon=True).start()
 
-    def _wait_for_reboot(self, opened_at):
-        """Block until the reset caused by opening the port at <opened_at> has finished."""
-        remaining = ARDUINO_RESET_S - (time.monotonic() - opened_at)
-        if remaining > 0:
-            time.sleep(remaining)
+    # The Arduino resets whenever the port is opened (DTR toggles), which briefly
+    # energises the motor driver. So the app opens the port once, on first use,
+    # and keeps that connection for the LED buttons and every scan; it is
+    # released when the port selection changes or the window closes.
 
-    def _restore_leds(self, ser, opened_at):
-        """Re-send the desired LED state on a freshly opened port.
+    def _serial_alive(self):
+        """True if the shared connection is open and its device is still there."""
+        if self.ser is None or not self.ser.is_open:
+            return False
+        try:
+            self.ser.in_waiting  # raises once the board has been unplugged
+            return True
+        except (serial.SerialException, OSError):
+            return False
 
-        The sketch boots with the LEDs off, so the reset that opening the port
-        causes would otherwise leave a scan running in the dark even though the
-        user turned the lights on beforehand.
+    def _get_serial(self, port):
+        """Return the shared connection to the Arduino on `port`, opening it if needed.
+
+        Opening resets the board, so this waits for it to reboot, then puts
+        the LEDs back if the user had them on (the sketch boots with them off).
+        Raises serial.SerialException if the port can't be opened.
+        """
+        with self._ser_lock:
+            if self.ser_port == port and self._serial_alive():
+                return self.ser
+            self._close_serial()
+            self._log(f"Opening {port} (the Arduino reboots once, about {ARDUINO_RESET_S:g}s)…")
+            ser = serial.Serial(port, baudrate=115200, timeout=2)
+            time.sleep(ARDUINO_RESET_S)
+            ser.reset_input_buffer()
+            self.ser, self.ser_port = ser, port
+            self._restore_leds(ser)
+            return ser
+
+    def _close_serial(self):
+        with self._ser_lock:
+            if self.ser is not None:
+                try:
+                    self.ser.close()
+                except (serial.SerialException, OSError):
+                    pass
+            self.ser = self.ser_port = None
+
+    def _on_port_change(self, *_):
+        """Release the Arduino as soon as another port (or none) is selected."""
+        scanning = self.capture_thread and self.capture_thread.is_alive()
+        if self.ser is not None and not scanning and self._turntable_port() != self.ser_port:
+            self._close_serial()
+
+    def close(self):
+        """Window close: release the serial port, then quit."""
+        self._close_serial()
+        self.root.destroy()
+
+    def _restore_leds(self, ser):
+        """Re-send the desired LED state on a freshly opened connection.
+
+        The sketch boots with the LEDs off, so a reconnect (e.g. after the
+        board was unplugged) would otherwise leave them dark even though the
+        user turned them on.
         """
         if not self.leds_on:
             return
-        self._wait_for_reboot(opened_at)
-        prev_timeout = ser.timeout
-        ser.timeout = 2
         ser.reset_input_buffer()
         ser.write(b'N')
         ack = ser.read(1)
-        ser.timeout = prev_timeout
         if ack == b'e':
             self._log("LEDs re-enabled after Arduino reset.")
         else:
@@ -446,22 +690,20 @@ class CaptureApp:
 
     def _run_led_command(self, port, on):
         try:
-            ser = serial.Serial(port, baudrate=115200, timeout=2)
-            opened_at = time.monotonic()
-            # Opening the port resets the Arduino, so wait for it to boot or the
-            # write below lands before the board is listening again.
-            self._wait_for_reboot(opened_at)
-            ser.reset_input_buffer()
-            ser.write(b'N' if on else b'F')
-            ack = ser.read(1)  # wait for 'e' acknowledgement (or time out)
-            ser.close()
+            with self._ser_lock:
+                ser = self._get_serial(port)
+                ser.timeout = 2
+                ser.reset_input_buffer()
+                ser.write(b'N' if on else b'F')
+                ack = ser.read(1)  # wait for 'e' acknowledgement (or time out)
             if ack == b'e':
                 self.leds_on = on
                 self._log(f"LEDs turned {'on' if on else 'off'}.")
             else:
                 self._log(f"⚠ LED command sent but no acknowledgement from Arduino "
                           f"(got {ack!r}) — check the board is running the latest sketch.")
-        except serial.SerialException as exc:
+        except (serial.SerialException, OSError) as exc:
+            self._close_serial()  # reconnect on the next use
             self._log(f"LED serial error: {exc}")
         finally:
             self.root.after(0, lambda: (self.start_btn.configure(state="normal"),
@@ -474,45 +716,57 @@ class CaptureApp:
     def _run_capture(self):
         caps_int = int(self.caps_var.get())
         cam_delay = float(self.delay_var.get())
-        port = self.port_var.get()
+        port = self._turntable_port()
         base_folder = self.folder_var.get()
+        settle = float(self.settle_var.get())
+        sides = (1, 2) if self.both_sides_var.get() else (1,)
 
-        # Open serial
-        try:
-            ser = serial.Serial(port, baudrate=115200, timeout=1)
-            opened_at = time.monotonic()
-        except serial.SerialException as exc:
-            self._log(f"Serial port error: {exc}")
-            self._set_status("Serial error")
-            self._finish(False)
-            return
+        # Turntable + LEDs over the shared serial connection (opened here only if
+        # nothing has used it yet). No port selected = no turntable: the scan
+        # then just fires the cameras every `settle` seconds.
+        ser = None
+        if port:
+            try:
+                ser = self._get_serial(port)
+            except serial.SerialException as exc:
+                self._log(f"Serial port error: {exc}")
+                self._set_status("Serial error")
+                self._finish(False)
+                return
+        else:
+            self._log("No turntable selected — cameras fire every "
+                      f"{settle:g}s; move the object/cameras yourself between shots.")
 
-        # Detect cameras
+        # Detect cameras: DSLRs via gphoto2, plus whichever phones are connected now.
+        # Phones that connect later are ignored; the scan uses exactly this set.
         self._log("Detecting cameras via gphoto2…")
-        try:
-            cam_ports = self._detect_camera_ports()
-        except RuntimeError as exc:
-            self._log(f"Camera detection failed: {exc}")
-            self._set_status("Camera error")
-            ser.close()
-            self._finish(False)
-            return
+        cam_ports = self._detect_camera_ports_safe()
+        phone_names = self._active_phones()
         n_cams = len(cam_ports)
         cam_names = [f"cam{i + 1}" for i in range(n_cams)]
-        self._log(f"Detected {n_cams} camera(s):")
+        clash = sorted(set(cam_names) & set(phone_names))
+        if not cam_ports and not phone_names:
+            self._log("Camera detection failed: no DSLR found by gphoto2 and no phones connected.")
+        elif clash:
+            self._log(f"Phone name(s) {', '.join(clash)} collide with the DSLR folders "
+                      f"(cam1, cam2, …). Rename the phone(s) (e.g. phone1) and reconnect.")
+        if (not cam_ports and not phone_names) or clash:
+            self._set_status("Camera error")
+            self._finish(False)
+            return
+        self._log(f"Detected {n_cams} DSLR camera(s):")
         for name, port in zip(cam_names, cam_ports):
             self._log(f"  {name}: {port}")
-        self._build_preview_slots(n_cams)
-
-        # Opening the port above reset the board and killed the lights; put them
-        # back before any photo is taken.
-        self._restore_leds(ser, opened_at)
+        if phone_names:
+            self._log(f"Using {len(phone_names)} phone(s): {', '.join(phone_names)}"
+                      f"  (settle {settle:g}s after each move)")
+        self._build_preview_slots(self._camera_labels(n_cams, phone_names))
 
         # Create output folder tree
         run_name = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
         run_path = os.path.join(base_folder, run_name)
         side_paths = {}
-        for side in (1, 2):
+        for side in sides:
             dests = []
             for name in cam_names:
                 dest = os.path.join(run_path, f"side{side}", name)
@@ -525,20 +779,23 @@ class CaptureApp:
         steps_per_move = int(32 * (100 / caps_int))
         caps_ld = str(caps_int).zfill(4)
         steps_ld = str(steps_per_move).zfill(4)
-        ser.timeout = steps_per_move + 2.5
+        if ser:
+            ser.timeout = steps_per_move + 2.5
         delay_desc = "all at once" if cam_delay == 0 else f"{cam_delay:g}s between cameras"
-        self._log(f"Captures: {caps_int}  |  Steps per move: {steps_per_move}  |  "
-                  f"Capture: parallel ({delay_desc})")
+        move_desc = f"Steps per move: {steps_per_move}" if ser else "No turntable"
+        self._log(f"Captures: {caps_int}  |  {move_desc}  |  "
+                  f"Capture: parallel ({delay_desc})  |  "
+                  f"{'both sides' if len(sides) == 2 else 'single side'}")
 
         # Store images on camera card for speed; download in bulk after each side
         for port in cam_ports:
             subprocess.run(["gphoto2", "--port", port, "--set-config", "capturetarget=1"],
                            capture_output=True)
 
-        total = caps_int * 2
+        total = caps_int * len(sides)
         stopped = False
 
-        for side in (1, 2):
+        for side in sides:
             if self.stop_event.is_set():
                 stopped = True
                 break
@@ -548,8 +805,16 @@ class CaptureApp:
                 if self.stop_event.is_set():
                     stopped = True
                     break
+                # Handling the tablet often wakes or reloads a phone; don't let side 2
+                # silently run without one.
+                if phone_names and not self._ensure_phones(phone_names):
+                    stopped = True
+                    break
 
             cam_dests = side_paths[side]
+            # Phones write straight into the run folder: <run>/side<N>/<phone>/0001.jpg,
+            # so the switch to side 2 after the flip is just this path.
+            phone_dir = f"{run_name}/side{side}"
             self._log(f"--- Side {side} scan starting ---")
 
             for i in range(caps_int):
@@ -559,17 +824,37 @@ class CaptureApp:
 
                 self._set_status(f"Side {side}  —  capture {i + 1} / {caps_int}")
 
+                # Let the tablet stop wobbling and the phones' autofocus settle
+                # (with no turntable this is simply the pacing between shots).
+                if (phone_names or not ser) and settle:
+                    time.sleep(settle)
+
                 # Fire cameras in parallel, offset by the GUI delay; retry misses.
-                results = self._capture_all(cam_ports, cam_delay)
+                results, phone_results = self._capture_step(
+                    cam_ports, cam_delay, base_folder, phone_dir, f"{i + 1:04d}", phone_names)
                 for name, port in zip(cam_names, cam_ports):
                     ok, msg = results[port]
                     if not ok:
                         self._log(f"⚠ {name} capture {i + 1} FAILED: {msg or 'unknown error'}")
+                for pname in phone_names:
+                    r = phone_results.get(pname, {"ok": False, "error": "no result"})
+                    if not r["ok"]:
+                        self._log(f"⚠ phone {pname} capture {i + 1} FAILED: "
+                                  f"{r.get('error') or 'unknown error'}")
+                    elif r.get("warning"):
+                        self._log(f"⚠ phone {pname}: {r['warning']}")
+                if phone_names:
+                    self._update_preview([None] * n_cams + [
+                        os.path.join(base_folder, phone_results[p]["path"])
+                        if phone_results.get(p, {}).get("ok") else None
+                        for p in phone_names])
 
                 # Signal Arduino to advance turntable and wait for 'e' acknowledgement
-                ser.write(caps_ld.encode())
-                ser.write(steps_ld.encode())
-                ser.read_until(size=1)
+                if ser:
+                    ser.reset_input_buffer()  # drop any stale ack so it can't pass for this move's
+                    ser.write(caps_ld.encode())
+                    ser.write(steps_ld.encode())
+                    ser.read_until(size=1)
 
                 done = (side - 1) * caps_int + (i + 1)
                 self._set_progress(done / total * 100)
@@ -577,64 +862,13 @@ class CaptureApp:
 
             else:
                 # Inner loop completed without break → download and clear cameras
-                self._set_status(f"Side {side}  —  downloading images…")
-                self._log(f"Side {side} complete. Checking file counts…")
+                if cam_ports:
+                    self._download_side(side, run_path, cam_names, cam_ports, cam_dests, caps_int)
+                if phone_names:
+                    self._check_phone_files(side, run_path, phone_names, caps_int)
 
-                # Each camera numbers its own DCIM folder independently (100CANON,
-                # 101CANON, …) and may expose a different store id, so discover the
-                # real image folder per camera instead of assuming a shared path.
-                cam_folders = [self._find_image_folder(port) for port in cam_ports]
-                for name, folder in zip(cam_names, cam_folders):
-                    if not folder:
-                        self._log(f"  {name}: no image folder found on camera!")
-
-                counts = [self._count_camera_files(port, folder) if folder else 0
-                          for port, folder in zip(cam_ports, cam_folders)]
-                self._log("  ".join(f"{name}: {c} files" for name, c in zip(cam_names, counts))
-                          + f"  (expected {caps_int} each)")
-
-                # Download each camera and record how many files actually landed on
-                # disk. We only ever clear a card after its download is verified, so a
-                # failed download can never destroy the only copy of the photos.
-                preview_paths = []
-                downloaded = []  # files verified on disk per camera
-                for name, port, dest, folder, on_cam in zip(
-                        cam_names, cam_ports, cam_dests, cam_folders, counts):
-                    if not folder:
-                        self._log(f"Skipping {name} — no image folder found on camera.")
-                        preview_paths.append(None)
-                        downloaded.append(0)
-                        continue
-                    self._log(f"Downloading from {name} ({folder})…")
-                    subprocess.run(
-                        ["gphoto2", "--port", port, "--recurse", "--get-all-files",
-                         "--folder", folder],
-                        cwd=dest, capture_output=True)
-                    files = [p for p in Path(dest).iterdir() if p.is_file()]
-                    imgs = sorted(Path(dest).glob("*.[Jj][Pp][Gg]"))
-                    downloaded.append(len(files))
-                    preview_paths.append(str(imgs[-1]) if imgs else None)
-                    note = "" if len(files) >= on_cam else "  ⚠ fewer than on camera!"
-                    self._log(f"{name}: downloaded {len(files)} file(s){note}")
-
-                # Update previews with the last downloaded image from each camera
-                self._update_preview(preview_paths)
-
-                self._log("Clearing camera cards (only where download verified)…")
-                for name, port, folder, on_cam, n_dl in zip(
-                        cam_names, cam_ports, cam_folders, counts, downloaded):
-                    if folder and n_dl > 0 and n_dl >= on_cam:
-                        subprocess.run(
-                            ["gphoto2", "--port", port, "--delete-all-files", "--folder", folder],
-                            capture_output=True)
-                        self._log(f"{name}: card cleared.")
-                    else:
-                        self._log(f"{name}: NOT cleared — download unverified, "
-                                  f"photos kept on card for safety.")
-                self._log(f"Side {side} images saved to {os.path.join(run_path, f'side{side}')}")
-                time.sleep(1)
-
-        ser.close()
+        if ser:
+            ser.timeout = 2  # the connection outlives the scan; back to the LED-command timeout
 
         if stopped:
             self._log("Scan stopped by user.")
@@ -644,6 +878,94 @@ class CaptureApp:
             self._set_status("Complete!")
 
         self._finish(not stopped)
+
+    def _download_side(self, side, run_path, cam_names, cam_ports, cam_dests, caps_int):
+        """Download this side's photos from every DSLR, then clear the cards that verified."""
+        self._set_status(f"Side {side}  —  downloading images…")
+        self._log(f"Side {side} complete. Checking file counts…")
+
+        # Each camera numbers its own DCIM folder independently (100CANON,
+        # 101CANON, …) and may expose a different store id, so discover the
+        # real image folder per camera instead of assuming a shared path.
+        cam_folders = [self._find_image_folder(port) for port in cam_ports]
+        for name, folder in zip(cam_names, cam_folders):
+            if not folder:
+                self._log(f"  {name}: no image folder found on camera!")
+
+        counts = [self._count_camera_files(port, folder) if folder else 0
+                  for port, folder in zip(cam_ports, cam_folders)]
+        self._log("  ".join(f"{name}: {c} files" for name, c in zip(cam_names, counts))
+                  + f"  (expected {caps_int} each)")
+
+        # Download each camera and record how many files actually landed on
+        # disk. We only ever clear a card after its download is verified, so a
+        # failed download can never destroy the only copy of the photos.
+        preview_paths = []
+        downloaded = []  # files verified on disk per camera
+        for name, port, dest, folder, on_cam in zip(
+                cam_names, cam_ports, cam_dests, cam_folders, counts):
+            if not folder:
+                self._log(f"Skipping {name} — no image folder found on camera.")
+                preview_paths.append(None)
+                downloaded.append(0)
+                continue
+            self._log(f"Downloading from {name} ({folder})…")
+            subprocess.run(
+                ["gphoto2", "--port", port, "--recurse", "--get-all-files",
+                 "--folder", folder],
+                cwd=dest, capture_output=True)
+            files = [p for p in Path(dest).iterdir() if p.is_file()]
+            imgs = sorted(Path(dest).glob("*.[Jj][Pp][Gg]"))
+            downloaded.append(len(files))
+            preview_paths.append(str(imgs[-1]) if imgs else None)
+            note = "" if len(files) >= on_cam else "  ⚠ fewer than on camera!"
+            self._log(f"{name}: downloaded {len(files)} file(s){note}")
+
+        # Update previews with the last downloaded image from each camera
+        self._update_preview(preview_paths)
+
+        self._log("Clearing camera cards (only where download verified)…")
+        for name, port, folder, on_cam, n_dl in zip(
+                cam_names, cam_ports, cam_folders, counts, downloaded):
+            if folder and n_dl > 0 and n_dl >= on_cam:
+                subprocess.run(
+                    ["gphoto2", "--port", port, "--delete-all-files", "--folder", folder],
+                    capture_output=True)
+                self._log(f"{name}: card cleared.")
+            else:
+                self._log(f"{name}: NOT cleared — download unverified, "
+                          f"photos kept on card for safety.")
+        self._log(f"Side {side} images saved to {os.path.join(run_path, f'side{side}')}")
+        time.sleep(1)
+
+    def _check_phone_files(self, side, run_path, phone_names, caps_int):
+        """Phones upload as they shoot, so there is nothing to download; just verify the counts."""
+        side_dir = Path(run_path) / f"side{side}"
+        counts = {p: len(list((side_dir / p).glob("*.jpg"))) for p in phone_names}
+        self._log("  ".join(f"phone {p}: {n} files" for p, n in counts.items())
+                  + f"  (expected {caps_int} each)")
+        for p, n in counts.items():
+            if n < caps_int:
+                self._log(f"⚠ phone {p}: only {n}/{caps_int} photos for side {side}")
+        self._log(f"Side {side} phone images saved to {side_dir}")
+
+    def _capture_step(self, cam_ports, cam_delay, root, phone_dir, name, phone_names):
+        """Fire the DSLRs and the phones at the same moment for one turntable position.
+
+        Returns (dslr_results, phone_results): {port: (ok, msg)} and {phone: {...}}.
+        """
+        phone_results = {}
+        phone_thread = None
+        if phone_names:
+            phone_thread = threading.Thread(
+                target=lambda: phone_results.update(
+                    self._phone_shoot(root, phone_dir, name, phone_names)),
+                daemon=True)
+            phone_thread.start()
+        dslr_results = self._capture_all(cam_ports, cam_delay)
+        if phone_thread:
+            phone_thread.join()
+        return dslr_results, phone_results
 
     # ------------------------------------------------------------------ gphoto2 helpers
 
@@ -692,15 +1014,12 @@ class CaptureApp:
         try:
             result = subprocess.run(["gphoto2", "--auto-detect"], capture_output=True, text=True)
         except FileNotFoundError:
-            self._log("gphoto2 not found — install it to detect cameras.")
+            # Phone-only setups don't need gphoto2, so say this once, not on every refresh/shot.
+            if not self._warned_no_gphoto2:
+                self._warned_no_gphoto2 = True
+                self._log("gphoto2 not installed — DSLR cameras disabled (phones still work).")
             return []
         return re.findall(r"(usb:\d+,\d+)", result.stdout)
-
-    def _detect_camera_ports(self):
-        ports = self._detect_camera_ports_safe()
-        if not ports:
-            raise RuntimeError("No cameras found by gphoto2.")
-        return ports
 
     def _find_image_folder(self, port):
         """Return the camera folder that actually holds image files, or None.
@@ -734,7 +1053,8 @@ class CaptureApp:
 
 def main():
     root = tk.Tk()
-    CaptureApp(root)
+    app = CaptureApp(root)
+    root.protocol("WM_DELETE_WINDOW", app.close)
     root.mainloop()
 
 

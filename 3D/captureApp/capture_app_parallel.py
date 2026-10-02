@@ -37,6 +37,11 @@ PHONE_TIMEOUT_S = 15     # per-attempt wait for a phone's upload (the hub retrie
 # Opening the serial port toggles DTR, which resets the Arduino; the sketch
 # needs about this long to reboot before it will listen for commands again.
 ARDUINO_RESET_S = 2.0
+# The port is opened with this read timeout and it is never changed afterwards:
+# on Windows, assigning ser.timeout re-applies the whole port configuration
+# (SetCommState), which can reset the Arduino again and drop the next command.
+# Longer waits go through _read_ack, which polls with this timeout.
+SERIAL_POLL_S = 0.1
 # After that, keep probing for up to this long before declaring the board dead.
 ARDUINO_BOOT_TIMEOUT_S = 10.0
 # Port-list entry meaning "no Arduino": scans then fire the cameras at an
@@ -646,7 +651,7 @@ class CaptureApp:
                 return self.ser
             self._close_serial()
             self._log(f"Opening {port} (the Arduino reboots once, about {ARDUINO_RESET_S:g}s)…")
-            ser = serial.Serial(port, baudrate=115200, timeout=2, write_timeout=2)
+            ser = serial.Serial(port, baudrate=115200, timeout=SERIAL_POLL_S, write_timeout=2)
             self._log(f"{port} opened; waiting for the sketch to answer…")
             time.sleep(ARDUINO_RESET_S)
             if not self._wait_for_sketch(ser):
@@ -667,18 +672,27 @@ class CaptureApp:
         longer than a fixed sleep allows); bytes sent before the sketch runs
         are dropped, so keep asking rather than guessing a delay.
         """
-        old_timeout, ser.timeout = ser.timeout, 0.5
-        try:
-            deadline = time.monotonic() + ARDUINO_BOOT_TIMEOUT_S
-            while time.monotonic() < deadline:
-                ser.write(b'F')
-                if ser.read(1) == b'e':
-                    time.sleep(0.3)  # let acks from any extra probes land, then discard them
-                    ser.reset_input_buffer()
-                    return True
-            return False
-        finally:
-            ser.timeout = old_timeout
+        deadline = time.monotonic() + ARDUINO_BOOT_TIMEOUT_S
+        while time.monotonic() < deadline:
+            ser.write(b'F')
+            if CaptureApp._read_ack(ser, 0.5) == b'e':
+                time.sleep(0.3)  # let acks from any extra probes land, then discard them
+                ser.reset_input_buffer()
+                return True
+        return False
+
+    @staticmethod
+    def _read_ack(ser, timeout):
+        """Wait up to `timeout` s for one byte; b'' if none arrives.
+
+        Polls with the port's fixed short timeout instead of changing
+        ser.timeout (see SERIAL_POLL_S).
+        """
+        deadline = time.monotonic() + timeout
+        while True:
+            b = ser.read(1)
+            if b or time.monotonic() >= deadline:
+                return b
 
     def _close_serial(self):
         with self._ser_lock:
@@ -711,7 +725,7 @@ class CaptureApp:
             return
         ser.reset_input_buffer()
         ser.write(b'N')
-        ack = ser.read(1)
+        ack = self._read_ack(ser, 2)
         if ack == b'e':
             self._log("LEDs re-enabled after Arduino reset.")
         else:
@@ -722,10 +736,9 @@ class CaptureApp:
         try:
             with self._ser_lock:
                 ser = self._get_serial(port)
-                ser.timeout = 2
                 ser.reset_input_buffer()
                 ser.write(b'N' if on else b'F')
-                ack = ser.read(1)  # wait for 'e' acknowledgement (or time out)
+                ack = self._read_ack(ser, 2)  # wait for 'e' acknowledgement (or time out)
             if ack == b'e':
                 self.leds_on = on
                 self._log(f"LEDs turned {'on' if on else 'off'}.")
@@ -809,8 +822,6 @@ class CaptureApp:
         steps_per_move = int(32 * (100 / caps_int))
         caps_ld = str(caps_int).zfill(4)
         steps_ld = str(steps_per_move).zfill(4)
-        if ser:
-            ser.timeout = steps_per_move + 2.5
         delay_desc = "all at once" if cam_delay == 0 else f"{cam_delay:g}s between cameras"
         move_desc = f"Steps per move: {steps_per_move}" if ser else "No turntable"
         self._log(f"Captures: {caps_int}  |  {move_desc}  |  "
@@ -884,7 +895,9 @@ class CaptureApp:
                     ser.reset_input_buffer()  # drop any stale ack so it can't pass for this move's
                     ser.write(caps_ld.encode())
                     ser.write(steps_ld.encode())
-                    ser.read_until(size=1)
+                    if self._read_ack(ser, steps_per_move + 2.5) != b'e':
+                        self._log(f"⚠ No acknowledgement from the Arduino after move {i + 1} "
+                                  f"(side {side}) — the turntable may not have advanced.")
 
                 done = (side - 1) * caps_int + (i + 1)
                 self._set_progress(done / total * 100)
@@ -896,9 +909,6 @@ class CaptureApp:
                     self._download_side(side, run_path, cam_names, cam_ports, cam_dests, caps_int)
                 if phone_names:
                     self._check_phone_files(side, run_path, phone_names, caps_int)
-
-        if ser:
-            ser.timeout = 2  # the connection outlives the scan; back to the LED-command timeout
 
         if stopped:
             self._log("Scan stopped by user.")

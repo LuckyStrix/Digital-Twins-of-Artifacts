@@ -36,6 +36,8 @@ PHONE_TIMEOUT_S = 15     # per-attempt wait for a phone's upload (the hub retrie
 # Opening the serial port toggles DTR, which resets the Arduino; the sketch
 # needs about this long to reboot before it will listen for commands again.
 ARDUINO_RESET_S = 2.0
+# After that, keep probing for up to this long before declaring the board dead.
+ARDUINO_BOOT_TIMEOUT_S = 10.0
 # Port-list entry meaning "no Arduino": scans then fire the cameras at an
 # interval (the Settle time) with nothing advancing between shots.
 NO_TURNTABLE = "(none — no turntable)"
@@ -645,10 +647,36 @@ class CaptureApp:
             self._log(f"Opening {port} (the Arduino reboots once, about {ARDUINO_RESET_S:g}s)…")
             ser = serial.Serial(port, baudrate=115200, timeout=2)
             time.sleep(ARDUINO_RESET_S)
+            if not self._wait_for_sketch(ser):
+                ser.close()
+                raise serial.SerialException(
+                    f"{port} opened but the Arduino never answered within "
+                    f"{ARDUINO_BOOT_TIMEOUT_S:g}s — check the port and that the sketch is uploaded.")
             ser.reset_input_buffer()
             self.ser, self.ser_port = ser, port
             self._restore_leds(ser)
             return ser
+
+    @staticmethod
+    def _wait_for_sketch(ser):
+        """Probe with the harmless LEDs-off command until the sketch acks, or give up.
+
+        Bootloader time varies by board and OS driver (a Mega on Windows needs
+        longer than a fixed sleep allows); bytes sent before the sketch runs
+        are dropped, so keep asking rather than guessing a delay.
+        """
+        old_timeout, ser.timeout = ser.timeout, 0.5
+        try:
+            deadline = time.monotonic() + ARDUINO_BOOT_TIMEOUT_S
+            while time.monotonic() < deadline:
+                ser.write(b'F')
+                if ser.read(1) == b'e':
+                    time.sleep(0.3)  # let acks from any extra probes land, then discard them
+                    ser.reset_input_buffer()
+                    return True
+            return False
+        finally:
+            ser.timeout = old_timeout
 
     def _close_serial(self):
         with self._ser_lock:

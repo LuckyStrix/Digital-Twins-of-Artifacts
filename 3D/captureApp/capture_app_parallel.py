@@ -1,6 +1,7 @@
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox, scrolledtext
 import threading
+import traceback
 import subprocess
 import time
 import os
@@ -645,7 +646,8 @@ class CaptureApp:
                 return self.ser
             self._close_serial()
             self._log(f"Opening {port} (the Arduino reboots once, about {ARDUINO_RESET_S:g}s)…")
-            ser = serial.Serial(port, baudrate=115200, timeout=2)
+            ser = serial.Serial(port, baudrate=115200, timeout=2, write_timeout=2)
+            self._log(f"{port} opened; waiting for the sketch to answer…")
             time.sleep(ARDUINO_RESET_S)
             if not self._wait_for_sketch(ser):
                 ser.close()
@@ -732,7 +734,7 @@ class CaptureApp:
                           f"(got {ack!r}) — check the board is running the latest sketch.")
         except (serial.SerialException, OSError) as exc:
             self._close_serial()  # reconnect on the next use
-            self._log(f"LED serial error: {exc}")
+            self._log(f"LED serial error: {exc}\n{traceback.format_exc()}")
         finally:
             self.root.after(0, lambda: (self.start_btn.configure(state="normal"),
                                         self.test_btn.configure(state="normal"),

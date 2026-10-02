@@ -150,7 +150,8 @@ Arduino over a **serial port**, so on the capture workstation you need:
 
 ## Usage
 
-- **Capture** (needs the physical rig): `python3 captureApp/capture_app_parallel.py`;
+- **Capture** (needs the physical rig): `python3 captureApp/capture_app_parallel.py`
+  (also drives iPhones as extra cameras over Tailscale — see [`captureApp/PHONE_CAPTURE.md`](captureApp/PHONE_CAPTURE.md));
   rig firmware in `arduinoCode/`.
 - **Reconstruction**: `python3 modelingPipeline/app.py` — see
   [`modelingPipeline/README.md`](modelingPipeline/README.md) for the four-stage

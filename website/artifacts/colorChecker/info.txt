@@ -1,0 +1,3 @@
+Name: colorchecker
+Type: papyrus
+Description: x-rite colorchecker passport

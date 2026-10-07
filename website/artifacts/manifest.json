@@ -8,6 +8,13 @@
       "model": "bubble_wrap/28-07-26_16-14-38.glb"
     },
     {
+      "id": "colorChecker",
+      "name": "colorchecker",
+      "type": "papyrus",
+      "description": "x-rite colorchecker passport",
+      "model": "colorChecker/4.glb"
+    },
+    {
       "id": "ege-30",
       "name": "Ege 30",
       "type": "manuscript",

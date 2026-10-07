@@ -18,7 +18,9 @@ data/
 # Local calibration data (user specific)
 2D/backend/calibration/
 2D/backend/modeling/__pycache__/color_correction.cpython-312.pyc
+2D/backend/modeling/output/1_calibrated/stage1_info.json
 
 # Python bytecode
 __pycache__/
 *.pyc
+

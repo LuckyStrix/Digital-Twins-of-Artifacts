@@ -1526,6 +1526,12 @@ def write_mesh_file(
     return bool(ok), None, None
 
 
+def srgb_to_linear(c: np.ndarray) -> np.ndarray:
+    """sRGB-encoded 0..1 values to linear light (the IEC 61966-2-1 curve)."""
+    c = np.asarray(c, dtype=np.float64)
+    return np.where(c <= 0.04045, c / 12.92, ((c + 0.055) / 1.055) ** 2.4)
+
+
 def build_gltf_document(
     mesh: o3d.geometry.TriangleMesh,
     quantize_colors: bool = False,
@@ -1558,6 +1564,8 @@ def build_gltf_document(
     if mesh.has_vertex_colors() and len(mesh.vertex_colors) == len(mesh.vertices):
         colors_np = np.clip(np.asarray(mesh.vertex_colors, dtype=np.float64), 0.0, 1.0)
         if np.isfinite(colors_np).all():
+            # Open3D's vertex colours are photo pixels (sRGB); glTF COLOR_0 is linear.
+            colors_np = srgb_to_linear(colors_np)
             alpha = np.ones((len(colors_np), 1), dtype=np.float64)
             rgba = np.concatenate((colors_np, alpha), axis=1)
             if quantize_colors:

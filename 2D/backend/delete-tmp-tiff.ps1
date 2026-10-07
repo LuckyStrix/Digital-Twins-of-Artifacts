@@ -29,8 +29,14 @@ $excludeFiles = @(
 # --- SCRIPT ---
 $dryRun = $false   # <-- set to $false once you've verified the file list below
 
+# backend\calibration\ is protected wholesale. Its flat-field TIFFs happen to share
+# the 9 capture filenames, but the colour-chart shot in calibration\chart\ does not
+# -- deleting it would silently destroy the reference the colour matrix is fitted from.
+$protectedDir = (Join-Path $rootPath "calibration") + [IO.Path]::DirectorySeparatorChar
+
 $filesToDelete = Get-ChildItem -Path $rootPath -Recurse -Include *.tmp, *.tiff, *.glb -File |
-    Where-Object { $excludeFiles -notcontains $_.Name }
+    Where-Object { $excludeFiles -notcontains $_.Name } |
+    Where-Object { -not $_.FullName.StartsWith($protectedDir, [StringComparison]::OrdinalIgnoreCase) }
 
 Write-Host "Found $($filesToDelete.Count) files to delete (excluding $($excludeFiles.Count) protected files):"
 $filesToDelete | ForEach-Object { Write-Host ("  " + $_.FullName) }

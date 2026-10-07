@@ -7,7 +7,8 @@ stage — to shoot the directional-light TIFFs the modeling pipeline needs.
 ## Contents
 
 - `arduinoIntegration.py` — main capture loop. Talks to the Arduino over serial,
-  triggers the camera for each lighting condition, and converts the raw .tmp files to TIFF with `dcraw`.
+  triggers the camera for each lighting condition, and converts the RAW
+  files to TIFF with `dcraw`.
 - `serialTesting.py` — tiny helper to sanity-check the serial connection.
 - `IrisArduinoCode/IrisArduinoCode.ino` — firmware for the Arduino controlling
   the lights, aperture and rotation stage.
@@ -33,10 +34,19 @@ Capture only runs on the machine wired to the rig:
 > [2D README](../../README.md#camera-driver-setup-zadig-windows-only). (Not
 > needed on Linux, where gphoto2 uses the kernel USB driver directly.)
 
+## Colour handling
+
+Frames are converted to **linear** 16-bit TIFFs (`dcraw -g 1 1 -o 0 ...`), so
+they look dark in an image viewer; that is expected. Each capture folder also
+gets a `capture_info.json` recording the dcraw flags, which the modeling
+pipeline reads to decide whether to linearise. The Windows and Linux capture
+scripts share the same flags and sidecar. Setting `PAPYRUS_CAPTURE_DIR` makes
+the script write straight into that folder (no timestamped subfolder).
+
 ## Output
 
 Captures are written to the app's top-level `data/<timestamp>/` folder (the RAW
- files are moved into a `tmpArchive/` subfolder; the converted `.tiff`
+files are moved into a `tmpArchive/` subfolder; the converted `.tiff`
 files stay in the timestamp folder). Each such folder is a self-contained scan
 set: the modeling and rendering stages add `maps/` and `model/` subfolders to it.
 Use the launcher's **Select working image set** button to pick which scan folder

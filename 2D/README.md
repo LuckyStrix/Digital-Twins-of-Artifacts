@@ -19,8 +19,17 @@ code and differ only in how they drive the capture rig:
 **How it runs day to day:**
 - `run.py` / `run_linux.py` is a single launcher whose buttons run top to
   bottom: select a working image set → (optional) Open Focus Viewer → Capture
-  Calibration (once per rig setup) → Capture Scroll → Run Modeling Pipeline →
-  Build 3D Model → Open Viewer.
+  Calibration (Step 0a, flat copy paper) → Capture Colour Chart (0b) → Fit
+  Colour Matrix (0c) → Capture Scroll → Run Modeling Pipeline → Build 3D Model →
+  Open Viewer. Steps 0a–0c are the same on Windows and Linux. Calibration is
+  stored beside the scan set (`<working>/cal/`, with the fitted matrix in
+  `cal/ccm.json`), and the pipeline applies it automatically. Shoot 0a and 0b at
+  the same exposure.
+- **Colour fit environment (once per machine):** the fit needs contrib OpenCV,
+  which clashes with the pipeline's OpenCV, so it has its own virtualenv,
+  `.venv-colorfit` at the repo root. **Check / Install Dependencies** creates it
+  (and repairs it if it is broken) using the Python the launcher runs on, which
+  must be 3.9–3.12. Without it the pipeline still runs, just uncorrected.
 - The **active working folder** holds one scan set; the pipeline reads it and
   writes `maps/` inside it from modeling plus `<folder>.glb` alongside it from
   rendering, so each scan set is self-contained and a fresh capture just starts
@@ -55,7 +64,7 @@ code and differ only in how they drive the capture rig:
   - **msys2** with gphoto2 — https://www.msys2.org/ , then in the MSYS2 MINGW64
     shell: `pacman -S mingw-w64-x86_64-gphoto2`. Add the MSYS2 `mingw64\bin`
     folder to your PATH so `gphoto2` is callable from the launcher.
-  - **dcraw** on PATH (converts `.cr2` → `.tiff`). Windows binary:
+  - **dcraw** on PATH (converts the camera's RAW files → `.tiff`). Windows binary:
     https://sourceforge.net/app/dcraw/ (download `DCRaw_V9.28.exe` and put it on
     your PATH).
   - **Zadig** — camera USB driver swap, **required on Windows for gphoto2 to see
@@ -101,9 +110,11 @@ driver is replaced with **WinUSB** using [Zadig](https://zadig.akeo.ie/)
 ## Setup
 
 `run.py` self-installs most dependencies. Launch it and click
-**Install Python Dependencies**, which runs `pip install -r
-backend/modeling/requirements.txt pyserial` and `npm install` in the renderer
-for you:
+**Check / Install Dependencies**, which runs `pip install -r
+backend/modeling/requirements.txt pyserial`, creates the separate `.venv-colorfit`
+environment for the colour fit (Step 0c) from
+`backend/modeling/requirements-colorfit.txt`, and runs `npm install` in the
+renderer for you:
 
 ```bash
 python run.py

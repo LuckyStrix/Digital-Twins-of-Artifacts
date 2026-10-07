@@ -15,7 +15,7 @@ Single launcher that ties the four Papyrus sub-projects together:
                         render-ready maps into <active folder>/maps/.
 
   backend/rendering  - Three.js / Vite app. Turns the texture maps into a
-                        textured 3D model, saved to <active folder>/model/render.glb.
+                        textured 3D model, saved to <active folder>.glb.
 
   backend/website    - Interactive museum-style viewer for render.glb.
 
@@ -25,7 +25,7 @@ its outputs inside that same folder, so each scan set is self-contained:
   <active folder>/
     allLight.tiff, ncross.tiff, ... wco.tiff   (the 9 scroll scans)
     maps/        *_render.tiff                  (modeling output)
-    model/       render.glb                     (rendering output)
+  <active folder>.glb                           (rendering output, alongside it)
 
 It defaults to the top-level data/ folder (where captures land); a fresh capture
 makes its own data/<timestamp>/ folder active, and "Select working image set"
@@ -34,14 +34,17 @@ points it at any other scan folder.
 Optionally you can tick "Scan both sides of the object". Capture then shoots two
 scan sets (pausing so you can flip the object) into side1/ and side2/ subfolders
 of one working folder, and the modeling and rendering steps run once per side,
-each producing its own maps/ and model/ inside that side's folder:
+each producing its own maps/ and its own .glb next to that side's folder:
 
   <active folder>/
-    side1/  allLight.tiff ... wco.tiff   maps/   model/render.glb
-    side2/  allLight.tiff ... wco.tiff   maps/   model/render.glb
+    side1/  allLight.tiff ... wco.tiff   maps/
+    side1.glb
+    side2/  allLight.tiff ... wco.tiff   maps/
+    side2.glb
 
 When the box is left unticked everything behaves exactly as before (a single
-flat scan set with its own maps/ and model/ directly in the working folder).
+flat scan set with its own maps/ directly in the working folder and its .glb
+next to it).
 
 Usage:
     python3 run.py
@@ -60,7 +63,9 @@ Then click the buttons top to bottom:
                               (needs the camera + Arduino attached) and stores
                               them in the active working folder.
   2. Run Modeling Pipeline  - generates the texture maps into <active>/maps/.
-  3. Build 3D Model (.glb)  - bakes the maps into <active>/model/render.glb.
+  3. Build 3D Model (.glb)  - bakes the maps into <active>.glb, next to the
+                              working folder (side1.glb / side2.glb when both
+                              sides were scanned).
   4. Open 3D Viewer         - serves backend/website/ and opens it in a browser.
 
 The individual steps 1-4 always run (force re-do). "Run Everything" and "Select
@@ -108,11 +113,54 @@ CAPTURE_TIFFS = [
     "nco.tiff", "eco.tiff", "sco.tiff", "wco.tiff",
 ]
 
+# Sidecar the capture script drops beside the TIFFs recording the dcraw flags
+# used, and in particular whether the images are linear or BT.709-encoded. The
+# modeling pipeline reads it to decide whether to linearise; when it is absent
+# the images are assumed to be BT.709 (the historic dcraw default).
+CAPTURE_INFO_NAME = "capture_info.json"
+
+# Calibration lives beside the scan set it belongs to (<working>/cal/), with the
+# colour-chart shot in <working>/cal/chart/ and the fitted matrix at
+# <working>/cal/ccm.json. Kept in sync with backend/modeling/color_correction.py.
+CAL_SUBDIR   = "cal"
+CHART_SUBDIR = "chart"
+CCM_NAME     = "ccm.json"
+
+# Virtualenv holding color_fit.py's dependencies, looked for beside the repo
+# root and then beside 2D/. Separate from the pipeline's environment because
+# cv2.mcc needs opencv-contrib while rembg needs plain opencv-python-headless,
+# and the two overwrite each other's cv2/ directory. See
+# backend/modeling/requirements-colorfit.txt.
+COLORFIT_VENV = ".venv-colorfit"
+COLORFIT_REQS = MODELING_DIR / "requirements-colorfit.txt"
+
+# Run inside the colour-fit venv by 'Check / Install Dependencies'. Prints the
+# space-separated names of whatever color_fit.py needs but cannot import, so an
+# empty line means the environment is complete. cv2.mcc is checked as an
+# attribute because plain opencv installs a cv2 without it; pip is reported so a
+# venv created without it (Debian's python3 with no python3-venv) is rebuilt
+# rather than pip-installed into.
+COLORFIT_CHECK = """
+import importlib.util
+missing = [m for m in ("pip", "colour", "tifffile", "imagecodecs", "scipy", "numpy")
+           if importlib.util.find_spec(m) is None]
+try:
+    import cv2
+    if not hasattr(cv2, "mcc"):
+        missing.append("cv2.mcc")
+except Exception:
+    missing.append("cv2")
+print(" ".join(missing))
+"""
+
 # Per-working-folder layout. The scroll scans live directly in the working
-# folder; the pipeline writes its render-ready maps and the built model into
-# these subfolders inside that same folder, so each scan set is self-contained.
+# folder and the pipeline writes its render-ready maps into <folder>/maps/, so
+# each scan set is self-contained. The built model is saved *next to* the folder
+# as <folder>.glb, which is how the website's artifact manifest refers to models
+# (e.g. side1.glb / side2.glb, 28-07-26_13-36-25.glb).
 MAPS_SUBDIR  = "maps"
-MODEL_SUBDIR = "model"
+# Name the renderer gives its own export inside backend/rendering/ before it is
+# copied out to <folder>.glb.
 GLB_NAME     = "render.glb"
 
 # Optional two-sided capture. When the user opts to scan both sides of the
@@ -260,7 +308,11 @@ class PipelineApp:
 
         add_button("Check / Install Dependencies", self.on_install_deps)
         add_button("Open Focus Viewer (set camera focus)", self.on_open_focus_viewer)
-        add_button("Step 0 — Capture Calibration (flat copy paper)", self.on_capture_calibration)
+        add_button("Step 0a — Capture Calibration (flat copy paper)", self.on_capture_calibration)
+        add_button("Step 0b — Capture Colour Chart (24-patch ColorChecker)",
+                   self.on_capture_chart)
+        add_button("Step 0c — Fit Colour Matrix (re-run without re-shooting)",
+                   self.on_fit_color)
         tk.Frame(button_frame, height=1, bg="#cccccc").pack(fill=tk.X, pady=6)
         add_button("Step 1 — Capture Scroll (needs camera + Arduino)", self.on_run_capture)
         add_button("Step 2 — Run Modeling Pipeline", self.on_run_modeling)
@@ -395,8 +447,6 @@ class PipelineApp:
         self.active_dir = Path(folder)
         self.active_dir_var.set(str(self.active_dir))
         self.log(f"Active working folder set to: {self.active_dir}")
-        env = dict(os.environ)
-        env["CAPTURE_DATA_DIR"] = str(self.active_dir)
         for side in self._side_dirs():
             label = self._side_label(side)
             prefix = f"  {label}: " if label else "  Folder status: "
@@ -404,10 +454,9 @@ class PipelineApp:
                 "scans" if self._has_scans(side) else "no scans",
                 "maps" if self._has_maps(side) else "no maps",
             ]
-            glbs = [".glb" if self._has_glb(side, side) else "no .glb"]
-            self.log(prefix + ", ".join(have) + ", " + " ".join(glbs) + ".")
-        txt = ".txt" if self._has_txt() else "no .txt"
-        self.log(txt)
+            have.append(".glb" if self._has_glb(side) else "no .glb")
+            self.log(prefix + ", ".join(have) + ".")
+        self.log("  Description: " + (TXT_NAME if self._has_txt() else "no " + TXT_NAME))
         self.log("Click a step or 'Run Everything' to process it.")
 
     def on_open_focus_viewer(self):
@@ -418,6 +467,12 @@ class PipelineApp:
 
     def on_capture_calibration(self):
         self.run_in_background(self.step_capture_calibration, "capture calibration")
+
+    def on_capture_chart(self):
+        self.run_in_background(self.step_capture_chart, "capture colour chart")
+
+    def on_fit_color(self):
+        self.run_in_background(self.step_fit_color, "fit colour matrix")
 
     def on_run_modeling(self):
         self.run_in_background(self.step_run_modeling, "modeling pipeline")
@@ -460,14 +515,14 @@ class PipelineApp:
         save_dir = self.active_dir
         if not save_dir:
             messagebox.showerror(
-                "CAPTURE_DATA_DIR not set",
-                "The CAPTURE_DATA_DIR environment variable is not set.\n"
-                "Please set it before running this script."
+                "No working folder set",
+                "No active working folder is set.\n"
+                "Select or capture an image set before generating a description."
             )
             return
 
         os.makedirs(save_dir, exist_ok=True)
-        save_path = os.path.join(save_dir, "info.txt")
+        save_path = os.path.join(save_dir, TXT_NAME)
 
         content = (
             f"Name: {name}\n"
@@ -546,7 +601,11 @@ class PipelineApp:
         else:
             self.log("\nAll Python packages already present — nothing to install.")
 
-        # 3. Node.js + renderer packages (Build 3D Model step) ----------------
+        # 3. Colour-fit virtualenv (Step 0c) ---------------------------------
+        self.log("\nColour-fit environment (needed for 'Step 0c — Fit Colour Matrix'):")
+        self._ensure_colorfit_env(ok, no)
+
+        # 4. Node.js + renderer packages (Build 3D Model step) ----------------
         self.log("\nNode.js (needed for 'Build 3D Model'):")
         node = shutil.which("node")
         npm = shutil.which(NPM)
@@ -565,7 +624,7 @@ class PipelineApp:
             self.log("       Install the LTS from https://nodejs.org/ (tick 'Add to PATH'),")
             self.log("       reopen this app, then click this button again to run npm install.")
 
-        # 4. Capture-rig tools (only needed for capture / focus viewer) -------
+        # 5. Capture-rig tools (only needed for capture / focus viewer) -------
         self.log("\nCapture-rig tools (only needed to run Capture / Focus Viewer):")
         if Path(MSYS2_SHELL).exists():
             self.log(f"  {ok} msys2 ({MSYS2_SHELL})")
@@ -587,14 +646,15 @@ class PipelineApp:
         self.log("\nDone. Re-run this any time to re-check. See SETUP.md for the full guide.")
         self.log("=" * 64)
 
-    def _latest_capture_dir(self):
-        """Most recently modified subfolder of the top-level data/, or None."""
-        if not self.active_dir.exists():
-            return None
-        subdirs = [d for d in self.active_dir.iterdir() if d.is_dir()]
-        if not subdirs:
-            return None
-        return max(subdirs, key=lambda d: d.stat().st_mtime)
+    def _new_capture_dir(self) -> Path:
+        """A fresh timestamped scan folder inside the active working folder.
+
+        The capture script writes straight into the folder it is handed
+        (PAPYRUS_CAPTURE_DIR), so the launcher names the folder here. Capturing
+        into the *active* folder means selecting e.g. data/realPapyrus and
+        hitting Capture keeps the new scan set with the rest of that
+        artifact's sets."""
+        return self.active_dir / datetime.now().strftime("%d-%m-%y_%H-%M-%S")
 
     # ── Active working folder ────────────────────────────────────────────────────
     @property
@@ -627,10 +687,44 @@ class PipelineApp:
         return (side or self.active_dir) / MAPS_SUBDIR
 
     def _glb_path(self, side: Path = None) -> Path:
-        return (side or self.active_dir) / MODEL_SUBDIR / GLB_NAME
+        """Where the built model for `side` is saved: <side>.glb, alongside the
+        folder rather than inside it (side1/ -> side1.glb), matching the naming
+        the website's artifact manifest expects."""
+        side = side or self.active_dir
+        return side.parent / f"{side.name}.glb"
     
     def _txt_path(self, side: Path = None) -> Path:
         return (side or self.active_dir) / TXT_NAME
+
+    # ── Calibration folders ──────────────────────────────────────────────────
+    # Calibration is zoom-specific: the flat-field envelope is a per-pixel
+    # spatial fit and the modeling pipeline hard-errors if its shape does not
+    # match the scan. So each scan set carries the calibration it was shot with,
+    # and only falls back to the shared global folder when it has none.
+    def _cal_capture_dir(self) -> Path:
+        """Where a NEW calibration capture goes: <working>/cal/."""
+        return self.active_dir / CAL_SUBDIR
+
+    def _cal_dir(self, side: Path = None) -> Path:
+        """Which calibration set applies to `side`. Mirrors the resolution order
+        in backend/modeling/color_correction.py: the scan's own cal/, else the
+        shared parent cal/ (so side1/ and side2/ share one set), else global."""
+        d = side or self.active_dir
+        for candidate in (d / CAL_SUBDIR, d.parent / CAL_SUBDIR):
+            if candidate.is_dir():
+                return candidate
+        return CALIBRATION_IMAGES
+
+    def _has_cal(self, d: Path = None) -> bool:
+        """True when a calibration set has the full flat-field paper series."""
+        cal = self._cal_dir(d)
+        return all((cal / name).exists() for name in CAPTURE_TIFFS)
+
+    def _has_chart(self, d: Path = None) -> bool:
+        return (self._cal_dir(d) / CHART_SUBDIR / "allLight.tiff").exists()
+
+    def _has_ccm(self, d: Path = None) -> bool:
+        return (self._cal_dir(d) / CCM_NAME).exists()
 
     def _set_active_dir(self, path):
         """Set the active working folder and refresh its on-screen display.
@@ -649,14 +743,12 @@ class PipelineApp:
         maps = d / MAPS_SUBDIR
         return all((maps / name).exists() for name in RENDER_MAPS)
 
-    def _has_glb(self, glb, d: Path = None) -> bool:
-        d = d or self.active_dir
-        return (d / f"{glb}.glb").exists()
+    def _has_glb(self, side: Path = None) -> bool:
+        return self._glb_path(side).exists()
     
     def _has_txt(self, d: Path = None) -> bool:
         d = d or self.active_dir
-        txt = TXT_NAME
-        return (d / f"{txt}").exists()
+        return (d / TXT_NAME).exists()
 
     def _ask_continue(self, title: str, message: str) -> bool:
         """Pop a modal OK/Cancel dialog from a background thread; return True on OK.
@@ -714,6 +806,19 @@ class PipelineApp:
             else:
                 missing.append(name)
 
+        # The sidecar records which transfer curve the TIFFs carry (linear vs
+        # BT.709). It has to travel with them: this is the exact moment a
+        # capture becomes a calibration set, and if the encoding metadata is
+        # dropped here the modeling pipeline falls back to assuming BT.709 and
+        # will mis-linearise a linear set without ever saying so.
+        info_src = latest / CAPTURE_INFO_NAME
+        if info_src.exists():
+            shutil.copy2(info_src, dest / CAPTURE_INFO_NAME)
+            self.log(f"  {CAPTURE_INFO_NAME} -> {label}")
+        else:
+            self.log(f"  NOTE: no {CAPTURE_INFO_NAME} in {latest} — the pipeline "
+                     "will assume these images are BT.709-encoded.")
+
         if missing:
             self.log("WARNING: capture folder is missing these expected files: "
                       + ", ".join(missing))
@@ -741,22 +846,22 @@ class PipelineApp:
 
         self.log("SCROLL CAPTURE — place the scroll on the stage before "
                   "continuing.")
-        rc = self._run_capture_script(capture_dir=self.active_dir)
+        latest = self._new_capture_dir()
+        rc = self._run_capture_script(capture_dir=latest)
         if rc != 0:
             return
-        latest = self._latest_capture_dir()
-        if latest is None:
+        if not latest.is_dir():
             self.log("Capture reported success but no output folder was found in "
                       f"{self.active_dir}.")
             return
-        # The capture script already wrote the scans into data/<timestamp>/,
+        # The capture script wrote the scans into <active>/<timestamp>/,
         # which is a self-contained working folder — make it the active one
         # instead of copying the images somewhere else.
         self._set_active_dir(latest)
         self.log(f"Capture finished. Active working folder set to: {latest}")
         if self._has_scans(latest):
             self.log("Scroll scans are in place. Make sure calibration images "
-                      "exist too (Step 0 — Capture Calibration), then run the "
+                      "exist too (Step 0a — Capture Calibration), then run the "
                       "modeling pipeline.")
         else:
             missing = [n for n in CAPTURE_TIFFS if not (latest / n).exists()]
@@ -766,7 +871,7 @@ class PipelineApp:
         """Capture both sides of the object into side1/ and side2/ subfolders of
         one fresh working folder, pausing between them so the user can flip the
         object over."""
-        working = self.active_dir / datetime.now().strftime("%d-%m-%y_%H-%M-%S")
+        working = self._new_capture_dir()
         self.log("TWO-SIDED SCROLL CAPTURE")
         self.log(f"Working folder: {working}")
 
@@ -800,27 +905,253 @@ class PipelineApp:
         self._set_active_dir(working)
         self.log(f"Two-sided capture finished. Active working folder set to: {working}")
         self.log("Both sides captured into side1/ and side2/. Make sure "
-                  "calibration images exist (Step 0 — Capture Calibration), then "
+                  "calibration images exist (Step 0a — Capture Calibration), then "
                   "run the modeling pipeline.")
+
+    def _check_exposure(self, folder: Path, label: str) -> None:
+        """Report per-channel saturation in a freshly captured set.
+
+        Worth doing at the rig rather than hours later in the pipeline: a
+        saturated channel cannot be recovered by any amount of colour
+        correction, and red saturates long before an image looks bright.
+        """
+        try:
+            import numpy as np
+            import tifffile
+        except ImportError:
+            return
+        self.log(f"Checking {label} exposure...")
+        worst = 0.0
+        for name in CAPTURE_TIFFS:
+            p = folder / name
+            if not p.exists():
+                continue
+            try:
+                a = tifffile.imread(str(p))
+            except Exception:
+                continue
+            if a.ndim == 3:
+                fr = {c: float((a[:, :, i] >= 65000).mean())
+                      for i, c in enumerate("RGB")}     # tifffile -> RGB order
+            else:
+                fr = {"grey": float((a >= 65000).mean())}
+            hot = {c: v for c, v in fr.items() if v > 0.001}
+            worst = max(worst, max(fr.values()))
+            if hot:
+                self.log(f"  {name}: " + ", ".join(
+                    f"{c} {v * 100:.1f}% saturated" for c, v in hot.items()))
+        if worst > 0.001:
+            self.log(f"  WARNING: up to {worst * 100:.1f}% of pixels are pinned at "
+                     "full scale. Reduce exposure by roughly "
+                     f"{max(1, round(np.log2(1 / max(1 - worst, 0.25)))):.0f}-2 stops "
+                     "and re-shoot — clipped channels cannot be colour-corrected.")
+        else:
+            self.log("  Exposure looks good — nothing significant is clipping.")
 
     def step_capture_calibration(self):
         self.log("CALIBRATION CAPTURE — place a sheet of flat copy paper (no "
                   "scroll) on the stage before continuing. The same lighting "
                   "sequence is used as for the scroll.")
-        rc = self._run_capture_script(capture_dir=self.active_dir)
+        self.log("Set the exposure so the paper does NOT clip (brightest pixel "
+                  "below ~92% of full scale), and do not change it again until "
+                  "the chart and the artifact are both shot.")
+        dest = self._cal_capture_dir()
+        rc = self._run_capture_script(capture_dir=dest)
         if rc != 0:
             return
-        latest = self._latest_capture_dir()
-        if latest is None:
-            self.log("Capture reported success but no output folder was found in "
-                      f"{self.active_dir}.")
+        if not self._has_scans(dest):
+            missing = [n for n in CAPTURE_TIFFS if not (dest / n).exists()]
+            self.log("WARNING: calibration capture is missing: " + ", ".join(missing))
             return
-        self.log("Capture finished.")
-        copied = self._import_capture_into(
-            latest, CALIBRATION_IMAGES, "backend/calibration/")
-        if copied:
-            self.log("Calibration images are in place. Capture the scroll next "
-                      "(Step 1 — Capture Scroll), then run the modeling pipeline.")
+        self.log(f"Calibration captured into {dest}")
+        self._check_exposure(dest, "calibration")
+        # Also refresh the global set so a scan folder without its own cal/ still
+        # has something to fall back on.
+        self._import_capture_into(dest, CALIBRATION_IMAGES, "backend/calibration/")
+        self.log("Next: Step 0b — Capture Colour Chart, at this same exposure.")
+
+    def step_capture_chart(self):
+        """Shoot the 24-patch ColorChecker for the active working folder.
+
+        Reuses the normal capture sequence unchanged and simply points it at
+        cal/chart/. That gives allLight.tiff shot CROSS-POLARISED (the lighting
+        sequence shoots allLight and the four cross frames before rotating the
+        polariser), which is exactly what colorimetry wants: even illumination
+        from all four lights with the chart's surface glare suppressed. It also
+        matches how the diffuse map is built, and cross-polarised measurement is
+        what the chart's published reference values represent.
+        """
+        cal = self._cal_capture_dir()
+        if not self._has_cal(self.active_dir):
+            self.log("WARNING: no flat-field copy-paper set found for this "
+                     "working folder. Shoot Step 0a FIRST — the colour fit "
+                     "divides the chart by the paper envelope, and both must "
+                     "share one exposure setting.")
+        if not self._ask_continue(
+                "Capture colour chart",
+                "Place the 24-patch ColorChecker flat on the stage, centred, "
+                "filling roughly a third of the frame, at the same height as "
+                "the artifact.\n\n"
+                "Do NOT change exposure, aperture, ISO or focus from the "
+                "copy-paper shot — the fit assumes they match.\n\n"
+                "OK to capture, Cancel to stop."):
+            self.log("Colour-chart capture cancelled.")
+            return
+
+        dest = cal / CHART_SUBDIR
+        self.log(f"COLOUR CHART CAPTURE -> {dest}")
+        rc = self._run_capture_script(capture_dir=dest)
+        if rc != 0:
+            return
+        if not (dest / "allLight.tiff").exists():
+            self.log("WARNING: chart capture produced no allLight.tiff — that is "
+                     "the frame the fit uses. Check the camera and re-run.")
+            return
+        self.log(f"Colour chart captured into {dest}")
+        self._check_exposure(dest, "colour chart")
+        self.log("A clipped patch biases the whole matrix, so the white patch in "
+                 "particular must not be at full scale.")
+        self.log("Fitting the colour matrix...")
+        self.step_fit_color()
+
+    # ── Colour matrix fit ────────────────────────────────────────────────────
+    def _venv_python(self, venv: Path) -> Path:
+        return venv / "Scripts" / "python.exe"
+
+    def _colorfit_missing(self, python: Path):
+        """What the colour-fit venv at `python` lacks, as a list (empty when it
+        is complete), or None when that interpreter cannot run at all."""
+        try:
+            res = subprocess.run([str(python), "-c", COLORFIT_CHECK],
+                                 capture_output=True, text=True, timeout=300)
+        except Exception:
+            return None
+        if res.returncode != 0:
+            return None
+        lines = res.stdout.strip().splitlines()
+        return lines[-1].split() if lines else []
+
+    def _ensure_colorfit_env(self, ok: str, no: str):
+        """Create or repair the colour-fit venv so Step 0c works without manual
+        setup. Kept apart from the pipeline's packages for the reason given at
+        COLORFIT_VENV; this is the only place that installs into it."""
+        venv = next((b / COLORFIT_VENV for b in (ROOTER, ROOT)
+                     if self._venv_python(b / COLORFIT_VENV).is_file()),
+                    ROOTER / COLORFIT_VENV)
+        python = self._venv_python(venv)
+        missing = self._colorfit_missing(python) if python.is_file() else None
+        if missing == []:
+            self.log(f"  {ok} {venv}")
+            return
+
+        if missing is None or "pip" in missing:
+            ver = sys.version_info
+            if not (3, 9) <= (ver.major, ver.minor) <= (3, 12):
+                self.log(f"  {no} {venv} — cannot create it with Python "
+                         f"{ver.major}.{ver.minor}: colour-science 0.4.x and numpy<2 "
+                         "need Python 3.9-3.12. Relaunch with one of those and "
+                         "click this button again.")
+                return
+            self.log(f"  {no} {venv} "
+                     + ("is broken" if venv.exists() else "not found")
+                     + " -> creating it")
+            rc = self.run_command([sys.executable, "-m", "venv", "--clear", str(venv)])
+            if rc != 0 or not python.is_file():
+                self.log(f"  Could not create {venv} (exit code {rc}).")
+                self.log("  Make sure this Python was installed from python.org with "
+                         "the standard library intact, then try again.")
+                return
+        else:
+            self.log(f"  {no} {venv} is missing {', '.join(missing)} -> will install")
+            if "cv2" in missing or "cv2.mcc" in missing:
+                # A plain OpenCV shares cv2/ with the contrib build, so installing
+                # contrib over it leaves whichever wrote last. Clear every
+                # variant first so the reinstall below lands on a clean cv2/.
+                self.run_command([str(python), "-m", "pip", "uninstall", "-y",
+                                  "opencv-python", "opencv-python-headless",
+                                  "opencv-contrib-python",
+                                  "opencv-contrib-python-headless"])
+
+        self.log("  Installing the colour-fit packages (contrib OpenCV + "
+                 "colour-science; may take a few minutes)...")
+        rc = self.run_command([str(python), "-m", "pip", "install",
+                               "-r", str(COLORFIT_REQS)])
+        missing = self._colorfit_missing(python)
+        if rc == 0 and missing == []:
+            self.log(f"  {ok} colour-fit environment ready ({venv})")
+        else:
+            self.log(f"  {no} colour-fit setup incomplete (pip exit code {rc}"
+                     + (f", still missing: {', '.join(missing)}" if missing else "")
+                     + "). Step 0c will not run until this succeeds.")
+
+    def _colorfit_python(self):
+        """Interpreter for color_fit.py, or None if its environment is missing.
+
+        The fit needs opencv-contrib (for cv2.mcc) and colour-science, which the
+        pipeline does not — and rembg depends on plain opencv-python-headless,
+        so installing contrib beside it is a silent last-writer-wins race over
+        the same cv2/ directory. It therefore lives in its own virtualenv.
+        Falls back to this interpreter if it happens to have cv2.mcc already.
+        """
+        for base in (ROOTER, ROOT):
+            candidate = self._venv_python(base / COLORFIT_VENV)
+            if candidate.is_file():
+                return candidate
+        if self._cv2_mcc_present(sys.executable):
+            return Path(sys.executable)
+        return None
+
+    def _cv2_mcc_present(self, python: str) -> bool:
+        """Whether `python` can do chart detection.
+
+        Deliberately not _module_present: that uses importlib.find_spec, which
+        cannot see cv2.mcc because it is a C-extension attribute of cv2 rather
+        than an importable submodule.
+        """
+        try:
+            return subprocess.run(
+                [str(python), "-c", "import cv2, sys; sys.exit(0 if hasattr(cv2,'mcc') else 1)"],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            ).returncode == 0
+        except Exception:
+            return False
+
+    def step_fit_color(self):
+        """Fit ccm.json from the captured chart. Safe to re-run."""
+        cal = self._cal_dir()
+        chart = cal / CHART_SUBDIR / "allLight.tiff"
+        if not chart.exists():
+            self.log(f"No colour chart found at {chart}.")
+            self.log("Capture one with 'Step 0b — Capture Colour Chart' first.")
+            return
+        if not self._has_cal(self.active_dir):
+            self.log(f"WARNING: {cal} has no copy-paper set, so the chart cannot "
+                     "be flat-fielded the way the pipeline flat-fields the "
+                     "artifact. The fit will still run but will be less accurate.")
+
+        python = self._colorfit_python()
+        if python is None:
+            self.log("Cannot fit: the colour-fit environment is missing.")
+            self.log("Click 'Check / Install Dependencies' to create it "
+                     "automatically, then run this step again.")
+            return
+
+        self.log(f"Using {python}")
+        rc = self.run_command([str(python), "-u", str(MODELING_DIR / "color_fit.py"),
+                               "fit", "--cal-dir", str(cal)], cwd=MODELING_DIR)
+        overlay = cal / "chart_detect_overlay.png"
+        if rc == 0:
+            self.log(f"Wrote {cal / CCM_NAME}. The modeling pipeline will apply it "
+                     "automatically to every scan using this calibration set.")
+            if overlay.exists():
+                self.log(f"Open {overlay} and confirm the red squares sit inside "
+                         "the patches before trusting the numbers.")
+        else:
+            self.log("Colour fit FAILED — see the log above.")
+            self.log("If the chart could not be detected, re-run the command "
+                     "shown above by hand adding --box with the chart's four "
+                     "corners, which you can read off the overlay image.")
+            self.log("Until this succeeds the pipeline runs UNCORRECTED.")
 
     def step_run_modeling(self):
         sides = self._side_dirs()
@@ -845,14 +1176,26 @@ class PipelineApp:
         maps_dir.mkdir(parents=True, exist_ok=True)
 
         # Point the modeling pipeline at this side's scans and have it write its
-        # render-ready maps straight into <side>/maps/.
+        # render-ready maps straight into <side>/maps/, using the calibration
+        # set that belongs to this scan rather than whatever was shot last.
+        cal_dir = self._cal_dir(side)
         env = dict(os.environ)
         env["PAPYRUS_SCROLL_DIR"] = str(side)
         env["PAPYRUS_RENDER_OUT"] = str(maps_dir)
+        env["PAPYRUS_CAL_DIR"]    = str(cal_dir)
 
         self.log(f"Running modeling pipeline on {side} "
                   "(this can take several minutes)...")
         self.log(f"Render-ready maps -> {maps_dir}")
+        if cal_dir == CALIBRATION_IMAGES:
+            self.log(f"Calibration      -> {cal_dir} (shared global set — this scan "
+                     "has no cal/ of its own, so the flat-field may not match "
+                     "its zoom)")
+        else:
+            self.log(f"Calibration      -> {cal_dir}")
+        if not self._has_ccm(side):
+            self.log("No ccm.json for this calibration set — running without "
+                     "colour correction. Shoot Step 0b and fit to enable it.")
         rc = self.run_command([sys.executable, "-u", script], cwd=MODELING_DIR, env=env)
         if rc == 0:
             self.log("Modeling pipeline finished successfully.")
@@ -932,14 +1275,14 @@ class PipelineApp:
             self.log("Export failed — see log above for details.")
             return
 
-        glb = RENDERING_DIR / "render.glb"
+        glb = RENDERING_DIR / GLB_NAME
         if glb.exists():
-            dest = CAPTURE_DATA_DIR / f"{side}.glb"
+            dest = self._glb_path(side)
             dest.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(glb, dest)
             self.log(f"Saved model -> {dest}.")
         else:
-            self.log("render.glb was not created — see log above for details.")
+            self.log(f"{GLB_NAME} was not created — see log above for details.")
         target_folder = str(BACKEND)
         env = os.environ.copy()
         env["DELETE_TARGET_DIR"] = target_folder
@@ -1009,12 +1352,13 @@ class PipelineApp:
                 return
 
         # ── Modeling + build, per side ────────────────────────────────────────
+        tag = ""
         for side in sides:
             label = self._side_label(side)
             tag = f" [{label}]" if label else ""
 
             if self._has_maps(side):
-                self.log(f"Render-ready maps already in {self._maps_dir(side)} ─ "
+                self.log(f"Render-ready maps already in {self._maps_dir(side)} — "
                           f"skipping modeling{tag}.")
             else:
                 self._run_modeling_for(side)
@@ -1024,7 +1368,7 @@ class PipelineApp:
                     return
 
             if self._has_glb(side):
-                self.log(f"Model already built ({self._glb_path(side)}) ─ "
+                self.log(f"Model already built ({self._glb_path(side)}) — "
                           f"skipping render{tag}.")
             else:
                 self._build_model_for(side)
@@ -1033,12 +1377,12 @@ class PipelineApp:
                               "stopping.")
                     return
         if self._has_txt(self.active_dir):
-            self.log(f"Description already written ({self._txt_path()}) ─ "
+            self.log(f"Description already written ({self._txt_path()}) — "
                      f"skipping description generation.")
         else:
             self.step_generate_desc()
             if not self._has_txt():
-                self.log(f"Description Generation failed{tag}; "
+                self.log(f"Description generation failed{tag}; "
                          "stopping.")
                 return
 

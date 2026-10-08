@@ -70,6 +70,11 @@ CUDA-on-WSL for GPU-accelerated COLMAP). The reconstruction app runs in the
 terminal, so it doesn't need WSLg; WSLg is only used by the optional 3D viewer
 when no Windows Python with `open3d` is installed.
 
+> **Only reconstructing, not capturing?** You can skip this section and run the
+> pipeline in Docker instead: Docker Desktop plus an NVIDIA GPU, with no CUDA
+> toolkit, cuDNN or COLMAP build. See
+> [`3D/modelingPipeline/DOCKER.md`](3D/modelingPipeline/DOCKER.md).
+
 1. Install WSL2 + **Ubuntu 24.04 LTS** from an **elevated PowerShell** on Windows:
 
    ```powershell

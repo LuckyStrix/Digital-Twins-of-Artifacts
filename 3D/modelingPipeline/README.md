@@ -7,6 +7,8 @@ SSH. See the [repo setup guide](../../SETUP.md) for first-time install.
 
 ## Prerequisites
 
+Or skip this section and use Docker: [`DOCKER.md`](DOCKER.md).
+
 - **OS: WSL2 (Ubuntu)**, Python 3.9–3.12 (not 3.13/3.14 — open3d has no
   prebuilt wheels there yet).
 - **CUDA-enabled COLMAP** — see the dependency notes below and

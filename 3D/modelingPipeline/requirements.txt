@@ -5,6 +5,7 @@ rembg[gpu]          # background removal; use rembg (no [gpu]) on CPU-only machi
 onnxruntime-gpu<1.27  # rembg GPU backend; 1.27+ requires a newer cuDNN/CUDA combo than we install
 torch               # required by rembg's birefnet-general model
 pillow              # image I/O in process_photos.py / erode_masks.py / COLMAP prep
+opencv-python-headless  # cv2: mask contours/hulls in process_photos.py, erode_masks.py, run_colmap_mvs.py (rembg 2.x no longer pulls it in)
 textual             # terminal UI (app.py)
 pytest              # tests/ (python3 -m pytest tests)
 

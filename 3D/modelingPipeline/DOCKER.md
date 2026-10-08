@@ -30,6 +30,19 @@ Check that Docker can see your GPU:
 docker run --rm --gpus all nvidia/cuda:12.8.1-base-ubuntu24.04 nvidia-smi
 ```
 
+## Get the code
+
+Clone the repo anywhere on your machine. Git LFS isn't needed for the pipeline
+(it only stores images and models for the website).
+
+```bash
+git clone https://github.com/LuckyStrix/Digital-Twins-of-Artifacts.git
+cd Digital-Twins-of-Artifacts/3D/modelingPipeline
+```
+
+All the `docker compose` commands below run from this folder, in PowerShell,
+Windows Terminal or a WSL/Linux shell.
+
 ## Build the image (once)
 
 From this folder (`3D/modelingPipeline/`):
@@ -79,7 +92,12 @@ as **`/data`**. Put capture sets in `data/`, then choose `/data/<set>` as the
 input folder in the app. Outputs written under `/data` show up in `data/` on
 your machine.
 
-To use a different folder, set `DATA_LOCATION` when you run:
+Captures on a network share (such as the lab NAS) can't be mounted directly:
+Docker Desktop doesn't see mapped drive letters or `\\server\share` paths.
+Copy the capture set into `data/` first (local disk is also much faster for
+the hundreds of reads COLMAP does).
+
+To use a different local folder, set `DATA_LOCATION` when you run:
 
 ```bash
 DATA_LOCATION=/mnt/d/scans docker compose run --rm pipeline       # Linux / WSL shell

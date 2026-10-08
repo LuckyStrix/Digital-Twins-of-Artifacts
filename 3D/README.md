@@ -68,8 +68,10 @@ the rig): multi-camera capture → COLMAP reconstruction → meshed model. See t
   CUDA repo + GPG key first (see [Setup](#setup) below). On a CPU-only machine,
   use `rembg` (no `[gpu]`) instead and skip this.
 - Python 3.9–3.12 and the deps in `modelingPipeline/requirements.txt` (open3d
-  has no prebuilt wheels for 3.13/3.14 yet). Pinned there: `numpy<2.5`,
-  `onnxruntime-gpu<1.27`, and `torch` (required by rembg's birefnet model).
+  has no prebuilt wheels for 3.13/3.14 yet). Pinned there: `numpy<2.5` and
+  `onnxruntime-gpu<1.27`. `torch` is also listed, but the pipeline doesn't
+  import it (rembg 2.x runs its models through onnxruntime), and the Docker
+  image leaves it out.
 
 ## Setup
 
@@ -160,7 +162,8 @@ Arduino over a **serial port**, so on the capture workstation you need:
   rig firmware in `arduinoCode/`.
 - **Reconstruction**: `python3 modelingPipeline/app.py` — see
   [`modelingPipeline/README.md`](modelingPipeline/README.md) for the four-stage
-  pipeline.
+  pipeline. In Docker: `docker compose run --rm pipeline` from
+  `modelingPipeline/` (see [`modelingPipeline/DOCKER.md`](modelingPipeline/DOCKER.md)).
 
 ## Structure
 

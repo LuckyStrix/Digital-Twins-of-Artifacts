@@ -12,6 +12,11 @@ the linked per-pillar README for the detailed steps.
 | `3D/`        | **WSL2 (Ubuntu)**  | CUDA-enabled COLMAP, exiftool, NVIDIA GPU | 3.9–3.12 |
 | `website/`   | any                | none (static site)                        | 3.x      |
 
+> **3D reconstruction in Docker:** if you only reconstruct (no capture), the
+> `3D/` row above can be replaced by Docker Desktop plus an NVIDIA GPU, with no
+> WSL Python, CUDA toolkit or COLMAP build. See
+> [`3D/modelingPipeline/DOCKER.md`](3D/modelingPipeline/DOCKER.md).
+
 > **Use Python 3.9–3.12, not 3.13/3.14.** The pipelines pin `numpy<2.5`, and
 > numpy (plus scipy, opencv, rembg, open3d, onnxruntime) only ship prebuilt
 > wheels up to Python 3.12. On 3.13+ pip falls back to building from C source and

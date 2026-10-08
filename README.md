@@ -30,7 +30,7 @@ behaves at runtime, see [`2D/README.md`](2D/README.md#how-it-works) and
 
 ```
 2D/        Papyrus photometric-stereo pipeline (Windows/Linux) — see 2D/README.md
-3D/        Cuneiform-tablet COLMAP photogrammetry (WSL2)       — see 3D/README.md
+3D/        Cuneiform-tablet photogrammetry (WSL2 or Docker)    — see 3D/README.md
 website/   Static artifact gallery site (any OS)               — see website/README.md
 ```
 

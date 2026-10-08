@@ -1,0 +1,39 @@
+# The 3D reconstruction pipeline in Docker. See DOCKER.md.
+#
+#   docker compose build                                     (once; long)
+#   docker compose run --rm pipeline                         (opens the app)
+#   docker compose run --rm pipeline python3 -m pytest tests
+#
+# This is an interactive tool, not a service, so unlike a long-running app
+# there's no restart policy and no published port; start it with `run`, not `up`.
+name: fip3d
+
+services:
+  pipeline:
+    build: .
+    image: fip3d-pipeline
+    extends:
+      file: hwaccel.yml
+      service: cuda
+    # The Textual app needs a terminal.
+    stdin_open: true
+    tty: true
+    # A real PID 1 that reaps orphans: stopping a stage kills COLMAP's process
+    # tree, and without this the killed children linger as zombies.
+    init: true
+    volumes:
+      # The whole repo (the image's working dir is /repo/3D/modelingPipeline),
+      # so a git pull takes effect without rebuilding and the run records can
+      # read the git commit.
+      - ../..:/repo
+      # Hide any host venv/: pipeline/platform.py prefers ./venv/bin/python3
+      # over the image's own Python.
+      - /repo/3D/modelingPipeline/venv
+      # Captures and outputs. In the app, pick folders under /data.
+      - ${DATA_LOCATION:-../../data}:/data
+      # rembg's downloaded models and CUDA's JIT cache, so neither is redone
+      # every run.
+      - model-cache:/cache
+
+volumes:
+  model-cache:

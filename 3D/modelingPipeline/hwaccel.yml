@@ -1,0 +1,11 @@
+# GPU reservation, pulled into docker-compose.yml with `extends:`. Every NVIDIA
+# GPU on the host is passed through; the pipeline's gpu_index setting picks.
+services:
+  cuda:
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]

@@ -55,6 +55,16 @@ def no_native_dialogs(monkeypatch):
     monkeypatch.setattr(plat, "native_file_dialog", lambda *a, **k: None)
 
 
+@pytest.fixture(autouse=True)
+def no_inherited_fipmesh_env(monkeypatch):
+    """Drop FIPMESH_* variables from the calling shell (e.g. FIPMESH_COLMAP_BIN,
+    which BUILDING_COLMAP.md suggests exporting and the Docker image sets), so
+    the golden env checks see only what the runner itself adds."""
+    import os
+    for key in [k for k in os.environ if k.startswith("FIPMESH_")]:
+        monkeypatch.delenv(key)
+
+
 @pytest.fixture
 def settings():
     return Settings.defaults()

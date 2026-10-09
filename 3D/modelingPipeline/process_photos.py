@@ -595,6 +595,32 @@ def collect_images(input_dir: Path, stride: int = 1) -> list[tuple[Path, Path]]:
     return result
 
 
+def _load_cuda_dlls() -> None:
+    """On native Windows, make CUDA/cuDNN loadable for onnxruntime-gpu.
+
+    Linux finds libcudnn through the system (apt's cudnn9-cuda-12). Windows
+    has no such install here (it needs admin), so borrow the copies bundled
+    in the CUDA build of torch: importing torch loads every DLL in torch\\lib
+    (cudart, cublas, cufft, cuDNN) into the process, where onnxruntime then
+    finds them. onnxruntime's own preload_dlls() is the fallback, for the
+    nvidia-*-cu12 pip packages (onnxruntime-gpu[cuda,cudnn]).
+    """
+    if sys.platform != "win32":
+        return
+    try:
+        import torch  # noqa: F401  (imported for its DLLs)
+        if torch.cuda.is_available():
+            return
+    except Exception:
+        pass
+    try:
+        import onnxruntime as ort
+        if hasattr(ort, "preload_dlls"):
+            ort.preload_dlls()
+    except Exception as exc:
+        print(f"[warn]  could not preload CUDA DLLs: {exc}")
+
+
 def _report_device(session) -> None:
     """Say whether rembg got the GPU. onnxruntime-gpu falls back to the CPU
     (roughly 10x slower) when it can't load CUDA/cuDNN, e.g. libcudnn.so.9 not
@@ -608,8 +634,10 @@ def _report_device(session) -> None:
     else:
         import onnxruntime as ort
         if "CUDAExecutionProvider" in ort.get_available_providers():
+            hint = ("is the CUDA build of torch installed? see 3D/WINDOWS_SETUP.md"
+                    if sys.platform == "win32" else "is libcudnn.so.9 on LD_LIBRARY_PATH?")
             print("[warn]  rembg is running on the CPU: CUDA/cuDNN failed to load "
-                  "(see the onnxruntime error above; is libcudnn.so.9 on LD_LIBRARY_PATH?)")
+                  f"(see the onnxruntime error above; {hint})")
         else:
             print(f"[rembg] Device: CPU ({', '.join(providers)})")
 
@@ -678,6 +706,7 @@ def run_local(input_dir: Path, output_dir: Path, model: str, background: str,
               f"{', hull-fill' if grow_hull_fill else ''})")
     print(f"[rembg] Loading model '{model}' ...")
 
+    _load_cuda_dlls()
     session = new_session(model)
     _report_device(session)
 

@@ -1,7 +1,8 @@
 """OS integration: WSL detection, path conversion, viewer launch, folders.
 
-Everything Windows-specific switches off automatically outside WSL, so the
-app also runs on plain Linux (desktop or over SSH).
+Runs in three places: plain Linux (desktop or over SSH), WSL (Windows
+dialogs and viewer through interop) and native Windows (no WSL; see
+../WINDOWS_SETUP.md). The WSL-only parts switch off everywhere else.
 """
 
 from __future__ import annotations
@@ -20,13 +21,25 @@ def find_python(path: Path) -> str:
     return str(path) if path.exists() else sys.executable
 
 
+def running_on_windows() -> bool:
+    """Native Windows (not WSL)."""
+    return sys.platform == "win32"
+
+
 def venv_python() -> str:
     """The repo's venv interpreter if it exists, else the current one."""
+    if running_on_windows():
+        return find_python(SCRIPT_DIR / "venv" / "Scripts" / "python.exe")
     return find_python(SCRIPT_DIR / "venv" / "bin" / "python3")
 
 
 def running_under_wsl() -> bool:
     return "WSL_DISTRO_NAME" in os.environ or "WSL_INTEROP" in os.environ
+
+
+def has_native_dialogs() -> bool:
+    """Whether the Windows Explorer folder/file pickers are available."""
+    return running_on_windows() or running_under_wsl()
 
 
 def has_display() -> bool:
@@ -67,6 +80,8 @@ def looks_like_windows_path(p: str) -> bool:
 
 def to_windows_path(p: Path) -> str:
     """Convert a WSL path to its Windows equivalent for handing to a native .exe."""
+    if not running_under_wsl():
+        return str(p)
     try:
         r = subprocess.run(["wslpath", "-w", str(p)],
                            capture_output=True, text=True, timeout=10)
@@ -152,6 +167,12 @@ def resolve_viewer_launch(path: Path) -> tuple[list[str], dict]:
     running under WSL; falls back to the in-repo/venv interpreter with the
     WSLg workaround env otherwise.
     """
+    if running_on_windows():
+        # Native Open3D uses WGL directly; none of the WSLg workarounds apply.
+        return (
+            [venv_python(), str(SCRIPT_DIR / "viewer.py"), str(path)],
+            os.environ.copy(),
+        )
     native_py = find_native_windows_python()
     if native_py:
         return (
@@ -231,9 +252,10 @@ _PS_PRELUDE = (
 
 
 def native_folder_dialog(title: str = "Select folder", initial: str = "") -> str | None:
-    """Under WSL, show the Windows folder picker. Blocks until closed; run it
-    off the UI thread. Returns a WSL path, or None if cancelled/unavailable."""
-    if not running_under_wsl():
+    """Under WSL or Windows, show the Windows folder picker. Blocks until
+    closed; run it off the UI thread. Returns a WSL path under WSL, a Windows
+    path on Windows, or None if cancelled/unavailable."""
+    if not has_native_dialogs():
         return None
     init = to_windows_path(Path(initial)) if initial and Path(initial).is_dir() else ""
     script = (
@@ -249,9 +271,9 @@ def native_folder_dialog(title: str = "Select folder", initial: str = "") -> str
 
 def native_file_dialog(title: str = "Select file", initial: str = "",
                        pattern: str = "") -> str | None:
-    """Under WSL, show the Windows open-file picker (see native_folder_dialog).
-    ``pattern`` is a glob like ``*.json``."""
-    if not running_under_wsl():
+    """Under WSL or Windows, show the Windows open-file picker (see
+    native_folder_dialog). ``pattern`` is a glob like ``*.json``."""
+    if not has_native_dialogs():
         return None
     init = to_windows_path(Path(initial)) if initial and Path(initial).is_dir() else ""
     flt = "All files (*.*)|*.*"
@@ -268,9 +290,24 @@ def native_file_dialog(title: str = "Select file", initial: str = "",
     return _run_powershell_dialog(script)
 
 
+def _windows_drives() -> list[Path]:
+    """Drive roots (C:\\, D:\\, mapped network drives) on native Windows."""
+    if hasattr(os, "listdrives"):          # Python 3.12+
+        try:
+            return [Path(d) for d in os.listdrives()]
+        except OSError:
+            pass
+    return [Path(f"{c}:\\") for c in "ABCDEFGHIJKLMNOPQRSTUVWXYZ" if Path(f"{c}:\\").exists()]
+
+
 def browse_locations() -> list[tuple[str, Path]]:
     """Starting points for the in-terminal folder browser: home, /, drives
-    under /mnt (Windows drives in WSL) and /media, network mounts."""
+    under /mnt (Windows drives in WSL) and /media, network mounts. On native
+    Windows: home and the drive letters."""
+    if running_on_windows():
+        locs = [("Home", Path.home())]
+        locs += [(str(d).rstrip("\\"), d) for d in _windows_drives()]
+        return locs
     locs: list[tuple[str, Path]] = [("Home", Path.home()), ("/", Path("/"))]
     seen = {p for _, p in locs}
     for root in (Path("/mnt"), Path("/media"), Path("/run/media")):

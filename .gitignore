@@ -5,6 +5,10 @@ data/
 
 # 3D: locally built CUDA COLMAP binary + its source/build tree (see 3D/modelingPipeline/BUILDING_COLMAP.md)
 3D/modelingPipeline/colmap_local
+# 3D: native-Windows setup (see 3D/WINDOWS_SETUP.md): venv, unzipped COLMAP release, exiftool
+3D/modelingPipeline/venv/
+3D/modelingPipeline/colmap/
+3D/modelingPipeline/tools/
 3D/modelingPipeline/colmap-src/
 # 3D: Textual app's per-user UI state (log height, theme, recent folders)
 3D/modelingPipeline/.tui_state.json

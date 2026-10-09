@@ -38,6 +38,10 @@ the rig): multi-camera capture → COLMAP reconstruction → meshed model. See t
 
 ## Prerequisites
 
+> **No WSL / no admin on your Windows PC?** See [`WINDOWS_SETUP.md`](WINDOWS_SETUP.md)
+> to run reconstruction natively on Windows (GPU included) with a one-command,
+> no-admin install.
+
 - **OS: WSL2 (Ubuntu 24.04 LTS)** — the reconstruction runs under WSL (its UI
   runs in the terminal; the optional 3D viewer uses WSLg or a native Windows
   Python). Use **24.04**, not the latest Ubuntu — newer releases ship a GCC

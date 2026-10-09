@@ -60,13 +60,28 @@ function Invoke-Quiet {
 }
 
 function Expand-Download {
-    # Download $Url, unzip it to a scratch folder and return that folder.
-    param([string]$Url, [string]$Name)
+    # Download the first of $Urls that works, unzip it to a scratch folder and
+    # return that folder. $Manual says how to do it by hand if none works.
+    param([string[]]$Urls, [string]$Name, [string]$Manual)
     New-Item -ItemType Directory -Force -Path $Tmp | Out-Null
     $zip = Join-Path $Tmp "$Name.zip"
     $dir = Join-Path $Tmp $Name
-    Write-Host "    downloading $Url"
-    Invoke-WebRequest -UseBasicParsing -Uri $Url -OutFile $zip
+    $done = $false
+    foreach ($url in $Urls) {
+        Write-Host "    downloading $url"
+        try {
+            # A non-browser user agent: SourceForge answers PowerShell's
+            # default (it contains "Mozilla") with an HTML download page.
+            Invoke-WebRequest -UseBasicParsing -UserAgent "Wget" -Uri $url -OutFile $zip
+            $head = [IO.File]::ReadAllBytes($zip)[0..1]
+            if ($head[0] -ne 0x50 -or $head[1] -ne 0x4B) { throw "got a web page, not a zip file" }
+            $done = $true
+            break
+        } catch {
+            Write-Host "    failed: $($_.Exception.Message)" -ForegroundColor Yellow
+        }
+    }
+    if (-not $done) { Fail "could not download $Name from any source. $Manual" }
     if (Test-Path $dir) { Remove-Item -Recurse -Force $dir }
     Expand-Archive -Path $zip -DestinationPath $dir
     Remove-Item -Force $zip
@@ -147,7 +162,8 @@ if ($SkipColmap) {
         Select-Object -First 1
     if (-not $asset) { Fail "no *windows-cuda.zip asset in COLMAP release $($rel.tag_name); download it by hand (see WINDOWS_SETUP.md)" }
     Write-Host "    release $($rel.tag_name): $($asset.name)"
-    $dir = Expand-Download $asset.browser_download_url "colmap"
+    $dir = Expand-Download @($asset.browser_download_url) "colmap" `
+        "Download colmap-x64-windows-cuda.zip from https://github.com/colmap/colmap/releases and unzip it so colmap\COLMAP.bat exists."
     $bat = Get-ChildItem -Path $dir -Recurse -Filter "COLMAP.bat" | Select-Object -First 1
     if (-not $bat) { Fail "COLMAP.bat not found in $($asset.name)" }
     if (Test-Path $ColmapDir) { Remove-Item -Recurse -Force $ColmapDir }
@@ -164,8 +180,19 @@ if ($SkipExiftool) {
     Step "exiftool already in tools\"
 } else {
     Step "Downloading exiftool"
-    $ver = (Invoke-WebRequest -UseBasicParsing -Uri "https://exiftool.org/ver.txt").Content.Trim()
-    $dir = Expand-Download "https://exiftool.org/exiftool-${ver}_64.zip" "exiftool"
+    $manual = ("Download the 64-bit Windows zip from https://exiftool.org, put 'exiftool(-k).exe' " +
+               "(renamed to exiftool.exe) and its exiftool_files folder in tools\, then re-run.")
+    try {
+        $ver = ([string](Invoke-WebRequest -UseBasicParsing -Uri "https://exiftool.org/ver.txt").Content).Trim()
+    } catch {
+        Fail "could not read the current exiftool version ($($_.Exception.Message)). $manual"
+    }
+    # The zips live on SourceForge; exiftool.org itself no longer serves them
+    # at a stable URL (404 as of 13.59), so it's only the fallback.
+    $dir = Expand-Download @(
+        "https://sourceforge.net/projects/exiftool/files/exiftool-${ver}_64.zip/download",
+        "https://exiftool.org/exiftool-${ver}_64.zip"
+    ) "exiftool" $manual
     $exe = Get-ChildItem -Path $dir -Recurse -Filter "exiftool*.exe" | Select-Object -First 1
     if (-not $exe) { Fail "exiftool .exe not found in exiftool-${ver}_64.zip" }
     New-Item -ItemType Directory -Force -Path $ToolsDir | Out-Null

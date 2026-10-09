@@ -102,3 +102,18 @@ def test_viewer_env_workarounds(monkeypatch):
     assert "WAYLAND_DISPLAY" not in env
     assert env["GLFW_PLATFORM"] == "x11"
     assert env["LIBGL_ALWAYS_SOFTWARE"] == "1"
+
+
+def test_venv_python(monkeypatch, tmp_path):
+    repo_venv = tmp_path / "venv" / "bin" / "python3"
+    repo_venv.parent.mkdir(parents=True)
+    repo_venv.touch()
+    monkeypatch.setattr(platform, "SCRIPT_DIR", tmp_path)
+    monkeypatch.setattr(platform.sys, "executable", "/opt/venv/bin/python3")
+    # Already in a virtualenv (e.g. the Docker image): ignore the repo's venv/.
+    monkeypatch.setattr(platform.sys, "prefix", "/opt/venv")
+    monkeypatch.setattr(platform.sys, "base_prefix", "/usr")
+    assert platform.venv_python() == "/opt/venv/bin/python3"
+    # System Python: prefer the repo's venv.
+    monkeypatch.setattr(platform.sys, "prefix", "/usr")
+    assert platform.venv_python() == str(repo_venv)

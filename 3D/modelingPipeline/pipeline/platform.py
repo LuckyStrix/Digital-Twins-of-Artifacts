@@ -21,7 +21,14 @@ def find_python(path: Path) -> str:
 
 
 def venv_python() -> str:
-    """The repo's venv interpreter if it exists, else the current one."""
+    """The interpreter the stages run in.
+
+    The current one when it's already a virtualenv (an activated venv, or the
+    Docker image's /opt/venv, where a bind-mounted host ./venv must not be
+    used); otherwise the repo's venv if it exists, else the current one.
+    """
+    if sys.prefix != sys.base_prefix:
+        return sys.executable
     return find_python(SCRIPT_DIR / "venv" / "bin" / "python3")
 
 

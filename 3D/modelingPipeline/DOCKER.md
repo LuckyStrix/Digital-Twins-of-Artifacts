@@ -16,9 +16,13 @@ can't easily reach, so it still runs natively.
 - **An NVIDIA GPU.** COLMAP's dense reconstruction (stage 2) only runs on CUDA;
   there is no CPU fallback and no AMD, Intel or Apple GPU support. See
   [Which GPUs work](#which-gpus-work).
+- **An NVIDIA driver from the R570 series or newer** (version 570 or higher,
+  early 2025 on). The image is built on CUDA 12.8, and Docker refuses to start
+  it on older drivers with `unsatisfied condition: cuda>=12.8`. Check with
+  `nvidia-smi`.
 - **Windows:** [Docker Desktop](https://docs.docker.com/desktop/install/windows-install/)
-  with the WSL2 backend (the default), and a current NVIDIA driver on Windows.
-  You don't need a CUDA toolkit or a particular Ubuntu version.
+  with the WSL2 backend (the default). You don't need a CUDA toolkit or a
+  particular Ubuntu version.
 - **Linux:** Docker Engine with the Compose plugin, the NVIDIA driver, and the
   [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html).
 - About **30 GB** of free disk while building. The finished image is about
@@ -57,13 +61,10 @@ machine; slower machines and connections take longer. Later builds reuse the
 cache. If you only ever use one GPU, you can build just for it and save most
 of the compile time (see [Build options](#build-options)).
 
-Rebuild after `requirements.txt` or the `Dockerfile` changes. Python code
-changes don't need a rebuild, because the repo is mounted into the container
-(at `/repo`) rather than copied into the image.
-
-The image installs everything in `requirements.txt` except `torch`. Nothing in
-the pipeline imports it, and rembg runs its models through onnxruntime, so
-leaving it out saves about 6 GB.
+Rebuild after `Dockerfile`, `requirements.txt` or `docker-entrypoint.sh`
+changes; the container warns at startup when any of them differ from the
+image's copy. Other code changes don't need a rebuild, because the repo is
+mounted into the container (at `/repo`) rather than copied into the image.
 
 ## Run it
 
@@ -72,8 +73,14 @@ docker compose run --rm pipeline
 ```
 
 This opens the same terminal app as `python3 app.py` (see
-[`README.md`](README.md#usage)). The first line says whether your GPU is
-supported:
+[`README.md`](README.md#usage)). Before that, the container checks each GPU
+it can see. If something is wrong (no GPU, a GPU the image wasn't built for,
+an outdated image), it prints a `[gpu]` or `[image]` warning and waits for
+Enter, so the app doesn't cover the message. To see the check on its own:
+
+```bash
+docker compose run --rm pipeline gpu-check
+```
 
 ```
 [gpu] NVIDIA GeForce RTX 5060 Ti (compute 12.0): supported by this image.
@@ -116,7 +123,11 @@ Things that work differently from the native setup:
 - **Memory:** on Windows, Docker Desktop runs inside WSL2 and shares its memory
   limit. If a run gets `Killed`, raise it as described in
   [Giving WSL more RAM](../../SETUP.md#giving-wsl-more-ram--a-bigger-swap-pagefile).
-- **Linux only:** files the container writes into `data/` are owned by root.
+- **Linux hosts:** the app runs as the user who owns the checkout, so files it
+  writes into the repo and `data/` are yours, not root's.
+- **Several GPUs:** COLMAP uses all of them by default. To use one, set
+  **GPU index** on the app's COLMAP tab to its number from the startup check,
+  or start with `docker compose run --rm -e CUDA_VISIBLE_DEVICES=0 pipeline`.
 
 ## Which GPUs work
 
@@ -134,10 +145,13 @@ Find your GPU's compute capability with
 | Volta | V100, Titan V | 7.0 | yes |
 | Pascal | GTX 10xx, P100 | 6.1, 6.0 | yes |
 | Newer than Blackwell | — | > 12.0 | yes, compiled on first use (slower start) |
-| Maxwell and older | GTX 9xx | ≤ 5.x | not supported |
+| Maxwell | GTX 9xx | 5.x | no; may work built with `52-real` (untested) |
 
 The default image includes compiled COLMAP code for every generation marked
-"yes", so one image works across the lab's machines without rebuilding.
+"yes", so one image works across the lab's machines without rebuilding. Code
+for one GPU also runs on later GPUs of the same major version (8.6 code runs
+on an 8.7 card), and anything newer than the list falls back to code the
+driver compiles on first use. The startup check accounts for all of this.
 
 One exception on Blackwell (RTX 50xx, B200): COLMAP deliberately doesn't
 compile its PatchMatch stereo kernels for these cards, to avoid an NVCC
@@ -145,9 +159,7 @@ miscompile ([colmap#3514](https://github.com/colmap/colmap/issues/3514)). They
 ship as generic code the driver compiles on first use, so the first dense
 reconstruction on a Blackwell card takes longer while that compiles. The
 result is kept in the `fip3d_model-cache` volume, so it happens once, not every
-run. A native COLMAP build behaves the same way. Your
-NVIDIA driver must support CUDA 12: version 527 or newer on Windows, 525 or
-newer on Linux (anything from 2023 on).
+run. A native COLMAP build behaves the same way.
 
 ## Build options
 
@@ -159,8 +171,12 @@ Pass these with `docker compose build --build-arg NAME=value`:
 | `COLMAP_VERSION` | `4.2.1` | COLMAP git tag to build. |
 | `BUILD_JOBS` | `4` | Parallel compile jobs. Each can use several GB of RAM, and on Windows the build shares WSL2's memory with every running container, so raise this only if you have memory to spare. |
 
-If the startup line says your GPU isn't supported, it prints the exact rebuild
-command for it.
+If the startup check says the image has no code for your GPU, it prints the
+rebuild command that adds it to the current list, so the image keeps working
+on the other GPUs. The pasted `--build-arg "CUDA_ARCHITECTURES=…"` works in
+PowerShell and bash. A GPU newer than the image's CUDA toolkit (12.8) can't be
+added this way; it needs a newer `CUDA_TAG` in the `Dockerfile`, and the check
+says so.
 
 ## Troubleshooting
 
@@ -168,5 +184,8 @@ command for it.
 |---|---|
 | `[gpu] No NVIDIA GPU visible in the container` | Start with `docker compose run`, not plain `docker run` (or add `--gpus all`). On Windows, update the NVIDIA driver and check that Docker Desktop uses the WSL2 backend. On Linux, install the NVIDIA Container Toolkit. |
 | `could not select device driver "nvidia"` | Same as above: Docker can't see the NVIDIA runtime. |
+| `unsatisfied condition: cuda>=12.8, please update your driver` | The NVIDIA driver is older than R570. Update it (on Windows, the Windows driver; WSL uses it). |
+| `[image] ... changed since this image was built` | Run `docker compose build`. |
+| `no kernel image is available for execution on the device` | COLMAP hit a GPU the image wasn't built for, often the second of two GPUs. Run `docker compose run --rm pipeline gpu-check` and follow what it says. |
 | `Killed` partway through a run | Out of memory; see the Memory note above. |
 | The app looks garbled | Use Windows Terminal (or any modern terminal) and keep `docker compose run`'s terminal attached. |

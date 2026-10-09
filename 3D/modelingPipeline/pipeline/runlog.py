@@ -54,12 +54,15 @@ def _now() -> datetime:
     return datetime.now().astimezone()
 
 
-def _run_quiet(cmd: list[str], cwd: Path | None = None, timeout: float = 10) -> str:
+def _run_quiet(cmd: list[str], cwd: Path | None = None, timeout: float = 10,
+               env: Mapping[str, str] | None = None) -> str | None:
+    """The command's stripped stdout, or None if it failed or timed out."""
     try:
-        r = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, timeout=timeout)
+        r = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, timeout=timeout,
+                           env=None if env is None else {**os.environ, **env})
     except (OSError, subprocess.SubprocessError):
-        return ""
-    return r.stdout.strip() if r.returncode == 0 else ""
+        return None
+    return r.stdout.strip() if r.returncode == 0 else None
 
 
 def _git_commit() -> str:
@@ -69,19 +72,18 @@ def _git_commit() -> str:
     ``describe --dirty``, which rewrites .git/index. In Docker the repo is a
     bind mount shared with the host's git, and an index rewritten with the
     container's stat data makes the host's git rescan every file.
+
+    Empty if either command fails or times out: a commit without a known
+    clean/dirty state isn't recorded, rather than passed off as clean.
     """
     commit = _run_quiet(["git", "describe", "--always", "--abbrev=10"], cwd=SCRIPT_DIR)
     if not commit:
         return ""
-    try:
-        r = subprocess.run(["git", "status", "--porcelain", "--untracked-files=no"],
-                           cwd=SCRIPT_DIR, capture_output=True, text=True, timeout=10,
-                           env={**os.environ, "GIT_OPTIONAL_LOCKS": "0"})
-    except (OSError, subprocess.SubprocessError):
-        return commit
-    if r.returncode == 0 and r.stdout.strip():
-        commit += "-dirty"
-    return commit
+    changes = _run_quiet(["git", "status", "--porcelain", "--untracked-files=no"],
+                         cwd=SCRIPT_DIR, env={"GIT_OPTIONAL_LOCKS": "0"})
+    if changes is None:
+        return ""
+    return f"{commit}-dirty" if changes else commit
 
 
 def environment() -> dict:

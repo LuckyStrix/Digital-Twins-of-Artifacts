@@ -1,5 +1,6 @@
 # GPU reservation, pulled into docker-compose.yml with `extends:`. Every NVIDIA
-# GPU on the host is passed through; the pipeline's gpu_index setting picks.
+# GPU on the host is passed through. COLMAP uses all of them unless the app's
+# "GPU index" setting (or CUDA_VISIBLE_DEVICES) picks one.
 services:
   cuda:
     deploy:

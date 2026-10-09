@@ -109,11 +109,13 @@ def test_venv_python(monkeypatch, tmp_path):
     repo_venv.parent.mkdir(parents=True)
     repo_venv.touch()
     monkeypatch.setattr(platform, "SCRIPT_DIR", tmp_path)
-    monkeypatch.setattr(platform.sys, "executable", "/opt/venv/bin/python3")
-    # Already in a virtualenv (e.g. the Docker image): ignore the repo's venv/.
-    monkeypatch.setattr(platform.sys, "prefix", "/opt/venv")
-    monkeypatch.setattr(platform.sys, "base_prefix", "/usr")
-    assert platform.venv_python() == "/opt/venv/bin/python3"
-    # System Python: prefer the repo's venv.
-    monkeypatch.setattr(platform.sys, "prefix", "/usr")
+    monkeypatch.setattr(platform.sys, "executable", "/usr/bin/python3")
+    # The repo's venv wins over the current interpreter, even an activated
+    # venv, unless FIPMESH_PYTHON (the Docker image) says otherwise.
+    monkeypatch.delenv("FIPMESH_PYTHON", raising=False)
     assert platform.venv_python() == str(repo_venv)
+    monkeypatch.setenv("FIPMESH_PYTHON", "/opt/venv/bin/python3")
+    assert platform.venv_python() == "/opt/venv/bin/python3"
+    monkeypatch.delenv("FIPMESH_PYTHON")
+    repo_venv.unlink()
+    assert platform.venv_python() == "/usr/bin/python3"

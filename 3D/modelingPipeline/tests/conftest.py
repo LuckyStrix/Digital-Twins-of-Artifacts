@@ -59,9 +59,11 @@ def no_native_dialogs(monkeypatch):
 def no_inherited_fipmesh_env(monkeypatch):
     """Drop FIPMESH_* variables from the calling shell (e.g. FIPMESH_COLMAP_BIN,
     which BUILDING_COLMAP.md suggests exporting and the Docker image sets), so
-    the golden env checks see only what the runner itself adds."""
+    the golden env checks see only what the runner itself adds. FIPMESH_PYTHON
+    stays: it picks the interpreter (the Docker image's /opt/venv), and the
+    golden tests compute the expected one before this fixture runs."""
     import os
-    for key in [k for k in os.environ if k.startswith("FIPMESH_")]:
+    for key in [k for k in os.environ if k.startswith("FIPMESH_") and k != "FIPMESH_PYTHON"]:
         monkeypatch.delenv(key)
 
 

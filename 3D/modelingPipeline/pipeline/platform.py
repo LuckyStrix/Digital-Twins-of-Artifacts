@@ -23,12 +23,13 @@ def find_python(path: Path) -> str:
 def venv_python() -> str:
     """The interpreter the stages run in.
 
-    The current one when it's already a virtualenv (an activated venv, or the
-    Docker image's /opt/venv, where a bind-mounted host ./venv must not be
-    used); otherwise the repo's venv if it exists, else the current one.
+    FIPMESH_PYTHON if set (the Docker image sets it, so a host ./venv in the
+    bind-mounted checkout isn't used); otherwise the repo's venv if it exists,
+    else the current one.
     """
-    if sys.prefix != sys.base_prefix:
-        return sys.executable
+    override = os.environ.get("FIPMESH_PYTHON")
+    if override:
+        return override
     return find_python(SCRIPT_DIR / "venv" / "bin" / "python3")
 
 

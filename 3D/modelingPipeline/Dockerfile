@@ -78,7 +78,7 @@ RUN echo "${CUDA_ARCHITECTURES}" > /opt/colmap/CUDA_ARCHITECTURES \
 # The cudnn variant carries cuDNN 9, which onnxruntime-gpu (rembg) needs.
 FROM nvidia/cuda:${CUDA_TAG}-cudnn-runtime-${UBUNTU_TAG} AS runtime
 
-# pipefail, so `colmap help | head` still fails the build when colmap fails.
+# pipefail, so a failing command in a pipe fails the build.
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 ARG DEBIAN_FRONTEND=noninteractive
 # COLMAP's shared-library dependencies (the runtime halves of the -dev packages
@@ -99,7 +99,8 @@ COPY --from=colmap-build /opt/colmap/CUDA_ARCHITECTURES /opt/colmap/NVCC_GPU_COD
 RUN if ldd /opt/colmap/bin/colmap | grep "not found"; then \
         echo "COLMAP is missing runtime libraries (above)" >&2; exit 1; \
     fi \
-    && /opt/colmap/bin/colmap help | head -n 3
+    && /opt/colmap/bin/colmap help > /tmp/colmap-help.txt \
+    && head -n 3 /tmp/colmap-help.txt && rm /tmp/colmap-help.txt
 
 # Ubuntu 24.04's system pip refuses installs (PEP 668), so use a venv and put
 # it first on PATH: src/main.sh calls a bare `python3`.
@@ -125,7 +126,11 @@ RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 # CUDA_DEVICE_ORDER=PCI_BUS_ID numbers GPUs the way nvidia-smi does, so the
 # app's "GPU index" and CUDA_VISIBLE_DEVICES match the entrypoint's GPU list
 # (CUDA's default puts the fastest GPU first).
+#
+# FIPMESH_PYTHON makes the stages use this venv, not a host ./venv in the
+# bind-mounted checkout (pipeline/platform.py).
 ENV FIPMESH_COLMAP_BIN=/opt/colmap/bin/colmap \
+    FIPMESH_PYTHON=/opt/venv/bin/python3 \
     U2NET_HOME=/cache/u2net \
     CUDA_CACHE_PATH=/cache/nv-compute \
     CUDA_CACHE_MAXSIZE=4294967296 \
@@ -137,11 +142,14 @@ ENV FIPMESH_COLMAP_BIN=/opt/colmap/bin/colmap \
 # git otherwise refuses to read. A Windows checkout has CRLF text files and
 # its index holds Windows stat data, so without autocrlf=input every file
 # would look modified, and without checkStat=minimal git would re-read the
-# whole repo over the slow bind mount to find out it isn't. git-lfs, so LFS
-# files compare as their pointers. Repo-level settings still win.
+# whole repo over the slow bind mount to find out it isn't. trustctime=false
+# too: Git for Windows stores creation time as ctime, which Linux reads as
+# the last-change time. git-lfs, so LFS files compare as their pointers.
+# Repo-level settings still win.
 RUN git config --system --add safe.directory '*' \
     && git config --system core.autocrlf input \
     && git config --system core.checkStat minimal \
+    && git config --system core.trustctime false \
     && git lfs install --system --skip-repo
 
 # The files this image was built from, so the entrypoint can tell when the

@@ -175,10 +175,13 @@ drop_root() {
     local uid gid
     uid="$(stat -c %u "$APP_DIR" 2>/dev/null)" && gid="$(stat -c %g "$APP_DIR")" || return 0
     [ "$uid" != 0 ] || return 0
-    # The cache volume starts out root-owned; dockerd creates a missing data
-    # folder as root, so hand an empty one over.
+    # The cache volume starts out root-owned, and a FIPMESH_KEEP_ROOT run or
+    # another user's checkout can leave files in it; dockerd creates a missing
+    # data folder as root, so hand an empty one over.
     mkdir -p /cache/home
-    [ "$(stat -c %u /cache)" = "$uid" ] || chown -R "$uid:$gid" /cache
+    if [ -n "$(find /cache \( ! -uid "$uid" -o ! -gid "$gid" \) -print -quit)" ]; then
+        chown -R "$uid:$gid" /cache
+    fi
     if [ -d /data ] && [ "$(stat -c %u /data)" = 0 ] && [ -z "$(ls -A /data)" ]; then
         chown "$uid:$gid" /data
     fi

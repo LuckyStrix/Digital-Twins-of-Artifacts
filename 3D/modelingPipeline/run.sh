@@ -20,7 +20,7 @@ if [ -z "${FIPMESH_COLMAP_BIN:-}" ]; then
 fi
 # python dependencies
 PYTHON_DEPS=(numpy open3d)
-src/check_config.sh \
+bash src/check_config.sh \
 "${SYSTEM_DEPS[@]}" -- \
 "${PYTHON_DEPS[@]}"
 rc=$?
@@ -324,7 +324,7 @@ fi
 status "output directory: %s" "$OUT_DIR"
 
 # create intitial cloud 
-src/main.sh "$P_IMGDIR" "${S_IMGDIR:-}" "$OUT_DIR"
+bash src/main.sh "$P_IMGDIR" "${S_IMGDIR:-}" "$OUT_DIR"
 rc=$?
 if [ $rc -eq 0 ]; then
     if [ -n "$SDIR_IS_NEEDED" ]; then

@@ -1,10 +1,6 @@
-# The image only needs requirements.txt and docker-entrypoint.sh; the code is
-# bind-mounted at run time (docker-compose.yml). Keep the build context small.
-colmap-src/
-colmap_local
-venv/
-.venv/
-__pycache__/
-.pytest_cache/
-.tui_state.json
-tests/
+# The image only needs these files; the code is bind-mounted at run time
+# (docker-compose.yml). Sending nothing else keeps the build context small.
+*
+!Dockerfile
+!requirements.txt
+!docker-entrypoint.sh

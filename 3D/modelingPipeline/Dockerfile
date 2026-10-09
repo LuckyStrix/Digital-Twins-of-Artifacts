@@ -36,7 +36,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 ARG COLMAP_VERSION=4.2.1
-# There is no GPU during `docker build`, so "native" can't be used. "-real"
+RUN git clone --depth 1 --branch "${COLMAP_VERSION}" https://github.com/colmap/colmap.git /src/colmap
+
+# Declared after the clone, so changing it doesn't re-clone. There is no GPU during `docker build`, so "native" can't be used. "-real"
 # entries embed compiled code for that generation; the trailing "-virtual"
 # embeds PTX that the driver JIT-compiles on GPUs newer than this list.
 #   60 Pascal (P100)       61 Pascal (GTX 10xx)
@@ -44,8 +46,6 @@ ARG COLMAP_VERSION=4.2.1
 #   86 Ampere (RTX 30xx)   89 Ada (RTX 40xx)                90 Hopper (H100)
 #   100 Blackwell (B200)   120 Blackwell (RTX 50xx)
 ARG CUDA_ARCHITECTURES="60-real;61-real;70-real;75-real;80-real;86-real;89-real;90-real;100-real;120-real;120-virtual"
-
-RUN git clone --depth 1 --branch "${COLMAP_VERSION}" https://github.com/colmap/colmap.git /src/colmap
 
 # The pipeline only uses SIFT, so ONNX (learned features; would download
 # onnxruntime at build time), the GUI and OpenGL are switched off. GPU SIFT and
@@ -65,8 +65,12 @@ RUN cmake -S /src/colmap -B /src/colmap/build -GNinja \
 # and on Docker Desktop the build shares WSL2's memory with every other running
 # container, so this stays well below the core count. Raise it on a big machine.
 ARG BUILD_JOBS=4
-RUN ninja -C /src/colmap/build -j "${BUILD_JOBS}" install \
-    && echo "${CUDA_ARCHITECTURES}" > /opt/colmap/CUDA_ARCHITECTURES
+RUN ninja -C /src/colmap/build -j "${BUILD_JOBS}" install
+
+# For docker-entrypoint.sh's GPU check: what this build covers, and which GPUs
+# this CUDA toolkit could compile for (to know if a rebuild would help).
+RUN echo "${CUDA_ARCHITECTURES}" > /opt/colmap/CUDA_ARCHITECTURES \
+    && nvcc --list-gpu-code > /opt/colmap/NVCC_GPU_CODE
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Stage 2: runtime
@@ -74,6 +78,8 @@ RUN ninja -C /src/colmap/build -j "${BUILD_JOBS}" install \
 # The cudnn variant carries cuDNN 9, which onnxruntime-gpu (rembg) needs.
 FROM nvidia/cuda:${CUDA_TAG}-cudnn-runtime-${UBUNTU_TAG} AS runtime
 
+# pipefail, so `colmap help | head` still fails the build when colmap fails.
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 ARG DEBIAN_FRONTEND=noninteractive
 # COLMAP's shared-library dependencies (the runtime halves of the -dev packages
 # above; checked with ldd below), exiftool for run.sh, Python, and the X/GL
@@ -82,11 +88,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         libboost-program-options1.83.0 libboost-graph1.83.0 libboost-system1.83.0 \
         libgoogle-glog0v6t64 libceres4t64 libopenimageio2.4t64 libmetis5 \
         libsqlite3-0 libcurl4t64 libssl3t64 libgmp10 libmpfr6 libgomp1 libopenblas0 libglew2.2 libopengl0 \
-        exiftool python3 python3-venv git \
+        exiftool python3 python3-venv git git-lfs \
         libgl1 libglib2.0-0 libx11-6 libxext6 libxrender1 libegl1 \
     && rm -rf /var/lib/apt/lists/*
 
-COPY --from=colmap-build /opt/colmap /opt/colmap
+# Only the executable (libcolmap is linked in statically) and the GPU-check
+# lists; the rest of the install prefix is headers and static libraries.
+COPY --from=colmap-build /opt/colmap/bin/colmap /opt/colmap/bin/colmap
+COPY --from=colmap-build /opt/colmap/CUDA_ARCHITECTURES /opt/colmap/NVCC_GPU_CODE /opt/colmap/
 RUN if ldd /opt/colmap/bin/colmap | grep "not found"; then \
         echo "COLMAP is missing runtime libraries (above)" >&2; exit 1; \
     fi \
@@ -98,12 +107,8 @@ ENV VIRTUAL_ENV=/opt/venv \
     PATH=/opt/venv/bin:/opt/colmap/bin:$PATH
 RUN python3 -m venv /opt/venv && pip install --no-cache-dir --upgrade pip
 
-# torch is left out: nothing in the pipeline imports it, and rembg 2.x runs its
-# models through onnxruntime. Its CUDA wheels would add ~6 GB and limit the
-# image to the GPUs PyTorch's build supports.
 COPY requirements.txt /tmp/requirements.txt
-RUN grep -v -E '^torch([^a-z_-]|$)' /tmp/requirements.txt > /tmp/requirements-docker.txt \
-    && pip install --no-cache-dir -r /tmp/requirements-docker.txt \
+RUN pip install --no-cache-dir -r /tmp/requirements.txt \
     && python3 -c "import open3d, rembg, onnxruntime, textual, cv2"
 
 COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
@@ -116,15 +121,33 @@ RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 # kernels for Blackwell (sm_100+) as sm_90 PTX only, to dodge an NVCC
 # miscompile (colmap/colmap#3514), so those GPUs JIT-compile them. In the
 # default per-container cache that would repeat on every `run --rm`.
+#
+# CUDA_DEVICE_ORDER=PCI_BUS_ID numbers GPUs the way nvidia-smi does, so the
+# app's "GPU index" and CUDA_VISIBLE_DEVICES match the entrypoint's GPU list
+# (CUDA's default puts the fastest GPU first).
 ENV FIPMESH_COLMAP_BIN=/opt/colmap/bin/colmap \
     U2NET_HOME=/cache/u2net \
     CUDA_CACHE_PATH=/cache/nv-compute \
     CUDA_CACHE_MAXSIZE=4294967296 \
+    CUDA_DEVICE_ORDER=PCI_BUS_ID \
     PYTHONDONTWRITEBYTECODE=1
 
-# The run records (pipeline/runlog.py) note the git commit. The repo is a bind
-# mount owned by another user, which git otherwise refuses to read.
-RUN git config --system --add safe.directory '*'
+# The run records (pipeline/runlog.py) note the git commit and whether the
+# checkout has changes. The repo is a bind mount owned by another user, which
+# git otherwise refuses to read. A Windows checkout has CRLF text files and
+# its index holds Windows stat data, so without autocrlf=input every file
+# would look modified, and without checkStat=minimal git would re-read the
+# whole repo over the slow bind mount to find out it isn't. git-lfs, so LFS
+# files compare as their pointers. Repo-level settings still win.
+RUN git config --system --add safe.directory '*' \
+    && git config --system core.autocrlf input \
+    && git config --system core.checkStat minimal \
+    && git lfs install --system --skip-repo
+
+# The files this image was built from, so the entrypoint can tell when the
+# checkout has moved on and the image needs a rebuild. Last, as the Dockerfile
+# changes most often.
+COPY Dockerfile requirements.txt docker-entrypoint.sh /opt/fip3d/build-inputs/
 
 # docker-compose.yml bind-mounts the whole repo at /repo, so .git is there too.
 WORKDIR /repo/3D/modelingPipeline

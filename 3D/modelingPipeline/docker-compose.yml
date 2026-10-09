@@ -18,6 +18,11 @@ services:
     # The Textual app needs a terminal.
     stdin_open: true
     tty: true
+    # Docker's TTY says TERM=xterm, which makes Textual fall back to 16 colors.
+    # Windows Terminal and other modern terminals handle full color.
+    environment:
+      TERM: xterm-256color
+      COLORTERM: truecolor
     # A real PID 1 that reaps orphans: stopping a stage kills COLMAP's process
     # tree, and without this the killed children linger as zombies.
     init: true
@@ -26,9 +31,6 @@ services:
       # so a git pull takes effect without rebuilding and the run records can
       # read the git commit.
       - ../..:/repo
-      # Hide any host venv/: pipeline/platform.py prefers ./venv/bin/python3
-      # over the image's own Python.
-      - /repo/3D/modelingPipeline/venv
       # Captures and outputs. In the app, pick folders under /data.
       - ${DATA_LOCATION:-../../data}:/data
       # rembg's downloaded models and CUDA's JIT cache, so neither is redone

@@ -13,7 +13,8 @@ the linked per-pillar README for the detailed steps.
 | `website/`   | any                | none (static site)                        | 3.x      |
 
 > **3D reconstruction in Docker:** if you only reconstruct (no capture), the
-> `3D/` row above can be replaced by Docker Desktop plus an NVIDIA GPU, with no
+> `3D/` row above can be replaced by Docker plus an NVIDIA GPU (Docker Desktop
+> on Windows; Docker Engine and the NVIDIA Container Toolkit on Linux), with no
 > WSL Python, CUDA toolkit or COLMAP build. See
 > [`3D/modelingPipeline/DOCKER.md`](3D/modelingPipeline/DOCKER.md).
 

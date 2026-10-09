@@ -27,10 +27,11 @@ python3 -m pip install --break-system-packages -r requirements.txt
 ```
 
 `requirements.txt` pulls `open3d`, `numpy<2.5`, `rembg[gpu]` (use plain `rembg`
-on a CPU-only machine) with `onnxruntime-gpu<1.27`, `torch`, `pillow`,
+on a CPU-only machine) with `onnxruntime-gpu<1.27`, `pillow`,
 `opencv-python-headless` (mask cleanup), `textual` (the terminal UI) and
-`pytest` (tests). `torch` isn't imported by the pipeline itself; the Docker
-image skips it.
+`pytest` (tests). `torch` isn't needed (rembg 2.x runs its models through
+onnxruntime); an existing install can stay or be removed with
+`python3 -m pip uninstall torch`.
 rembg downloads its `birefnet-general` model on first use. For the cuDNN runtime
 that `onnxruntime-gpu` needs, and for raising WSL's RAM/swap limits if runs get
 OOM-killed, see [`../README.md`](../README.md#setup).

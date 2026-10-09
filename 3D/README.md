@@ -69,9 +69,8 @@ the rig): multi-camera capture → COLMAP reconstruction → meshed model. See t
   use `rembg` (no `[gpu]`) instead and skip this.
 - Python 3.9–3.12 and the deps in `modelingPipeline/requirements.txt` (open3d
   has no prebuilt wheels for 3.13/3.14 yet). Pinned there: `numpy<2.5` and
-  `onnxruntime-gpu<1.27`. `torch` is also listed, but the pipeline doesn't
-  import it (rembg 2.x runs its models through onnxruntime), and the Docker
-  image leaves it out.
+  `onnxruntime-gpu<1.27`. `torch` isn't needed: rembg 2.x runs its models
+  through onnxruntime.
 
 ## Setup
 

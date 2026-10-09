@@ -38,12 +38,25 @@ $Tmp = Join-Path $env:TEMP "fipmesh-setup"
 function Step($msg) { Write-Host "`n==> $msg" -ForegroundColor Cyan }
 function Fail($msg) { Write-Host "`nERROR: $msg" -ForegroundColor Red; exit 1 }
 
+# Native commands run with $ErrorActionPreference = "Continue" (local to
+# these functions): under "Stop", Windows PowerShell 5.1 turns anything a
+# program writes to stderr (a pip warning, a Python traceback) into a
+# terminating NativeCommandError. Success is judged by $LASTEXITCODE instead.
+
 function Invoke-Checked {
-    # Run a native command and stop if it fails ($ErrorActionPreference
-    # doesn't cover exe exit codes in Windows PowerShell 5.1).
+    # Run a native command, showing its output; stop the script if it fails.
     param([string]$Exe, [string[]]$Arguments)
+    $ErrorActionPreference = "Continue"
     & $Exe @Arguments
     if ($LASTEXITCODE -ne 0) { Fail "'$Exe $($Arguments -join ' ')' failed (exit $LASTEXITCODE)" }
+}
+
+function Invoke-Quiet {
+    # Run a native command for its stdout, hiding stderr. Never stops the
+    # script: check $LASTEXITCODE afterwards.
+    param([string]$Exe, [string[]]$Arguments)
+    $ErrorActionPreference = "Continue"
+    & $Exe @Arguments 2>$null
 }
 
 function Expand-Download {
@@ -70,7 +83,7 @@ $candidates = @(
 )
 foreach ($cand in $candidates) {
     if (-not (Get-Command $cand.Exe -ErrorAction SilentlyContinue)) { continue }
-    $ver = & $cand.Exe @($cand.Args + @("-c", "import sys; print('%d.%d' % sys.version_info[:2])")) 2>$null
+    $ver = Invoke-Quiet $cand.Exe ($cand.Args + @("-c", "import sys; print('%d.%d' % sys.version_info[:2])"))
     if ($LASTEXITCODE -eq 0 -and $ver -match '^3\.(9|10|11|12)$') {
         $BasePy = $cand
         Write-Host "    using $($cand.Exe) $($cand.Args -join ' ') (Python $ver)"
@@ -94,14 +107,16 @@ if (-not (Test-Path $VenvPy)) {
 Invoke-Checked $VenvPy @("-m", "pip", "install", "--upgrade", "pip", "wheel")
 
 Step "Installing the CUDA build of torch"
-& $VenvPy -c "import torch, sys; sys.exit(0 if torch.version.cuda else 1)" 2>$null | Out-Null
+Invoke-Quiet $VenvPy @("-c", "import torch, sys; sys.exit(0 if torch.version.cuda else 1)") | Out-Null
 if ($LASTEXITCODE -eq 0) {
     Write-Host "    already installed"
 } else {
     $ok = $false
     foreach ($cu in $TorchCuda) {
         Write-Host "    trying https://download.pytorch.org/whl/$cu"
+        $ErrorActionPreference = "Continue"
         & $VenvPy -m pip install --upgrade --force-reinstall torch --index-url "https://download.pytorch.org/whl/$cu"
+        $ErrorActionPreference = "Stop"
         if ($LASTEXITCODE -eq 0) { $ok = $true; break }
     }
     if (-not $ok) { Fail "could not install a CUDA 12 build of torch (tried: $($TorchCuda -join ', '))" }
@@ -111,7 +126,7 @@ Step "Installing requirements.txt"
 Invoke-Checked $VenvPy @("-m", "pip", "install", "-r", (Join-Path $Here "requirements.txt"))
 # rembg or a dependency can drag in the CPU-only onnxruntime, which shares
 # onnxruntime-gpu's package folder and silently replaces the GPU build.
-$cpuOrt = & $VenvPy -m pip show onnxruntime 2>$null
+$cpuOrt = Invoke-Quiet $VenvPy @("-m", "pip", "show", "onnxruntime")
 if ($LASTEXITCODE -eq 0 -and $cpuOrt) {
     Write-Host "    removing CPU-only onnxruntime (it overrides onnxruntime-gpu)"
     Invoke-Checked $VenvPy @("-m", "pip", "uninstall", "-y", "onnxruntime")
@@ -170,5 +185,6 @@ if (Test-Path $Tmp) { Remove-Item -Recurse -Force $Tmp -ErrorAction SilentlyCont
 
 # -- 5. check --
 Step "Checking the setup"
+$ErrorActionPreference = "Continue"
 & $VenvPy (Join-Path $Here "check_setup.py")
 exit $LASTEXITCODE

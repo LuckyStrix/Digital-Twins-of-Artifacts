@@ -62,6 +62,28 @@ def _run_quiet(cmd: list[str], cwd: Path | None = None, timeout: float = 10) -> 
     return r.stdout.strip() if r.returncode == 0 else ""
 
 
+def _git_commit() -> str:
+    """``git describe`` of the checkout, with ``-dirty`` for tracked changes.
+
+    The dirty check is ``git status`` with optional locks off rather than
+    ``describe --dirty``, which rewrites .git/index. In Docker the repo is a
+    bind mount shared with the host's git, and an index rewritten with the
+    container's stat data makes the host's git rescan every file.
+    """
+    commit = _run_quiet(["git", "describe", "--always", "--abbrev=10"], cwd=SCRIPT_DIR)
+    if not commit:
+        return ""
+    try:
+        r = subprocess.run(["git", "status", "--porcelain", "--untracked-files=no"],
+                           cwd=SCRIPT_DIR, capture_output=True, text=True, timeout=10,
+                           env={**os.environ, "GIT_OPTIONAL_LOCKS": "0"})
+    except (OSError, subprocess.SubprocessError):
+        return commit
+    if r.returncode == 0 and r.stdout.strip():
+        commit += "-dirty"
+    return commit
+
+
 def environment() -> dict:
     """Machine and software the run used (best effort; missing parts omitted)."""
     env: dict = {
@@ -70,7 +92,7 @@ def environment() -> dict:
         "cpu_count": os.cpu_count(),
         "app_python": sys.version.split()[0],
     }
-    commit = _run_quiet(["git", "describe", "--always", "--dirty", "--abbrev=10"], cwd=SCRIPT_DIR)
+    commit = _git_commit()
     if commit:
         env["git_commit"] = commit
     script = ("import importlib.metadata as m, json, sys\n"

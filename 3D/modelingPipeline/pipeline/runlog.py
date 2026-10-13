@@ -54,12 +54,36 @@ def _now() -> datetime:
     return datetime.now().astimezone()
 
 
-def _run_quiet(cmd: list[str], cwd: Path | None = None, timeout: float = 10) -> str:
+def _run_quiet(cmd: list[str], cwd: Path | None = None, timeout: float = 10,
+               env: Mapping[str, str] | None = None) -> str | None:
+    """The command's stripped stdout, or None if it failed or timed out."""
     try:
-        r = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, timeout=timeout)
+        r = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, timeout=timeout,
+                           env=None if env is None else {**os.environ, **env})
     except (OSError, subprocess.SubprocessError):
+        return None
+    return r.stdout.strip() if r.returncode == 0 else None
+
+
+def _git_commit() -> str:
+    """``git describe`` of the checkout, with ``-dirty`` for tracked changes.
+
+    The dirty check is ``git status`` with optional locks off rather than
+    ``describe --dirty``, which rewrites .git/index. In Docker the repo is a
+    bind mount shared with the host's git, and an index rewritten with the
+    container's stat data makes the host's git rescan every file.
+
+    Empty if either command fails or times out: a commit without a known
+    clean/dirty state isn't recorded, rather than passed off as clean.
+    """
+    commit = _run_quiet(["git", "describe", "--always", "--abbrev=10"], cwd=SCRIPT_DIR)
+    if not commit:
         return ""
-    return r.stdout.strip() if r.returncode == 0 else ""
+    changes = _run_quiet(["git", "status", "--porcelain", "--untracked-files=no"],
+                         cwd=SCRIPT_DIR, env={"GIT_OPTIONAL_LOCKS": "0"})
+    if changes is None:
+        return ""
+    return f"{commit}-dirty" if changes else commit
 
 
 def environment() -> dict:
@@ -70,7 +94,7 @@ def environment() -> dict:
         "cpu_count": os.cpu_count(),
         "app_python": sys.version.split()[0],
     }
-    commit = _run_quiet(["git", "describe", "--always", "--dirty", "--abbrev=10"], cwd=SCRIPT_DIR)
+    commit = _git_commit()
     if commit:
         env["git_commit"] = commit
     script = ("import importlib.metadata as m, json, sys\n"

@@ -136,7 +136,9 @@ GOLDEN_COLMAP_ENV_DEFAULTS = {
 
 
 def fipmesh(env: dict) -> dict:
-    return {k: v for k, v in env.items() if k.startswith("FIPMESH_")}
+    # FIPMESH_PYTHON comes from the Docker image, not the runner (conftest
+    # keeps it so PY above stays right).
+    return {k: v for k, v in env.items() if k.startswith("FIPMESH_") and k != "FIPMESH_PYTHON"}
 
 
 def test_stage2_two_sides_defaults(s, tmp_path):

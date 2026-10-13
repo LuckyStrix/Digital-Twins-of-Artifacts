@@ -12,6 +12,12 @@ the linked per-pillar README for the detailed steps.
 | `3D/`        | **WSL2 (Ubuntu)**  | CUDA-enabled COLMAP, exiftool, NVIDIA GPU | 3.9–3.12 |
 | `website/`   | any                | none (static site)                        | 3.x      |
 
+> **3D reconstruction in Docker:** if you only reconstruct (no capture), the
+> `3D/` row above can be replaced by Docker plus an NVIDIA GPU (Docker Desktop
+> on Windows; Docker Engine and the NVIDIA Container Toolkit on Linux), with no
+> WSL Python, CUDA toolkit or COLMAP build. See
+> [`3D/modelingPipeline/DOCKER.md`](3D/modelingPipeline/DOCKER.md).
+
 > **Use Python 3.9–3.12, not 3.13/3.14.** The pipelines pin `numpy<2.5`, and
 > numpy (plus scipy, opencv, rembg, open3d, onnxruntime) only ship prebuilt
 > wheels up to Python 3.12. On 3.13+ pip falls back to building from C source and
@@ -69,6 +75,11 @@ The `3D/` tablet pipeline runs under **WSL2 with an Ubuntu distro** (it uses
 CUDA-on-WSL for GPU-accelerated COLMAP). The reconstruction app runs in the
 terminal, so it doesn't need WSLg; WSLg is only used by the optional 3D viewer
 when no Windows Python with `open3d` is installed.
+
+> **Only reconstructing, not capturing?** You can skip this section and run the
+> pipeline in Docker instead: Docker Desktop plus an NVIDIA GPU, with no CUDA
+> toolkit, cuDNN or COLMAP build. See
+> [`3D/modelingPipeline/DOCKER.md`](3D/modelingPipeline/DOCKER.md).
 
 1. Install WSL2 + **Ubuntu 24.04 LTS** from an **elevated PowerShell** on Windows:
 

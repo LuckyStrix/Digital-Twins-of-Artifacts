@@ -7,6 +7,8 @@ SSH. See the [repo setup guide](../../SETUP.md) for first-time install.
 
 ## Prerequisites
 
+Or skip this section and use Docker: [`DOCKER.md`](DOCKER.md).
+
 - **OS: WSL2 (Ubuntu)**, Python 3.9–3.12 (not 3.13/3.14 — open3d has no
   prebuilt wheels there yet).
 - **CUDA-enabled COLMAP** — see the dependency notes below and
@@ -25,8 +27,11 @@ python3 -m pip install --break-system-packages -r requirements.txt
 ```
 
 `requirements.txt` pulls `open3d`, `numpy<2.5`, `rembg[gpu]` (use plain `rembg`
-on a CPU-only machine) with `onnxruntime-gpu<1.27` and `torch`, `pillow`,
-`textual` (the terminal UI) and `pytest` (tests).
+on a CPU-only machine) with `onnxruntime-gpu<1.27`, `pillow`,
+`opencv-python-headless` (mask cleanup), `textual` (the terminal UI) and
+`pytest` (tests). `torch` isn't needed (rembg 2.x runs its models through
+onnxruntime); an existing install can stay or be removed with
+`python3 -m pip uninstall torch`.
 rembg downloads its `birefnet-general` model on first use. For the cuDNN runtime
 that `onnxruntime-gpu` needs, and for raising WSL's RAM/swap limits if runs get
 OOM-killed, see [`../README.md`](../README.md#setup).
@@ -63,6 +68,9 @@ bash src/check_config.sh python3 colmap -- numpy open3d
 ```bash
 python3 app.py
 ```
+
+(In Docker: `docker compose run --rm pipeline` from this folder; see
+[`DOCKER.md`](DOCKER.md).)
 
 The left sidebar has one card per stage (blue = running, green = done, red =
 failed) with **Run Stage** and **View …** buttons, plus **Run all** / **Stop**.

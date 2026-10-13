@@ -21,7 +21,15 @@ def find_python(path: Path) -> str:
 
 
 def venv_python() -> str:
-    """The repo's venv interpreter if it exists, else the current one."""
+    """The interpreter the stages run in.
+
+    FIPMESH_PYTHON if set (the Docker image sets it, so a host ./venv in the
+    bind-mounted checkout isn't used); otherwise the repo's venv if it exists,
+    else the current one.
+    """
+    override = os.environ.get("FIPMESH_PYTHON")
+    if override:
+        return override
     return find_python(SCRIPT_DIR / "venv" / "bin" / "python3")
 
 

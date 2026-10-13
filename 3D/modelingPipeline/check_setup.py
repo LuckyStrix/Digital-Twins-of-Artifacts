@@ -58,10 +58,14 @@ def check_python() -> None:
 
 
 def check_modules() -> None:
-    for mod, pip_name in [("numpy", "numpy"), ("open3d", "open3d"), ("cv2", "opencv"),
-                          ("PIL", "pillow"), ("rembg", "rembg[gpu]"),
-                          ("onnxruntime", "onnxruntime-gpu"), ("torch", "torch"),
-                          ("textual", "textual")]:
+    modules = [("numpy", "numpy"), ("open3d", "open3d"), ("cv2", "opencv"),
+               ("PIL", "pillow"), ("rembg", "rembg[gpu]"),
+               ("onnxruntime", "onnxruntime-gpu"), ("textual", "textual")]
+    if sys.platform == "win32":
+        # Not in requirements.txt: Windows borrows torch's CUDA/cuDNN DLLs
+        # (process_photos._load_cuda_dlls); Linux gets cuDNN from the system.
+        modules.append(("torch", "torch"))
+    for mod, pip_name in modules:
         try:
             m = importlib.import_module(mod)
             report(OK, f"{mod} {getattr(m, '__version__', '')}".rstrip())

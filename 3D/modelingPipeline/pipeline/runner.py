@@ -21,6 +21,7 @@ import os
 import shutil
 import signal
 import subprocess
+import sys
 import threading
 from datetime import datetime
 from pathlib import Path
@@ -142,6 +143,23 @@ def run_sh_cmd(img_dir: Path, out_dir: Path, mask_dir: Path | None) -> list[str]
     if mask_dir is not None:
         cmd += ["-m", os.path.relpath(mask_dir, SCRIPT_DIR)]
     return cmd
+
+
+def run_stage2_py_cmd(img_dir: Path, out_dir: Path, mask_dir: Path | None) -> list[str]:
+    # The Python port of run.sh takes absolute paths: on Windows a session on
+    # another drive (D:\scans) has no path relative to the repo.
+    cmd = [venv_python(), str(SCRIPT_DIR / "src" / "run_stage2.py"),
+           "-i", str(img_dir), "-o", str(out_dir), "-v"]
+    if mask_dir is not None:
+        cmd += ["-m", str(mask_dir)]
+    return cmd
+
+
+def stage2_cmd(img_dir: Path, out_dir: Path, mask_dir: Path | None) -> list[str]:
+    """Stage 2's command: run.sh needs bash, so native Windows uses its
+    Python port instead."""
+    builder = run_stage2_py_cmd if sys.platform == "win32" else run_sh_cmd
+    return builder(img_dir, out_dir, mask_dir)
 
 
 def align_cmd(s: Mapping, ply_a: str, ply_b: str, merged_out: Path,
@@ -398,7 +416,7 @@ class PipelineRunner:
         """Kill `proc` and its whole descendant tree on Windows.
 
         Mirrors the POSIX process-group kill below: Stage 2 runs
-        ``bash run.sh``, whose COLMAP children would survive a plain
+        ``run_stage2.py``, whose COLMAP children would survive a plain
         ``proc.kill()`` of the parent alone. ``taskkill /T`` walks the
         process tree; ``/F`` forces it.
         """
@@ -449,7 +467,9 @@ class PipelineRunner:
         self._on_log(f"$ {' '.join(str(c) for c in cmd)}", "header")
         if self._stop_req:
             return -1
-        e = {**(env or os.environ.copy()), "PYTHONUNBUFFERED": "1"}
+        # PYTHONUTF8: on Windows a piped child Python otherwise writes the
+        # ANSI code page and dies on the first non-ASCII character it prints.
+        e = {**(env or os.environ.copy()), "PYTHONUNBUFFERED": "1", "PYTHONUTF8": "1"}
         # Lower CPU priority so the UI stays responsive while a stage keeps
         # every core busy. nice execs the command, so the pid (and the
         # process group _terminate signals) is still the stage's own.
@@ -458,8 +478,9 @@ class PipelineRunner:
         proc = subprocess.Popen(
             launch, cwd=str(cwd), env=e,
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-            text=True, bufsize=1, errors="replace",
+            text=True, bufsize=1, encoding="utf-8", errors="replace",
             start_new_session=_POSIX,
+            creationflags=0 if _POSIX else subprocess.BELOW_NORMAL_PRIORITY_CLASS,
         )
         self._proc = proc
         if self._stop_req:          # stop() came in while the process was starting
@@ -558,7 +579,7 @@ class PipelineRunner:
         # mask subfolder — not the shared mask root, which mirrors processed/'s
         # side1/side2 layout.
         side_mask_dir = self.paths.masks_dir() / side
-        cmd = run_sh_cmd(img_dir, out_dir, side_mask_dir if side_mask_dir.is_dir() else None)
+        cmd = stage2_cmd(img_dir, out_dir, side_mask_dir if side_mask_dir.is_dir() else None)
         rc = self._run_proc(cmd, cwd=SCRIPT_DIR, env=env, on_line=on_line)
         return rc == 0
 
@@ -566,7 +587,7 @@ class PipelineRunner:
         out_dir = self.paths.colmap_dir()
         out_dir.mkdir(parents=True, exist_ok=True)
         masks = self.paths.masks_dir()
-        cmd = run_sh_cmd(processed_dir, out_dir, masks if masks.is_dir() else None)
+        cmd = stage2_cmd(processed_dir, out_dir, masks if masks.is_dir() else None)
         rc = self._run_proc(cmd, cwd=SCRIPT_DIR, env=env, on_line=on_line)
         return rc == 0
 

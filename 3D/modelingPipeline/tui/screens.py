@@ -169,7 +169,7 @@ class PathPicker(ModalScreen["str | None"]):
 
     Left: locations (home, /, drives under /mnt, network mounts) and recent
     folders. Right: a directory tree. Bottom: an editable path box that also
-    takes Windows paths. Under WSL a "Windows dialog…" button opens the
+    takes Windows paths. Under WSL or Windows a "Windows dialog…" button opens the
     native Explorer picker (automatically on open, if enabled)."""
 
     BINDINGS = [Binding("escape", "dismiss(None)", "Cancel"),
@@ -180,7 +180,7 @@ class PathPicker(ModalScreen["str | None"]):
         super().__init__()
         self.mode, self.title_text, self.pattern = mode, title, pattern
         self.recents = [r for r in (recents or []) if r]
-        self.auto_native = auto_native and plat.running_under_wsl()
+        self.auto_native = auto_native and plat.has_native_dialogs()
         self.initial = initial
         self.start = start_dir(initial, self.recents)
         self._locations: list[Path] = []
@@ -206,7 +206,7 @@ class PathPicker(ModalScreen["str | None"]):
                         placeholder="Type or paste a path (Windows paths work too)")
             with Horizontal(classes="dialog-btns"):
                 yield Button("New folder…", id="new-folder-btn", compact=True)
-                if plat.running_under_wsl():
+                if plat.has_native_dialogs():
                     yield Checkbox("Open Windows dialog first", self.auto_native,
                                    id="auto-native", compact=True)
                     yield Button("Windows dialog…", id="native", compact=True)

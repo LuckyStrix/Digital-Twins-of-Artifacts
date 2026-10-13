@@ -38,10 +38,19 @@ the rig): multi-camera capture → COLMAP reconstruction → meshed model. See t
 
 ## Prerequisites
 
-> **Docker alternative:** reconstruction (not capture) also runs in a Docker
-> image with COLMAP, CUDA and the Python packages already inside, so none of the
-> list below is needed except an NVIDIA GPU. See
-> [`modelingPipeline/DOCKER.md`](modelingPipeline/DOCKER.md).
+Pick the reconstruction setup for your machine. All of them need an NVIDIA GPU.
+
+| Your machine | Recommended setup | Guide |
+|---|---|---|
+| **Windows** | Native install: one command, no WSL, no admin | [`WINDOWS_SETUP.md`](WINDOWS_SETUP.md) |
+| **Linux** | Docker image with COLMAP, CUDA and the Python packages inside | [`modelingPipeline/DOCKER.md`](modelingPipeline/DOCKER.md) |
+
+Both cover reconstruction only; capture runs natively on the Linux rig machine
+(see [Capture setup](#capture-setup)).
+
+The rest of this section and [Setup](#setup) describe the manual install, for
+WSL2 or a Linux machine without Docker. You don't need it if you followed one
+of the guides above.
 
 - **OS: WSL2 (Ubuntu 24.04 LTS)** — the reconstruction runs under WSL (its UI
   runs in the terminal; the optional 3D viewer uses WSLg or a native Windows

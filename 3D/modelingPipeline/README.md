@@ -2,12 +2,15 @@
 
 The reconstruction half of the `3D/` pipeline: from captured photos to a meshed
 model, driven by a terminal UI (`app.py`, built with [Textual](https://textual.textualize.io/)).
-It runs in any terminal: Windows Terminal under WSL, a Linux desktop, or over
-SSH. See the [repo setup guide](../../SETUP.md) for first-time install.
+It runs in any terminal: Windows Terminal (native or under WSL), a Linux
+desktop, a Docker container, or over SSH. See the [repo setup guide](../../SETUP.md) for first-time install.
 
 ## Prerequisites
 
-Or skip this section and use Docker: [`DOCKER.md`](DOCKER.md).
+On Windows, use the native install in
+[`../WINDOWS_SETUP.md`](../WINDOWS_SETUP.md). On Linux, use Docker:
+[`DOCKER.md`](DOCKER.md). Either one replaces this section, which is the manual
+install for WSL2 or a Linux machine without Docker.
 
 - **OS: WSL2 (Ubuntu)**, Python 3.9–3.12 (not 3.13/3.14 — open3d has no
   prebuilt wheels there yet).
@@ -69,7 +72,9 @@ bash src/check_config.sh python3 colmap -- numpy open3d
 python3 app.py
 ```
 
-(In Docker: `docker compose run --rm pipeline` from this folder; see
+(On native Windows: `venv\Scripts\python app.py`; see
+[`../WINDOWS_SETUP.md`](../WINDOWS_SETUP.md). In Docker:
+`docker compose run --rm pipeline` from this folder; see
 [`DOCKER.md`](DOCKER.md).)
 
 The left sidebar has one card per stage (blue = running, green = done, red =

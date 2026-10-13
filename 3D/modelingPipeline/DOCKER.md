@@ -1,11 +1,15 @@
 # Running the reconstruction pipeline in Docker
 
-The Docker image holds everything the reconstruction needs: CUDA COLMAP,
-exiftool, cuDNN and the Python packages. You don't need the WSL CUDA toolkit
-setup, the cuDNN repo step or the COLMAP build in
-[`BUILDING_COLMAP.md`](BUILDING_COLMAP.md). The pipeline itself is the same
-code as the native setup, which keeps working; Docker is an alternative, not a
-replacement.
+This is the recommended setup on Linux. The Docker image holds everything the
+reconstruction needs: CUDA COLMAP, exiftool, cuDNN and the Python packages. You
+don't need a CUDA toolkit, the cuDNN repo step or the COLMAP build in
+[`BUILDING_COLMAP.md`](BUILDING_COLMAP.md), and the host can run any distro,
+not only Ubuntu 24.04. The pipeline itself is the same code as the manual
+install, which keeps working.
+
+On Windows, use the native install in
+[`../WINDOWS_SETUP.md`](../WINDOWS_SETUP.md) instead. Docker also works there
+through Docker Desktop, and the Windows notes below cover it.
 
 This covers reconstruction only (`app.py` and its four stages). Capture
 (`../captureApp/`) talks to cameras and an Arduino over USB, which a container
@@ -20,11 +24,12 @@ can't easily reach, so it still runs natively.
   early 2025 on). The image is built on CUDA 12.8, and Docker refuses to start
   it on older drivers with `unsatisfied condition: cuda>=12.8`. Check with
   `nvidia-smi`.
-- **Windows:** [Docker Desktop](https://docs.docker.com/desktop/install/windows-install/)
-  with the WSL2 backend (the default). You don't need a CUDA toolkit or a
-  particular Ubuntu version.
 - **Linux:** Docker Engine with the Compose plugin, the NVIDIA driver, and the
   [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html).
+- **Windows (if not using the native install):**
+  [Docker Desktop](https://docs.docker.com/desktop/install/windows-install/)
+  with the WSL2 backend (the default). You don't need a CUDA toolkit or a
+  particular Ubuntu version.
 - About **30 GB** of free disk while building. The finished image is about
   12 GB; `docker builder prune` reclaims the rest of the build cache afterward.
 

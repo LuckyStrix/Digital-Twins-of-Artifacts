@@ -161,7 +161,7 @@ Arduino over a **serial port**, so on the capture workstation you need:
 > elevated Windows PowerShell (`usbipd list`, then `usbipd attach --wsl --busid
 > <BUSID>` for each camera and the Arduino). If that is fiddly on your rig, run
 > the capture apps on native Linux (or Windows) instead — only the reconstruction
-> stage requires WSL/CUDA.
+> stage requires CUDA.
 
 ## Usage
 
@@ -170,8 +170,10 @@ Arduino over a **serial port**, so on the capture workstation you need:
   rig firmware in `arduinoCode/`.
 - **Reconstruction**: `python3 modelingPipeline/app.py` — see
   [`modelingPipeline/README.md`](modelingPipeline/README.md) for the four-stage
-  pipeline. In Docker: `docker compose run --rm pipeline` from
-  `modelingPipeline/` (see [`modelingPipeline/DOCKER.md`](modelingPipeline/DOCKER.md)).
+  pipeline. On native Windows: `venv\Scripts\python app.py` from
+  `modelingPipeline\` (see [`WINDOWS_SETUP.md`](WINDOWS_SETUP.md)). In Docker:
+  `docker compose run --rm pipeline` from `modelingPipeline/` (see
+  [`modelingPipeline/DOCKER.md`](modelingPipeline/DOCKER.md)).
 
 ## Structure
 

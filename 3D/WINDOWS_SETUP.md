@@ -1,13 +1,14 @@
-# 3D Reconstruction on Native Windows (no WSL, no admin)
+# 3D Reconstruction on Windows (native: no WSL, no admin)
 
 Use this guide to run the 3D reconstruction app (`modelingPipeline/app.py`)
 directly on Windows, using the GPU, **without admin rights**: no WSL, no
 Docker, no system installs. Everything installs inside the
 `3D\modelingPipeline` folder.
 
-If you *can* get WSL2, the standard setup in [`../SETUP.md`](../SETUP.md)
-is still the reference. This guide is the fallback for lab or managed PCs
-where WSL can't be turned on.
+This is the recommended setup on Windows, and it works on lab or managed PCs
+where WSL can't be turned on. WSL2 ([`../SETUP.md`](../SETUP.md#wsl2-for-3d))
+and Docker Desktop ([`modelingPipeline/DOCKER.md`](modelingPipeline/DOCKER.md))
+also work, but both take more setup.
 
 > **Covers reconstruction only.** The capture app (`captureApp/`) needs
 > gphoto2, which has no Windows build. Capture on the Linux rig machine and
@@ -19,7 +20,7 @@ where WSL can't be turned on.
 |---|---|---|
 | NVIDIA GPU + driver | `nvidia-smi` in a terminal shows your GPU | Ask IT. The driver is the only part that needs admin |
 | Python **3.12** (3.9–3.12 work; **not** 3.13+) | `py -3.12 --version` | `winget install -e --id Python.Python.3.12 --scope user`, or the python.org installer with **"Install for all users" unticked** |
-| The repo | — | `git clone`, GitHub Desktop, or *Code → Download ZIP* on GitHub, on the `windows-native` branch |
+| The repo | — | `git clone`, GitHub Desktop, or *Code → Download ZIP* on GitHub |
 
 About 10 GB of free disk space covers torch, COLMAP and the models.
 

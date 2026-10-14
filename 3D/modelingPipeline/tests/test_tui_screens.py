@@ -200,6 +200,7 @@ def test_native_dialog_cancel_keeps_terminal_picker(tmp_path, monkeypatch):
 def test_path_field_converts_windows_path_on_submit(tmp_path, monkeypatch):
     win = "D:" + "\\" + "scans"
     monkeypatch.setattr(plat, "to_posix_path", lambda p: "/mnt/d/scans" if p == win else p)
+    monkeypatch.setattr(plat, "running_on_windows", lambda: False)   # WSL: D:\ is converted
 
     async def body(app, pilot):
         app.query_one("#tabs").active = "tab-inputs"

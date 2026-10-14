@@ -15,6 +15,7 @@ from textual import on, work
 from textual.app import App, ComposeResult, SystemCommand
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.css.query import NoMatches
 from textual.theme import Theme
 from textual.widgets import Button, Footer, Header, Input, Label
 
@@ -175,11 +176,15 @@ class ReconApp(App):
 
     # ── session info / stage reconcile ────────────────────────────────────────
     def _update_session_info(self, detected: str | None = None) -> None:
-        self.query_one("#proj-path", Label).update(str(self.paths.session_dir()))
+        try:
+            proj = self.query_one("#proj-path", Label)
+            det = self.query_one("#detected", Label)
+        except NoMatches:       # a debounced update can fire while the app shuts down
+            return
+        proj.update(str(self.paths.session_dir()))
         s1, s2 = self.paths.active_sides()
         sides = ", ".join(x for x in (s1, s2) if x) or "flat image set"
-        self.query_one("#detected", Label).update(
-            f"sides: {sides}" + ("" if s2 else " · no alignment"))
+        det.update(f"sides: {sides}" + ("" if s2 else " · no alignment"))
         if detected is not None:
             self.form.set_status(detected)
 

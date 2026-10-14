@@ -421,6 +421,27 @@ def parse_args() -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--units",
+        choices=["none", "mm"],
+        default=os.environ.get("FIPMESH_RECON_UNITS", "none"),
+        help=(
+            "Units of the input cloud. 'mm' (set when Stage 2 scaled every side "
+            "with the reference ring) writes glTF/GLB in meters, as the glTF spec "
+            "requires; OBJ/PLY stay in mm. 'none' leaves every output in the "
+            "cloud's own units (default: none). Env: FIPMESH_RECON_UNITS."
+        ),
+    )
+    parser.add_argument(
+        "--scale-json",
+        default=os.environ.get("FIPMESH_RECON_SCALE_JSON", ""),
+        help=(
+            "Side 1's scale.json from Stage 2. When it says the side was scaled, "
+            "points on the reference ring and on the turntable outside it are "
+            "removed before meshing (in case background removal kept them). "
+            "Env: FIPMESH_RECON_SCALE_JSON."
+        ),
+    )
+    parser.add_argument(
         "--side1-camera-centers",
         default=os.environ.get("FIPMESH_SIDE1_CAMERA_CENTERS", ""),
         help=(
@@ -681,6 +702,40 @@ def apply_mirror_backfill(points: np.ndarray, axis: str) -> tuple[np.ndarray, fl
     _, unique_idx = np.unique(quantized, axis=0, return_index=True)
     unique_idx.sort()
     return merged[unique_idx], pivot
+
+
+RING_CROP_RADIAL_MM = 2.0      # margin around the ring band
+RING_CROP_HEIGHT_MM = 3.0      # how far above/below the ring's top face counts as "on it"
+
+
+def load_ring(scale_json: str) -> dict | None:
+    """The ring (center, upward normal, radii; mm) from a scaled side's scale.json."""
+    if not scale_json:
+        return None
+    try:
+        report = json.loads(Path(scale_json).read_text())
+    except (OSError, ValueError):
+        return None
+    if report.get("status") != "scaled" or not report.get("ring_mm"):
+        return None
+    return report["ring_mm"]
+
+
+def crop_ring(pcd: o3d.geometry.PointCloud, ring: dict) -> tuple[o3d.geometry.PointCloud, int]:
+    """Drop points on the ring band and on the turntable outside it: within
+    RING_CROP_HEIGHT_MM of the ring's top face and further out than the
+    ring's inner edge minus RING_CROP_RADIAL_MM. The tablet sits inside the
+    ring, so nothing of it is removed."""
+    P = np.asarray(pcd.points, dtype=np.float64)
+    c = np.asarray(ring["center"], dtype=np.float64)
+    n = np.asarray(ring["normal"], dtype=np.float64)
+    n = n / np.linalg.norm(n)
+    rel = P - c
+    h = rel @ n
+    radial = np.linalg.norm(rel - np.outer(h, n), axis=1)
+    drop = (np.abs(h) < RING_CROP_HEIGHT_MM) & (radial > float(ring["r_inner"]) - RING_CROP_RADIAL_MM)
+    keep = np.where(~drop)[0]
+    return pcd.select_by_index(keep.tolist()), int(drop.sum())
 
 
 def load_camera_centers(path: str) -> list[list[float]]:
@@ -1535,6 +1590,7 @@ def srgb_to_linear(c: np.ndarray) -> np.ndarray:
 def build_gltf_document(
     mesh: o3d.geometry.TriangleMesh,
     quantize_colors: bool = False,
+    unit_scale: float = 1.0,
 ) -> tuple[dict, bytes] | None:
     """Build a glTF JSON document (without a `buffers[].uri`) plus its binary buffer.
 
@@ -1542,8 +1598,10 @@ def build_gltf_document(
     `quantize_colors` packs COLOR_0 as normalized unsigned bytes instead of float32,
     quartering that attribute's size -- worthwhile for the decimated web-viewer export
     where file size matters more than color precision.
+    `unit_scale` multiplies vertex positions (0.001 turns a millimeter mesh
+    into the meters glTF requires).
     """
-    verts = np.asarray(mesh.vertices, dtype=np.float32)
+    verts = (np.asarray(mesh.vertices, dtype=np.float64) * unit_scale).astype(np.float32)
     tris = np.asarray(mesh.triangles, dtype=np.uint32)
     if len(verts) == 0 or len(tris) == 0:
         return None
@@ -1701,8 +1759,8 @@ def build_gltf_document(
     return gltf, bytes(buffer)
 
 
-def write_gltf(mesh: o3d.geometry.TriangleMesh, gltf_path: Path) -> bool:
-    built = build_gltf_document(mesh)
+def write_gltf(mesh: o3d.geometry.TriangleMesh, gltf_path: Path, unit_scale: float = 1.0) -> bool:
+    built = build_gltf_document(mesh, unit_scale=unit_scale)
     if built is None:
         return False
     gltf, buffer = built
@@ -1726,13 +1784,14 @@ def write_glb(
     mesh: o3d.geometry.TriangleMesh,
     glb_path: Path,
     quantize_colors: bool = True,
+    unit_scale: float = 1.0,
 ) -> bool:
     """Write a binary glTF (.glb): one self-contained file, no base64 inflation.
 
     Meant for the decimated web-viewer export, where small filesize matters more
     than the JSON-embeddable convenience of `.gltf`.
     """
-    built = build_gltf_document(mesh, quantize_colors=quantize_colors)
+    built = build_gltf_document(mesh, quantize_colors=quantize_colors, unit_scale=unit_scale)
     if built is None:
         return False
     gltf, buffer = built
@@ -1869,6 +1928,15 @@ def main() -> int:
             print("error: too few points after fill-colour pruning", file=sys.stderr)
             return 3
         save_snapshot(output_path, "00_fill_color_pruned", pcd)
+
+    ring = load_ring(args.scale_json) if args.units == "mm" else None
+    if ring is not None:
+        _step("remove reference ring points")
+        pcd, removed_ring = crop_ring(pcd, ring)
+        print(f"ring points removed: {removed_ring}")
+        if len(pcd.points) < 10:
+            print("error: too few points after removing the ring", file=sys.stderr)
+            return 3
 
     if args.voxel_size > 0:
         _step("voxel downsample")
@@ -2140,6 +2208,11 @@ def main() -> int:
 
     _step("write mesh exports")
     primary_mesh = textured_mesh if textured_mesh is not None else mesh
+    gltf_unit_scale = 0.001 if args.units == "mm" else 1.0
+    if args.units == "mm" and len(primary_mesh.vertices) > 0:
+        ext = primary_mesh.get_axis_aligned_bounding_box().get_extent()
+        print("units:               mm (glTF/GLB written in meters)")
+        print(f"mesh size (mm):      {ext[0]:.1f} x {ext[1]:.1f} x {ext[2]:.1f}")
     ok_primary, obj_mtl, obj_tex = write_mesh_file(
         primary_mesh,
         output_path,
@@ -2165,7 +2238,7 @@ def main() -> int:
 
     if gltf_output_path == output_path:
         gltf_path_written = output_path
-    elif write_gltf(primary_mesh, gltf_output_path):
+    elif write_gltf(primary_mesh, gltf_output_path, unit_scale=gltf_unit_scale):
         gltf_path_written = gltf_output_path
     else:
         print(f"warning: failed to write glTF mesh to {gltf_output_path}", file=sys.stderr)
@@ -2190,7 +2263,7 @@ def main() -> int:
         if len(simplified_mesh.vertices) > 0 and len(simplified_mesh.triangles) > 0:
             simplified_mesh, simplified_winding_flipped = orient_mesh_winding_outward(simplified_mesh)
             simplified_mesh.compute_vertex_normals()
-            if write_glb(simplified_mesh, simplified_glb_path):
+            if write_glb(simplified_mesh, simplified_glb_path, unit_scale=gltf_unit_scale):
                 simplified_output_path_written = simplified_glb_path
                 simplified_vertex_count = len(simplified_mesh.vertices)
                 simplified_triangle_count = len(simplified_mesh.triangles)
@@ -2308,7 +2381,7 @@ def main() -> int:
         gltf_decimated_source = (
             textured_decimated_mesh if textured_decimated_mesh is not None else decimated_mesh
         )
-        if write_gltf(gltf_decimated_source, gltf_decimated_path):
+        if write_gltf(gltf_decimated_source, gltf_decimated_path, unit_scale=gltf_unit_scale):
             gltf_decimated_path_written = gltf_decimated_path
         else:
             print(

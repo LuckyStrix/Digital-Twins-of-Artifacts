@@ -184,6 +184,9 @@ def stage_outputs(idx: int, paths: SessionPaths) -> dict:
             n = ply_vertex_count(paths.colmap_dir(side) / "fused.ply")
             if n is not None:
                 out[f"fused_points_{side or 'flat'}"] = n
+            sc = _scale_summary(paths.colmap_dir(side) / "scale.json")
+            if sc:
+                out[f"scale_{side or 'flat'}"] = sc
     elif idx == 2:
         n = ply_vertex_count(paths.merged_ply())
         if n is not None:
@@ -192,6 +195,30 @@ def stage_outputs(idx: int, paths: SessionPaths) -> dict:
         n = ply_vertex_count(paths.input_ply_for_recon())
         if n is not None:
             out["input_points"] = n
+        try:
+            out["units"] = json.loads((paths.session_dir() / "scale.json").read_text())["units"]
+        except (OSError, ValueError, KeyError):
+            pass
+    return out
+
+
+def _scale_summary(path: Path) -> dict | None:
+    """A side's scale result, kept in the run record. Includes each model's
+    raw ring radii (model units), so the scan can be rescaled exactly later
+    if the ring is measured better."""
+    try:
+        r = json.loads(path.read_text())
+    except (OSError, ValueError):
+        return None
+    out = {k: r.get(k) for k in ("status", "units", "scale_mm_per_unit", "sigma_pct",
+                                 "sparse_models", "ring_spec", "reason") if k in r}
+    models = []
+    for m in r.get("models", []):
+        f = m.get("fit", {})
+        models.append({k: f.get(k) for k in ("ok", "scale", "sigma_pct", "r_in", "r_out",
+                                             "n_views", "per_camera", "width_mm", "reason")})
+    if models:
+        out["models"] = models
     return out
 
 

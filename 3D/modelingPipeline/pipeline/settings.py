@@ -56,7 +56,7 @@ def _S(key, type_, default, tab, section, label, **kw) -> Setting:
     return Setting(key, type_, default, tab, section, label, **kw)
 
 
-_IN, _CM, _RC, _AL = "Inputs", "COLMAP", "Reconstruct", "Alignment"
+_IN, _CM, _RC, _AL, _SC = "Inputs", "COLMAP", "Reconstruct", "Alignment", "Scale"
 
 REGISTRY: list[Setting] = [
     # ── Inputs ────────────────────────────────────────────────────────────────
@@ -327,12 +327,40 @@ REGISTRY: list[Setting] = [
     _S("align_b_var", PATH, "", _AL, "PLY overrides (blank = auto from pipeline)", "PLY B (moving)",
        path_kind="file", file_glob="*.ply", persisted=False,
        help="Useful for re-running alignment with different inputs."),
+
+    # ── Scale ─────────────────────────────────────────────────────────────────
+    _S("scale_ring_var", BOOL, False, _SC, "Reference ring",
+       "Scale to millimeters with the reference ring",
+       help=("Stage 2 finds the ring fixed to the turntable in each side's raw "
+             "photos and scales that side's reconstruction to millimeters "
+             "before the dense steps, so both sides match in size and the final "
+             "model is in real units (glTF/GLB in meters, OBJ/PLY in mm). "
+             "Every COLMAP model of a side must fit the ring, and both sides "
+             "must scale, or the scan stays unscaled; a failure never stops "
+             "the run, it only logs a warning. The ring: white top face (the "
+             "rest black) on the black felt, fixed so it turns with the "
+             "tablet. It needn't be fully in frame. Results are in each "
+             "side's colmap_<side>/scale.json, with debug photos in "
+             "colmap_<side>/scale/debug/.")),
+    _S("scale_ring_inner_var", FLOAT, 200.0, _SC, "Reference ring", "Inner diameter (mm)",
+       min=10, max=1000, step=0.1),
+    _S("scale_ring_outer_var", FLOAT, 216.0, _SC, "Reference ring", "Outer diameter (mm)",
+       min=10, max=1000, step=0.1,
+       help=("Defaults are the design sizes. If you measure the ring, enter the "
+             "measured values: circumference with a tape / pi, or across with a "
+             "ruler, in a few directions, averaged. Any error here scales every "
+             "scan by the same amount.")),
+    _S("scale_ring_width_var", FLOAT, 0.0, _SC, "Reference ring", "Band width (mm)",
+       min=0, max=100, step=0.01, hint="(caliper-measured; 0 = not measured)",
+       help=("Optional caliper measurement of the band, (outer - inner) / 2. "
+             "Only used to check the fit found the ring's real edges, not for "
+             "the scale itself.")),
 ]
 
 BY_KEY: dict[str, Setting] = {s.key: s for s in REGISTRY}
 assert len(BY_KEY) == len(REGISTRY), "duplicate setting key"
 
-TABS = ["Inputs", "COLMAP", "Reconstruct", "Alignment"]
+TABS = ["Inputs", "COLMAP", "Reconstruct", "Alignment", "Scale"]
 
 # Save order of app_defaults.json: exactly the Tk GUI's _PERSISTED_VARS.
 PERSISTED_KEYS = [
@@ -370,6 +398,7 @@ PERSISTED_KEYS = [
     "align_seam_var", "align_seam_mode_var", "align_seam_tau_var",
     "align_seam_window_var", "align_seam_minc_var", "align_seam_passes_var",
     "align_seam_minconf_var",
+    "scale_ring_var", "scale_ring_inner_var", "scale_ring_outer_var", "scale_ring_width_var",
 ]
 assert set(PERSISTED_KEYS) == {s.key for s in REGISTRY if s.persisted}
 

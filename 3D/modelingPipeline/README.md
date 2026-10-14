@@ -142,7 +142,9 @@ Mirrors the `app.py` module docstring:
 
 1. **Background removal** — `process_photos.py`
 2. **COLMAP MVS** — `run.sh` (once per side; `FIPMESH_SKIP_RECON=1` to reuse an
-   existing reconstruction), which calls `src/main.sh` → `src/run_colmap_mvs.py`
+   existing reconstruction), which calls `src/main.sh` → `src/run_colmap_mvs.py`.
+   With the Scale tab on, each side is scaled to millimeters right after
+   `colmap mapper` (`scale/`; see [Absolute scale](#absolute-scale-reference-ring))
 3. **FPFH alignment** — `alignment/run.py` → `output/aligned_cloud/merged_fpfh.ply`
 4. **Mesh reconstruction** — `src/reconstruct_mesh.py` → `output/recon/` and
    `output/model.gltf` (plus `output/model_simplified.glb` and, if the Inputs
@@ -162,10 +164,13 @@ output folder:
   `duration_s`, result (`done`/`failed`/`stopped`), the time each progress step
   was reached, and output sizes (processed images, point counts). It is
   rewritten after each stage, so a crash keeps the stages that finished.
+  With the Scale tab on, Stage 2's entry also keeps each side's scale result,
+  including the ring radii in COLMAP's own units, so a scan can be rescaled
+  exactly later if the ring is measured better.
 
 ## GUI reference
 
-`app.py` has four settings tabs (Inputs, COLMAP, Reconstruct, Alignment)
+`app.py` has five settings tabs (Inputs, COLMAP, Reconstruct, Alignment, Scale)
 plus the stage sidebar that walks the four stages in order and streams live
 output to the log pane. Settings persist between runs in `app_defaults.json`
 (delete it to reset to the values below). Where a field has a longer
@@ -406,6 +411,75 @@ set on the Inputs tab).
   (e.g. after manually editing a cloud). Leave blank to use the normal
   pipeline outputs.
 
+### Scale tab
+
+- **Scale to millimeters with the reference ring** (default off) — see
+  [Absolute scale](#absolute-scale-reference-ring) below.
+- **Inner / Outer diameter (mm)** — the ring's size; defaults 200 / 216 (the
+  design). Enter measured values if you have them.
+- **Band width (mm)** (0 = not measured) — a caliper measurement of
+  the band, (outer − inner) / 2. Only checks the fit; it doesn't set the scale.
+
+## Absolute scale (reference ring)
+
+COLMAP reconstructs each side at its own arbitrary scale, and Stage 3's
+alignment is rigid, so it can't fix a size difference between the sides. A
+ring of known size fixed to the turntable fixes both: Stage 2 finds the ring
+in each side's **raw** photos and scales that side to millimeters before the
+dense steps. The final `model.gltf` / `model_simplified.glb` are then in
+meters (the glTF unit) and OBJ/PLY in millimeters.
+
+**The ring.** 200 mm inner / 216 mm outer diameter, 1 mm tall. Print it black
+and switch to white filament for the top 2–3 layers, so only the top face is
+white: white side walls show up as a second outline about 1 mm lower and bias
+the fit by around 1%. Fix it to the turntable (it turns with the tablet),
+roughly centered, on the black felt. The tablet must sit inside it. It doesn't
+need to be fully in frame; frame the tablet as usual.
+
+**How it works** (`scale/ring.py`). The turntable axis comes from the camera
+positions COLMAP solved (each camera circles it). A coarse search finds the
+bright band in a few downscaled photos, then the ring's inner and outer edges
+are found to sub-pixel accuracy in the full-size photos (skipping the tablet,
+using Stage 1's mask) and one 3D circle (center, tilt, both radii) is fitted
+to all of them at once. mm per model unit = the centerline radius in mm / the
+fitted centerline radius. On synthetic scans it recovers the scale to within
+about 0.02%; in practice the ring's measured size limits the accuracy.
+
+**When it doesn't scale.** The run never fails because of the ring; the side
+just stays unscaled with a warning in the log. A side is left unscaled if
+the ring isn't found, the inner and outer edges disagree by over 1%, the
+cameras disagree by over 1%, the band width is more than 25% off, or the
+uncertainty is over 0.5%. If COLMAP split a side into several models, every
+model must fit the ring or none is scaled. If one side scales and the other
+doesn't, the scaled side is reverted so both still match. A ring more than
+10 mm off the axis or tilted more than 3° only warns. The Stage 2 card shows
+`scaled (mm)` or `unscaled (see log)`, and also warns whenever COLMAP splits
+a side into several models (whether or not scaling is on).
+
+**Outputs.**
+- `colmap_<side>/scale.json`: status, mm per model unit, uncertainty, the
+  ring in the scaled frame, and per model the full fit (raw radii, per-camera
+  scales, edge counts, warnings).
+- `colmap_<side>/scale/debug/`: photos with the fitted ring drawn on (green
+  inner, red outer) and the edges used (yellow). Check these on a first run.
+- `colmap_<side>/sparse_unscaled/`: the sparse models before scaling.
+- `scale.json` in the session folder: the units of `model.gltf` and each
+  side's result.
+
+Stage 4 also removes any points on the ring or on the turntable outside it
+(in case background removal kept the ring), and logs the mesh size in mm.
+
+**Testing the ring on an existing scan**, without rerunning COLMAP:
+
+```bash
+python3 -m scale.apply fit --workspace <session>/colmap_side1 --raw <scan>/side1 \
+    --processed <session>/processed/side1 [--inner-mm 200 --outer-mm 216]
+```
+
+It prints the scale and writes `colmap_side1/scale/fit_report.json` and the
+debug photos; nothing else changes. `python3 -m scale.apply unscale
+<workspace>` undoes a side's scaling.
+
 ## Structure
 
 ```
@@ -424,6 +498,7 @@ src/run_colmap_mvs.py   COLMAP MVS stage
 src/reconstruct_mesh.py Open3D Poisson meshing stage
 src/artifact_info.py    Writes info.txt (website artifact metadata); also runnable standalone
 alignment/              FPFH point-cloud alignment (align.py, run.py)
+scale/                  Absolute scale from the reference ring (ring.py fit, apply.py Stage 2 hook)
 viewer.py               Local model viewer
 requirements.txt        Python dependencies
 build_colmap.sh         Helper to build CUDA COLMAP into ./colmap_local

@@ -110,6 +110,7 @@ def test_venv_python(monkeypatch, tmp_path):
     repo_venv.touch()
     monkeypatch.setattr(platform, "SCRIPT_DIR", tmp_path)
     monkeypatch.setattr(platform.sys, "executable", "/usr/bin/python3")
+    monkeypatch.setattr(platform, "running_on_windows", lambda: False)
     # The repo's venv wins over the current interpreter, even an activated
     # venv, unless FIPMESH_PYTHON (the Docker image) says otherwise.
     monkeypatch.delenv("FIPMESH_PYTHON", raising=False)

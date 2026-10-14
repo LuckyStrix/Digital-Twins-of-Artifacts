@@ -52,6 +52,8 @@ def test_input_under_unreadable_folder_does_not_crash(tmp_path):
         locked.chmod(0o755)
 
 
+@pytest.mark.skipif(sys.platform == "win32",
+                    reason="Windows expands ~user to a sibling of the home folder")
 def test_picker_unknown_user_home_does_not_crash(tmp_path):
     async def body(app, pilot):
         app.browse("output_var")

@@ -237,6 +237,7 @@ from pipeline.runner import PipelineRunner  # noqa: E402
 STAGE_OUTPUT = {
     "process_photos.py": ["Processing 2 images", "[1/2] a.jpg", "[2/2] b.jpg", "[done]"],
     "run.sh": ["[step] colmap feature_extractor", "[step] colmap mapper", "dense cloud output: fused.ply"],
+    "run_stage2.py": ["[step] colmap feature_extractor", "[step] colmap mapper", "dense cloud output: fused.ply"],
     "run.py": ["=== fpfh ===", "RANSAC fitness=0.8", "Saved merged cloud"],
     "reconstruct_mesh.py": ["[step] input", "[step] poisson reconstruction", "gltf output: x.gltf"],
 }
@@ -266,7 +267,7 @@ class FakeRunner(PipelineRunner):
         if script == "process_photos.py":
             Path(arg("--output"), "side1").mkdir(parents=True, exist_ok=True)
             Path(arg("--output"), "side1", "a.jpg").write_bytes(b"x")
-        elif script == "run.sh":
+        elif script in ("run.sh", "run_stage2.py"):
             out = Path(SCRIPT_DIR, arg("-o"))
             out.mkdir(parents=True, exist_ok=True)
             (out / "fused.ply").write_bytes(b"ply")

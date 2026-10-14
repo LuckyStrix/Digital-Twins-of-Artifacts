@@ -288,10 +288,10 @@ class PipelineRunner:
 
     def stop(self) -> None:
         self._stop_req = True
+        self.log("[pipeline] stopped by user")
         proc = self._proc
         if proc:
             self._terminate(proc)
-        self.log("[pipeline] stopped by user")
 
     def execute_all(self) -> bool:
         """Run stages 1-4 in order on the calling thread; stop at a failure."""

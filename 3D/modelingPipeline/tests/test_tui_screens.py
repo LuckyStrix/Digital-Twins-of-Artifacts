@@ -39,7 +39,8 @@ def test_browse_input_with_path_box(tmp_path, two_side_scan, no_wsl):
         await pilot.pause()
         assert isinstance(app.screen, PathPicker)
         locs = app.screen.query_one("#locations")
-        assert [str(locs.get_option_at_index(i).prompt) for i in range(2)] == ["Home", "/"]
+        second = "C:" if sys.platform == "win32" else "/"     # drive letters on Windows
+        assert [str(locs.get_option_at_index(i).prompt) for i in range(2)] == ["Home", second]
         await submit_path(app, pilot, str(two_side_scan))
         await pilot.pause(0.7)
         assert not isinstance(app.screen, PathPicker)

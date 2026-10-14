@@ -257,3 +257,12 @@ def test_to_windows_path_noop_off_wsl(windows, monkeypatch, tmp_path):
     monkeypatch.delenv("WSL_DISTRO_NAME", raising=False)
     monkeypatch.delenv("WSL_INTEROP", raising=False)
     assert plat.to_windows_path(tmp_path) == str(tmp_path)
+
+
+def test_windows_paths_are_native_on_windows(windows, monkeypatch):
+    # Off Windows, D:\scans waits for conversion; on Windows it's usable as is,
+    # so the input folder change (output default, side detection) runs at once.
+    monkeypatch.delenv("WSL_DISTRO_NAME", raising=False)
+    monkeypatch.delenv("WSL_INTEROP", raising=False)
+    assert not plat.needs_normalising("D:\\scans")
+    assert plat.needs_normalising('"D:\\scans"')

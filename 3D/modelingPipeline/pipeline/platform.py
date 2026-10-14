@@ -76,8 +76,9 @@ def unquote(p: str) -> str:
 
 
 def needs_normalising(p: str) -> bool:
-    """A typed path that to_posix_path() would change (quoted or Windows)."""
-    return p.strip() != unquote(p) or looks_like_windows_path(p)
+    """A typed path that to_posix_path() would change (quoted, or Windows
+    outside native Windows, where D:\\scans is already a usable path)."""
+    return p.strip() != unquote(p) or (looks_like_windows_path(p) and not running_on_windows())
 
 
 def looks_like_windows_path(p: str) -> bool:

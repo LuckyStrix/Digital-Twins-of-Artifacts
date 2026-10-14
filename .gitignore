@@ -33,3 +33,6 @@ __pycache__/
 
 # 3D: phone-capture hub output
 3D/captureApp/captures/
+
+# Local planning notes (not committed)
+ABSOLUTE_SCALE_PLAN.md

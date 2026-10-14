@@ -68,6 +68,12 @@ Any drive works for input and output, including `D:\` and network shares.
 venv\Scripts\python check_setup.py
 ```
 
+To run the tests as well:
+
+```powershell
+venv\Scripts\python -m pytest -q
+```
+
 ## Troubleshooting
 
 | Symptom | Fix |

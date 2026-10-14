@@ -7,6 +7,7 @@ data/
 3D/modelingPipeline/colmap_local
 # 3D: native-Windows setup (see 3D/WINDOWS_SETUP.md): venv, unzipped COLMAP release, exiftool
 3D/modelingPipeline/venv/
+3D/modelingPipeline/.venv/
 3D/modelingPipeline/colmap/
 3D/modelingPipeline/tools/
 3D/modelingPipeline/colmap-src/

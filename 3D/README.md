@@ -23,7 +23,9 @@ the rig): multi-camera capture → COLMAP reconstruction → meshed model. See t
   dense stereo, run once per side. `run.sh` resolves the COLMAP binary in this
   order: the `FIPMESH_COLMAP_BIN` env var → `./colmap_local` → `colmap` on
   PATH — so if no CUDA build is in place it silently falls back to a CPU-only
-  `apt` COLMAP, which still works but is far slower. `FIPMESH_SKIP_RECON=1`
+  `apt` COLMAP, which still works but is far slower. On native Windows,
+  `src/run_stage2.py` (a Python port of `run.sh`) does this step and also
+  checks `colmap\COLMAP.bat`; see [`WINDOWS_SETUP.md`](WINDOWS_SETUP.md). `FIPMESH_SKIP_RECON=1`
   reruns later stages without repeating an already-finished reconstruction.
 - **Stage 3** aligns the two sides' point clouds with FPFH feature matching +
   RANSAC, refined with ICP, into one merged cloud.

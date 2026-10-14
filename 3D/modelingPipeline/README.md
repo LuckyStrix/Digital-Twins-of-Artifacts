@@ -3,7 +3,8 @@
 The reconstruction half of the `3D/` pipeline: from captured photos to a meshed
 model, driven by a terminal UI (`app.py`, built with [Textual](https://textual.textualize.io/)).
 It runs in any terminal: Windows Terminal (native or under WSL), a Linux
-desktop, a Docker container, or over SSH. See the [repo setup guide](../../SETUP.md) for first-time install.
+desktop, a Docker container, or over SSH. See the
+[repo setup guide](../../SETUP.md) for first-time install.
 
 ## Prerequisites
 

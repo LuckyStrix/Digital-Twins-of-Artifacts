@@ -79,15 +79,17 @@ it.
 ## WSL2 (for `3D/`)
 
 This is the manual alternative to the recommended setups in the
-[matrix](#prerequisites-matrix) above. Here the `3D/` tablet pipeline runs under
-**WSL2 with an Ubuntu distro** (it uses CUDA-on-WSL for GPU-accelerated COLMAP). The reconstruction app runs in the
-terminal, so it doesn't need WSLg; WSLg is only used by the optional 3D viewer
-when no Windows Python with `open3d` is installed.
+[matrix](#prerequisites-matrix) above. Here the `3D/` tablet pipeline runs
+under **WSL2 with an Ubuntu distro** (it uses CUDA-on-WSL for GPU-accelerated
+COLMAP). The reconstruction app runs in the terminal, so it doesn't need
+WSLg; WSLg is only used by the optional 3D viewer when no Windows Python with
+`open3d` is installed.
 
-> **Only reconstructing, not capturing?** You can skip this section: use the
-> native install on Windows ([`3D/WINDOWS_SETUP.md`](3D/WINDOWS_SETUP.md)) or
-> Docker on Linux ([`3D/modelingPipeline/DOCKER.md`](3D/modelingPipeline/DOCKER.md)).
-> Neither needs the CUDA toolkit, cuDNN or COLMAP build described here.
+> **You can usually skip this section.** The native Windows install
+> ([`3D/WINDOWS_SETUP.md`](3D/WINDOWS_SETUP.md)) and Docker on Linux
+> ([`3D/modelingPipeline/DOCKER.md`](3D/modelingPipeline/DOCKER.md)) are
+> simpler, and neither needs the CUDA toolkit, cuDNN or COLMAP build
+> described here.
 
 1. Install WSL2 + **Ubuntu 24.04 LTS** from an **elevated PowerShell** on Windows:
 

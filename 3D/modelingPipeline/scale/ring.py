@@ -839,9 +839,9 @@ def save_debug(out: Path, views: list[View], grays, E: Edges, c, n, r_in, r_out)
             P, _ = circle_points(c, n, r, theta)
             uv, z = project(v.camera, v.image, P)
             a = ((uv / v.f - 0.5) * k)[z > 0]
-            cv2.polylines(img, [np.round(a).astype(np.int32).reshape(-1, 1, 2)], True, col, 1,
+            cv2.polylines(img, [np.round(a).astype(np.int32).reshape(-1, 1, 2)], True, col, 2,
                           cv2.LINE_AA)
         for p in E.px[E.view == vi][::3]:
-            cv2.circle(img, (int(round(p[0] * k)), int(round(p[1] * k))), 1, (0, 220, 255), -1)
+            cv2.circle(img, (int(round(p[0] * k)), int(round(p[1] * k))), 2, (0, 220, 255), -1)
         name = v.image.name.replace("/", "_").rsplit(".", 1)[0]
         cv2.imwrite(str(out / f"{name}.jpg"), img, [cv2.IMWRITE_JPEG_QUALITY, 85])

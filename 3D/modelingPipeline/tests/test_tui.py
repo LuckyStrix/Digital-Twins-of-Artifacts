@@ -237,6 +237,7 @@ from pipeline.runner import PipelineRunner  # noqa: E402
 STAGE_OUTPUT = {
     "process_photos.py": ["Processing 2 images", "[1/2] a.jpg", "[2/2] b.jpg", "[done]"],
     "run.sh": ["[step] colmap feature_extractor", "[step] colmap mapper", "dense cloud output: fused.ply"],
+    "run_stage2.py": ["[step] colmap feature_extractor", "[step] colmap mapper", "dense cloud output: fused.ply"],
     "run.py": ["=== fpfh ===", "RANSAC fitness=0.8", "Saved merged cloud"],
     "reconstruct_mesh.py": ["[step] input", "[step] poisson reconstruction", "gltf output: x.gltf"],
 }
@@ -266,7 +267,7 @@ class FakeRunner(PipelineRunner):
         if script == "process_photos.py":
             Path(arg("--output"), "side1").mkdir(parents=True, exist_ok=True)
             Path(arg("--output"), "side1", "a.jpg").write_bytes(b"x")
-        elif script == "run.sh":
+        elif script in ("run.sh", "run_stage2.py"):
             out = Path(SCRIPT_DIR, arg("-o"))
             out.mkdir(parents=True, exist_ok=True)
             (out / "fused.ply").write_bytes(b"ply")
@@ -307,10 +308,12 @@ def test_run_all_through_four_stages(tmp_path, two_side_scan, fake_runner):
         assert [c.status for c in app.cards] == ["Done"] * 4
         assert not any(app.query_one(f"#view-{i}").disabled for i in range(4))
         assert app.query_one("#stop").disabled and not app.query_one("#run-all").disabled
-        text = log_text(app)
-        assert "── $ " in text and "process_photos.py" in text
-        assert "[stage 3] Aligning fused.ply + fused.ply" in text
-        assert "dense cloud output: fused.ply" in text
+        # Long commands (Windows paths) wrap, even mid-word, so compare
+        # without whitespace.
+        text = "".join(log_text(app).split())
+        assert "──$" in text and "process_photos.py" in text
+        assert "[stage3]Aligningfused.ply+fused.ply" in text
+        assert "densecloudoutput:fused.ply" in text
         assert len(fake_runner.commands) == 5           # stage 2 runs once per side
         assert any("finished" in n.message for n in app._notifications)
     run(make_app(tmp_path, runner_factory=fake_runner), body)

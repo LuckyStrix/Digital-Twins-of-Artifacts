@@ -102,3 +102,21 @@ def test_viewer_env_workarounds(monkeypatch):
     assert "WAYLAND_DISPLAY" not in env
     assert env["GLFW_PLATFORM"] == "x11"
     assert env["LIBGL_ALWAYS_SOFTWARE"] == "1"
+
+
+def test_venv_python(monkeypatch, tmp_path):
+    repo_venv = tmp_path / "venv" / "bin" / "python3"
+    repo_venv.parent.mkdir(parents=True)
+    repo_venv.touch()
+    monkeypatch.setattr(platform, "SCRIPT_DIR", tmp_path)
+    monkeypatch.setattr(platform.sys, "executable", "/usr/bin/python3")
+    monkeypatch.setattr(platform, "running_on_windows", lambda: False)
+    # The repo's venv wins over the current interpreter, even an activated
+    # venv, unless FIPMESH_PYTHON (the Docker image) says otherwise.
+    monkeypatch.delenv("FIPMESH_PYTHON", raising=False)
+    assert platform.venv_python() == str(repo_venv)
+    monkeypatch.setenv("FIPMESH_PYTHON", "/opt/venv/bin/python3")
+    assert platform.venv_python() == "/opt/venv/bin/python3"
+    monkeypatch.delenv("FIPMESH_PYTHON")
+    repo_venv.unlink()
+    assert platform.venv_python() == "/usr/bin/python3"

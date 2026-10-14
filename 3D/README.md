@@ -23,7 +23,9 @@ the rig): multi-camera capture → COLMAP reconstruction → meshed model. See t
   dense stereo, run once per side. `run.sh` resolves the COLMAP binary in this
   order: the `FIPMESH_COLMAP_BIN` env var → `./colmap_local` → `colmap` on
   PATH — so if no CUDA build is in place it silently falls back to a CPU-only
-  `apt` COLMAP, which still works but is far slower. `FIPMESH_SKIP_RECON=1`
+  `apt` COLMAP, which still works but is far slower. On native Windows,
+  `src/run_stage2.py` (a Python port of `run.sh`) does this step and also
+  checks `colmap\COLMAP.bat`; see [`WINDOWS_SETUP.md`](WINDOWS_SETUP.md). `FIPMESH_SKIP_RECON=1`
   reruns later stages without repeating an already-finished reconstruction.
 - **Stage 3** aligns the two sides' point clouds with FPFH feature matching +
   RANSAC, refined with ICP, into one merged cloud.
@@ -37,6 +39,20 @@ the rig): multi-camera capture → COLMAP reconstruction → meshed model. See t
   [Giving WSL more RAM](../SETUP.md#giving-wsl-more-ram--a-bigger-swap-pagefile).
 
 ## Prerequisites
+
+Pick the reconstruction setup for your machine. All of them need an NVIDIA GPU.
+
+| Your machine | Recommended setup | Guide |
+|---|---|---|
+| **Windows** | Native install: one command, no WSL, no admin | [`WINDOWS_SETUP.md`](WINDOWS_SETUP.md) |
+| **Linux** | Docker image with COLMAP, CUDA and the Python packages inside | [`modelingPipeline/DOCKER.md`](modelingPipeline/DOCKER.md) |
+
+Both cover reconstruction only; capture runs natively on the Linux rig machine
+(see [Capture setup](#capture-setup)).
+
+The rest of this section and [Setup](#setup) describe the manual install, for
+WSL2 or a Linux machine without Docker. You don't need it if you followed one
+of the guides above.
 
 - **OS: WSL2 (Ubuntu 24.04 LTS)** — the reconstruction runs under WSL (its UI
   runs in the terminal; the optional 3D viewer uses WSLg or a native Windows
@@ -63,8 +79,9 @@ the rig): multi-camera capture → COLMAP reconstruction → meshed model. See t
   CUDA repo + GPG key first (see [Setup](#setup) below). On a CPU-only machine,
   use `rembg` (no `[gpu]`) instead and skip this.
 - Python 3.9–3.12 and the deps in `modelingPipeline/requirements.txt` (open3d
-  has no prebuilt wheels for 3.13/3.14 yet). Pinned there: `numpy<2.5`,
-  `onnxruntime-gpu<1.27`, and `torch` (required by rembg's birefnet model).
+  has no prebuilt wheels for 3.13/3.14 yet). Pinned there: `numpy<2.5` and
+  `onnxruntime-gpu<1.27`. `torch` isn't needed: rembg 2.x runs its models
+  through onnxruntime.
 
 ## Setup
 
@@ -146,7 +163,7 @@ Arduino over a **serial port**, so on the capture workstation you need:
 > elevated Windows PowerShell (`usbipd list`, then `usbipd attach --wsl --busid
 > <BUSID>` for each camera and the Arduino). If that is fiddly on your rig, run
 > the capture apps on native Linux (or Windows) instead — only the reconstruction
-> stage requires WSL/CUDA.
+> stage requires CUDA.
 
 ## Usage
 
@@ -155,7 +172,10 @@ Arduino over a **serial port**, so on the capture workstation you need:
   rig firmware in `arduinoCode/`.
 - **Reconstruction**: `python3 modelingPipeline/app.py` — see
   [`modelingPipeline/README.md`](modelingPipeline/README.md) for the four-stage
-  pipeline.
+  pipeline. On native Windows: `venv\Scripts\python app.py` from
+  `modelingPipeline\` (see [`WINDOWS_SETUP.md`](WINDOWS_SETUP.md)). In Docker:
+  `docker compose run --rm pipeline` from `modelingPipeline/` (see
+  [`modelingPipeline/DOCKER.md`](modelingPipeline/DOCKER.md)).
 
 ## Structure
 

@@ -39,7 +39,8 @@ def test_browse_input_with_path_box(tmp_path, two_side_scan, no_wsl):
         await pilot.pause()
         assert isinstance(app.screen, PathPicker)
         locs = app.screen.query_one("#locations")
-        assert [str(locs.get_option_at_index(i).prompt) for i in range(2)] == ["Home", "/"]
+        second = "C:" if sys.platform == "win32" else "/"     # drive letters on Windows
+        assert [str(locs.get_option_at_index(i).prompt) for i in range(2)] == ["Home", second]
         await submit_path(app, pilot, str(two_side_scan))
         await pilot.pause(0.7)
         assert not isinstance(app.screen, PathPicker)
@@ -199,6 +200,7 @@ def test_native_dialog_cancel_keeps_terminal_picker(tmp_path, monkeypatch):
 def test_path_field_converts_windows_path_on_submit(tmp_path, monkeypatch):
     win = "D:" + "\\" + "scans"
     monkeypatch.setattr(plat, "to_posix_path", lambda p: "/mnt/d/scans" if p == win else p)
+    monkeypatch.setattr(plat, "running_on_windows", lambda: False)   # WSL: D:\ is converted
 
     async def body(app, pilot):
         app.query_one("#tabs").active = "tab-inputs"

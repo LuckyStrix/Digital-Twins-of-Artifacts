@@ -149,3 +149,18 @@ def test_unwritable_session_warns_and_runs(s, tmp_path, fast_env):
     r.wait(10)
     assert any("can't write the run log" in m for m in r.info())
     assert r.states == [(1, "running"), (1, "failed")]    # the stage still ran
+
+
+@pytest.mark.parametrize("status, expected", [
+    ("", "abc1234567"),                           # clean
+    (" M run.sh", "abc1234567-dirty"),
+    (None, ""),                                   # status failed / timed out
+])
+def test_git_commit_dirty_state(monkeypatch, status, expected):
+    def fake_run_quiet(cmd, cwd=None, timeout=10, env=None):
+        if "describe" in cmd:
+            return "abc1234567"
+        assert env == {"GIT_OPTIONAL_LOCKS": "0"}   # never rewrites .git/index
+        return status
+    monkeypatch.setattr(runlog, "_run_quiet", fake_run_quiet)
+    assert runlog._git_commit() == expected

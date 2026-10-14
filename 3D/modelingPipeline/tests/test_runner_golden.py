@@ -5,6 +5,7 @@ for the same settings, and cross-checked against it with randomised settings.
 """
 
 import os
+import sys
 from pathlib import Path
 
 import pytest
@@ -136,10 +137,13 @@ GOLDEN_COLMAP_ENV_DEFAULTS = {
 
 
 def fipmesh(env: dict) -> dict:
-    return {k: v for k, v in env.items() if k.startswith("FIPMESH_")}
+    # FIPMESH_PYTHON comes from the Docker image, not the runner (conftest
+    # keeps it so PY above stays right).
+    return {k: v for k, v in env.items() if k.startswith("FIPMESH_") and k != "FIPMESH_PYTHON"}
 
 
-def test_stage2_two_sides_defaults(s, tmp_path):
+def test_stage2_two_sides_defaults(s, tmp_path, monkeypatch):
+    monkeypatch.setattr(sys, "platform", "linux")   # run.sh; Windows: test_windows_native.py
     out = tmp_path / "out"
     (out / "processed_masks" / "side1").mkdir(parents=True)   # side2 has no masks
     r = RecordingRunner(s, output={
@@ -273,7 +277,8 @@ def test_stage2_side1_failure_skips_side2(s):
     assert len(r.calls) == 1
 
 
-def test_stage2_flat(s, tmp_path):
+def test_stage2_flat(s, tmp_path, monkeypatch):
+    monkeypatch.setattr(sys, "platform", "linux")   # run.sh; Windows: test_windows_native.py
     s["side1_var"] = s["side2_var"] = ""
     out = tmp_path / "out"
     (out / "processed_masks").mkdir(parents=True)

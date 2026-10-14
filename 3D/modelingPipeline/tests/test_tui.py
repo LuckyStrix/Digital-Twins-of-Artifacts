@@ -308,10 +308,12 @@ def test_run_all_through_four_stages(tmp_path, two_side_scan, fake_runner):
         assert [c.status for c in app.cards] == ["Done"] * 4
         assert not any(app.query_one(f"#view-{i}").disabled for i in range(4))
         assert app.query_one("#stop").disabled and not app.query_one("#run-all").disabled
-        text = log_text(app)
-        assert "── $ " in text and "process_photos.py" in text
-        assert "[stage 3] Aligning fused.ply + fused.ply" in text
-        assert "dense cloud output: fused.ply" in text
+        # Long commands (Windows paths) wrap, even mid-word, so compare
+        # without whitespace.
+        text = "".join(log_text(app).split())
+        assert "──$" in text and "process_photos.py" in text
+        assert "[stage3]Aligningfused.ply+fused.ply" in text
+        assert "densecloudoutput:fused.ply" in text
         assert len(fake_runner.commands) == 5           # stage 2 runs once per side
         assert any("finished" in n.message for n in app._notifications)
     run(make_app(tmp_path, runner_factory=fake_runner), body)

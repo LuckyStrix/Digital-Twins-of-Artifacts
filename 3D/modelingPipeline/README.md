@@ -480,6 +480,19 @@ It prints the scale and writes `colmap_side1/scale/fit_report.json` and the
 debug photos; nothing else changes. `python3 -m scale.apply unscale
 <workspace>` undoes a side's scaling.
 
+**Scaling a scan that already ran with the Scale tab off**, without rerunning
+COLMAP:
+
+```bash
+python3 -m scale.apply session --session <session> --scan <scan> [--fit-only]
+```
+
+It fits the ring on every side and, only if all sides fit, rescales each
+side's sparse model, `fused.ply`, dense sparse model and
+`camera_centers.json` to millimeters. `--fit-only` reports without changing
+anything. Then turn on the Scale tab and press Run Stage on Stages 3 and 4.
+A side COLMAP split into several models can't be scaled this way.
+
 ## Structure
 
 ```

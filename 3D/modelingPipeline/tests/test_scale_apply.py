@@ -140,3 +140,62 @@ def test_cli_fit_only(tmp_path, scene, capsys):
     assert rep["status"] == "fit_only"
     assert (models[0] / "images.txt").read_text() == (scene["model"] / "images.txt").read_text()
     assert not (ws / "scale.json").exists()
+
+
+def finished_session(tmp_path, scene, sides=("side1", "side2")):
+    """A session whose Stage 2 finished with the Scale tab off."""
+    scan, session = tmp_path / "scan", tmp_path / "scan_recon"
+    hdr = b"ply\nformat binary_little_endian 1.0\nelement vertex 2\nproperty float x\n" \
+          b"property float y\nproperty float z\nend_header\n"
+    for side in sides:
+        shutil.copytree(scene["raw"], scan / side)
+        shutil.copytree(scene["processed"], session / "processed" / side)
+        ws = session / f"colmap_{side}"
+        shutil.copytree(scene["model"], ws / "sparse" / "0")
+        (ws / "fused.ply").write_bytes(hdr + np.array([[1, 2, 3], [4, 5, 6]], "<f4").tobytes())
+        (ws / "camera_centers.json").write_text("[[1, 2, 3]]")
+        sa.write_report(ws, {"status": "disabled", "units": "model"})
+    return session, scan, hdr
+
+
+def test_scale_finished_session(tmp_path, scene):
+    session, scan, hdr = finished_session(tmp_path, scene)
+    logs = []
+    res = sa.scale_finished_session("colmap", session, scan, sa.RingSpec(), log=logs.append)
+    assert res["status"] == "scaled", res["reason"]
+    for side in ("side1", "side2"):
+        ws = session / f"colmap_{side}"
+        rep = json.loads((ws / "scale.json").read_text())
+        s = rep["scale_mm_per_unit"]
+        assert rep["status"] == "scaled" and rep["scaled_after_stage2"]
+        assert abs(s / scene["mm_per_unit"] - 1) < 5e-4
+        pts = np.frombuffer((ws / "fused.ply").read_bytes()[len(hdr):], "<f4").reshape(-1, 3)
+        assert np.allclose(pts, s * np.array([[1, 2, 3], [4, 5, 6]]), rtol=1e-6)
+        assert np.allclose(json.loads((ws / "camera_centers.json").read_text()), [[s, 2 * s, 3 * s]])
+        assert (ws / "sparse_unscaled" / "0" / "images.txt").is_file()
+    # a second run refuses rather than scaling twice
+    again = sa.scale_finished_session("colmap", session, scan, sa.RingSpec(), log=logs.append)
+    assert again["status"] == "unscaled" and "already scaled" in again["reason"]
+    # and Stage 2's revert still undoes it
+    assert sa.unscale_workspace(session / "colmap_side1", log=lambda *a: None)
+    pts = np.frombuffer((session / "colmap_side1" / "fused.ply").read_bytes()[len(hdr):], "<f4")
+    assert np.allclose(pts.reshape(-1, 3), [[1, 2, 3], [4, 5, 6]], rtol=1e-5)
+
+
+def test_finished_session_all_or_nothing(tmp_path, scene):
+    session, scan, hdr = finished_session(tmp_path, scene)
+    shutil.rmtree(scan / "side2")
+    before = (session / "colmap_side1" / "fused.ply").read_bytes()
+    res = sa.scale_finished_session("colmap", session, scan, sa.RingSpec(), log=lambda *a: None)
+    assert res["status"] == "unscaled" and "side2: raw photo folder not found" in res["reason"]
+    assert (session / "colmap_side1" / "fused.ply").read_bytes() == before
+    assert json.loads((session / "colmap_side1" / "scale.json").read_text())["status"] == "disabled"
+
+
+def test_finished_session_fit_only_cli(tmp_path, scene, capsys):
+    session, scan, hdr = finished_session(tmp_path, scene, sides=("side1",))
+    before = (session / "colmap_side1" / "fused.ply").read_bytes()
+    rc = sa.main(["session", "--session", str(session), "--scan", str(scan), "--fit-only",
+                  "--colmap-bin", "colmap"])
+    assert rc == 0 and '"fit_only"' in capsys.readouterr().out
+    assert (session / "colmap_side1" / "fused.ply").read_bytes() == before

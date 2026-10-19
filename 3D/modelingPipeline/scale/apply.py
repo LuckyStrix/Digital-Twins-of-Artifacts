@@ -17,6 +17,11 @@ Command line (for testing the ring on an existing COLMAP workspace):
         --raw data/x/side1 [--processed data/x_recon/processed/side1] \\
         [--inner-mm 200 --outer-mm 216] [--apply]
     python -m scale.apply unscale <workspace>
+
+Scaling a session that already finished Stage 2 with the Scale tab off
+(rescales the sparse models and the dense outputs; then re-run Stages 3-4):
+
+    python -m scale.apply session --session data/x_recon --scan data/x [--fit-only]
 """
 
 from __future__ import annotations
@@ -124,17 +129,43 @@ def scale_models(colmap_bin: str, model_dirs: list[Path], workspace: Path, raw_r
     if not apply:
         report["status"] = "fit_only"
         return report
+    _rescale_sparse(colmap_bin, model_dirs, [f.scale for f in fits], workspace)
+    report.update(status="scaled", units="mm")
+    return report
+
+
+def _rescale_sparse(colmap_bin: str, model_dirs: list[Path], scales: list[float],
+                    workspace: Path) -> None:
+    """Rescale each sparse model from the TXT copy ``scale_models`` made,
+    keeping the originals in ``<workspace>/sparse_unscaled/``."""
+    workspace = Path(workspace)
     backup = workspace / UNSCALED_DIR
-    for i, (md, fit) in enumerate(zip(model_dirs, fits)):
+    for i, (md, s) in enumerate(zip(model_dirs, scales)):
         dst = backup / md.name
         if dst.exists():
             shutil.rmtree(dst)
         shutil.copytree(md, dst)
-        txt = work / f"model_{i}_txt"
-        rescale_model_txt(txt, fit.scale)
+        txt = workspace / "scale" / f"model_{i}_txt"
+        rescale_model_txt(txt, s)
         _convert(colmap_bin, txt, md, "BIN")
-    report.update(status="scaled", units="mm")
-    return report
+
+
+def _rescale_dense(workspace: Path, k: float) -> None:
+    """Multiply the finished outputs Stage 3/4 read by ``k``: the fused
+    clouds, the dense sparse models and camera_centers.json. Depth maps are
+    left alone (nothing after Stage 2 reads them)."""
+    clouds = [workspace / "fused.ply"] + sorted((workspace / "dense").glob("fused_component_*.ply"))
+    for p in clouds:
+        if p.is_file() and p.stat().st_size > 0:
+            rescale_ply(p, k)
+    for sp in [workspace / "dense" / "sparse"] + sorted((workspace / "dense").glob("component_*/sparse")):
+        if (sp / "images.bin").is_file():
+            rescale_images_bin(sp / "images.bin", k)
+        if (sp / "points3D.bin").is_file():
+            rescale_points3d_bin(sp / "points3D.bin", k)
+    cc = workspace / "camera_centers.json"
+    if cc.is_file():
+        rescale_camera_centers(cc, k)
 
 
 def scale_from_env(colmap_bin: str, model_dirs: list[Path], workspace: Path, log=print) -> dict:
@@ -143,6 +174,7 @@ def scale_from_env(colmap_bin: str, model_dirs: list[Path], workspace: Path, log
     if os.environ.get("FIPMESH_SCALE_RING", "0").strip() != "1":
         report = {"status": "disabled", "units": "model"}
         write_report(workspace, report)
+        log("[scale] off (Scale tab); this side stays in model units")
         return report
     raw = os.environ.get("FIPMESH_SCALE_RAW_IMAGES", "").strip()
     proc = os.environ.get("FIPMESH_SCALE_PROCESSED_IMAGES", "").strip()
@@ -175,19 +207,7 @@ def unscale_workspace(workspace: Path, log=print) -> bool:
     report = read_report(workspace)
     if not report or report.get("status") != "scaled":
         return False
-    k = 1.0 / float(report["scale_mm_per_unit"])
-    clouds = [workspace / "fused.ply"] + sorted((workspace / "dense").glob("fused_component_*.ply"))
-    for p in clouds:
-        if p.is_file() and p.stat().st_size > 0:
-            rescale_ply(p, k)
-    for sp in [workspace / "dense" / "sparse"] + sorted((workspace / "dense").glob("component_*/sparse")):
-        if (sp / "images.bin").is_file():
-            rescale_images_bin(sp / "images.bin", k)
-        if (sp / "points3D.bin").is_file():
-            rescale_points3d_bin(sp / "points3D.bin", k)
-    cc = workspace / "camera_centers.json"
-    if cc.is_file():
-        rescale_camera_centers(cc, k)
+    _rescale_dense(workspace, 1.0 / float(report["scale_mm_per_unit"]))
     backup = workspace / UNSCALED_DIR
     if backup.is_dir():
         for md in backup.iterdir():
@@ -200,6 +220,91 @@ def unscale_workspace(workspace: Path, log=print) -> bool:
     write_report(workspace, report)
     log(f"[scale] reverted {workspace.name} to model units")
     return True
+
+
+def _model_dirs(workspace: Path) -> list[Path]:
+    root = Path(workspace) / "sparse"
+    if not root.is_dir():
+        return []
+    return sorted(p for p in root.iterdir()
+                  if p.is_dir() and not p.name.startswith("_")
+                  and ((p / "images.bin").exists() or (p / "images.txt").exists()))
+
+
+def session_sides(session: Path, scan: Path) -> list[tuple[str, Path, Path, Path]]:
+    """(label, workspace, raw photos, Stage 1 photos) for each COLMAP side of
+    a session, laid out the way the app writes it."""
+    session, scan = Path(session), Path(scan)
+    out = []
+    for ws in sorted(session.glob("colmap_*")):
+        if not ws.is_dir():
+            continue
+        if ws.name == "colmap_out":                       # flat scan, no sides
+            out.append(("scan", ws, scan, session / "processed"))
+        else:
+            side = ws.name[len("colmap_"):]
+            out.append((side, ws, scan / side, session / "processed" / side))
+    return out
+
+
+def scale_finished_session(colmap_bin: str, session: Path, scan: Path, spec: RingSpec,
+                           apply: bool = True, log=print) -> dict:
+    """Scale a session whose Stage 2 already ran with the Scale tab off, so
+    COLMAP doesn't have to run again. Every side must fit the ring or nothing
+    changes. Afterwards re-run Stages 3 and 4 with the Scale tab on."""
+    sides = session_sides(session, scan)
+    result: dict = {"status": "unscaled", "sides": {}, "reason": ""}
+    if not sides:
+        result["reason"] = f"no colmap_* folders in {session}"
+        return result
+    problems, fitted = [], []
+    for label, ws, raw, proc in sides:
+        prior = read_report(ws) or {}
+        models = _model_dirs(ws)
+        if prior.get("status") == "scaled":
+            problems.append(f"{label}: already scaled")
+        elif not (ws / "fused.ply").is_file():
+            problems.append(f"{label}: no fused.ply (Stage 2 didn't finish)")
+        elif not raw.is_dir():
+            problems.append(f"{label}: raw photo folder not found: {raw}")
+        elif len(models) != 1:
+            problems.append(f"{label}: {len(models)} sparse models; scaling a finished side "
+                            f"needs exactly 1 (re-run Stage 2 with the Scale tab on instead)")
+        else:
+            fitted.append((label, ws, raw, proc, models))
+    if problems:
+        result["reason"] = "; ".join(problems)
+        return result
+
+    reports = {}
+    for label, ws, raw, proc, models in fitted:
+        log(f"[scale] {label}: fitting the ring")
+        rep = scale_models(colmap_bin, models, ws, raw, proc if proc.is_dir() else None,
+                           spec, apply=False, log=log)
+        reports[label] = rep
+        result["sides"][label] = {k: rep.get(k) for k in
+                                  ("status", "scale_mm_per_unit", "sigma_pct", "reason", "warnings")}
+        for w in rep.get("warnings", []):
+            log(f"[scale] {label}: WARNING: {w}")
+    bad = [f"{l}: {r['reason']}" for l, r in reports.items() if r["status"] != "fit_only"]
+    if bad:
+        result["reason"] = "; ".join(bad)
+        return result
+    if not apply:
+        result["status"] = "fit_only"
+        return result
+
+    for label, ws, raw, proc, models in fitted:
+        rep = reports[label]
+        s = float(rep["scale_mm_per_unit"])
+        _rescale_sparse(colmap_bin, models, [s], ws)
+        _rescale_dense(ws, s)
+        rep.update(status="scaled", units="mm", scaled_after_stage2=True)
+        write_report(ws, rep)
+        result["sides"][label]["status"] = "scaled"
+        log(f"[scale] {label}: scaled to millimeters (1 model unit = {s:.6g} mm)")
+    result["status"] = "scaled"
+    return result
 
 
 def _resolve_colmap() -> str:
@@ -231,16 +336,31 @@ def main(argv=None) -> int:
     f.add_argument("--colmap-bin", default="")
     u = sub.add_parser("unscale", help="undo a side's scaling")
     u.add_argument("workspace")
+    se = sub.add_parser("session", help="scale a session whose Stage 2 ran with the Scale tab off")
+    se.add_argument("--session", required=True, help="the output folder (scan_recon)")
+    se.add_argument("--scan", required=True, help="the input folder with the raw photos")
+    se.add_argument("--inner-mm", type=float, default=200.0)
+    se.add_argument("--outer-mm", type=float, default=216.0)
+    se.add_argument("--width-mm", type=float, default=0.0)
+    se.add_argument("--fit-only", action="store_true", help="fit and report, change nothing")
+    se.add_argument("--colmap-bin", default="")
     a = ap.parse_args(argv)
     if a.cmd == "unscale":
         return 0 if unscale_workspace(Path(a.workspace)) else 1
+    if a.cmd == "session":
+        res = scale_finished_session(a.colmap_bin or _resolve_colmap(), Path(a.session),
+                                     Path(a.scan), RingSpec(a.inner_mm, a.outer_mm, a.width_mm),
+                                     apply=not a.fit_only)
+        print(json.dumps(res, indent=1))
+        if res["status"] == "scaled":
+            print("done: turn on the Scale tab, then Run Stage on Stage 3 and Stage 4")
+        elif res["status"] != "fit_only":
+            print(f"nothing changed: {res['reason']}", file=sys.stderr)
+        return 0 if res["status"] in ("scaled", "fit_only") else 2
     ws = Path(a.workspace)
-    from_root = ws / "sparse"
-    models = sorted(p for p in from_root.iterdir()
-                    if p.is_dir() and not p.name.startswith("_")
-                    and ((p / "images.bin").exists() or (p / "images.txt").exists()))
+    models = _model_dirs(ws)
     if not models:
-        print(f"no sparse models under {from_root}", file=sys.stderr)
+        print(f"no sparse models under {ws / 'sparse'}", file=sys.stderr)
         return 1
     report = scale_models(a.colmap_bin or _resolve_colmap(), models, ws, Path(a.raw),
                           Path(a.processed) if a.processed else None,

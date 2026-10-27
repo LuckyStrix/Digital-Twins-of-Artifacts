@@ -1,3 +1,0 @@
-Name: Paper
-Type: papyrus
-Description: A piece of paper

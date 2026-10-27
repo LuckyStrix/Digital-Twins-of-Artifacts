@@ -1,3 +1,0 @@
-Name: Bubble Wrap
-Type: papyrus
-Description: Bubble Wrap

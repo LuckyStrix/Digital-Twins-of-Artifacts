@@ -1,3 +1,0 @@
-Name: Wax Seal 1
-Type: papyrus
-Description: A wax seal provided to us for testing

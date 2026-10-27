@@ -1,3 +1,0 @@
-Name: Foil
-Type: papyrus
-Description: A piece of foil

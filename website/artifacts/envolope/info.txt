@@ -1,3 +1,0 @@
-Name: Envelope
-Type: papyrus
-Description: An envelope

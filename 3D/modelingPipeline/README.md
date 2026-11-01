@@ -190,7 +190,10 @@ to one artifact, unlike the rest of this tab) — **Name**, **Type**,
 `info.txt` next to `model.gltf`/`model_simplified.glb` in the website's
 artifact-metadata format (see
 [`../../website/artifacts/README.md`](../../website/artifacts/README.md)),
-ready to drop straight into `website/artifacts/<id>/`. Link and Link Label are
+ready to drop straight into `website/artifacts/<id>/` (the full `model.gltf`
+is usually far over the website's 25 MiB per-file limit: use
+`model_simplified.glb` or compress it first, see
+[`../../website/README.md`](../../website/README.md#file-size-limit-compress-models)). Link and Link Label are
 each independently optional. Leave Name blank to skip writing it. Can also be
 generated standalone, without the GUI: `python3 -m src.artifact_info
 --output-dir ... --name ... --type ... --description ... [--link ...]

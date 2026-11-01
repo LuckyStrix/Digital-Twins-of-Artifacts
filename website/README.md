@@ -86,30 +86,53 @@ then open `http://localhost:8000/`.
 
 ## Deploying
 
-The site is hosted on Cloudflare (Workers static assets, free tier), set up
-by `wrangler.jsonc` in the repo root. From the repo root:
+Hosted free on Cloudflare (Workers static assets: what `wrangler pages`
+now sets up). `wrangler.jsonc` in the repo root serves this folder;
+`.assetsignore` keeps `tools/` and READMEs off the live site.
+
+### First-time setup (once per Cloudflare account)
+
+1. Create a free account at https://dash.cloudflare.com/sign-up.
+2. Run `npx wrangler@4 login` and approve access in the browser.
+3. Claim the account's `*.workers.dev` subdomain (this repo uses `luckystrix`):
+   Dashboard → Workers & Pages → pick a subdomain. If you don't, the first
+   `wrangler deploy` will ask for one.
+4. Deploy (below). The site appears at
+   `https://<name in wrangler.jsonc>.<subdomain>.workers.dev`. A new
+   subdomain's HTTPS certificate can take a few minutes to start working.
+
+A custom domain can be attached later under the Worker's
+Settings → Domains & Routes.
+
+### Updating the live site
+
+From the repo root:
 
 ```
-python3 website/tools/build_manifest.py   # refresh manifests
-npx wrangler@4 login                      # once per machine
-npx wrangler@4 deploy                     # uploads website/
+python3 website/tools/build_manifest.py   # refresh manifests after any artifact change
+npx wrangler@4 deploy                     # upload website/; only changed files are sent
 ```
 
-`website/.assetsignore` keeps `tools/` and READMEs off the live site.
+Run `npx wrangler@4 login` first on a new machine. Rollback: `npx wrangler@4 rollback`.
 
-**Every file must be under 25 MiB** (Cloudflare's per-file limit). Compress
-new models before adding them:
+### File size limit: compress models
+
+**Every file must be under 25 MiB** (Cloudflare's per-file limit), and smaller
+also loads faster for visitors. Compress models before adding them:
 
 ```
-npx @gltf-transform/cli meshopt in.glb out.glb --level high     # meshes / vertex colours
-npx @gltf-transform/cli webp in.glb out.glb --quality 90        # textures
+npx @gltf-transform/cli meshopt in.glb out.glb --level high   # tablets: geometry / vertex colours
+npx @gltf-transform/cli webp in.glb out.glb --quality 90      # papyri: textures
 ```
 
+For papyrus scans, keep the normal/roughness/specular maps lossless (lossy
+compression causes shading artifacts): run `webp` once on
+`--slots '{baseColorTexture,specularColorTexture}' --quality 90`, then once on
+`--slots '{normalTexture,metallicRoughnessTexture,specularTexture}' --lossless`.
 `viewer.js` registers the meshopt decoder, so compressed and uncompressed
-models both load. For papyrus scans, keep normal/roughness/specular maps
-lossless (`--lossless --slots '{normalTexture,metallicRoughnessTexture,specularTexture}'`).
+models both load.
 
-The folder is still plain static files, so any other static host works too.
+The folder is plain static files, so any other static host works too.
 
 ## Viewer internals: on-demand rendering
 

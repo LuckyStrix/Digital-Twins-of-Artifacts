@@ -2,7 +2,7 @@
 
 Outputs (next to this script):
   github_qr.png            - QR for the GitHub repository
-  efip2026_qr.png          - QR for the EFIP 2026 site
+  efip2026_qr.png          - QR for the live artifact gallery site
   printable_qr_codes.pdf   - 9 x 11 in page, each QR printed at 3 x 3 in
 
 Requires: qrcode, pillow
@@ -21,7 +21,7 @@ OUT_DIR = Path(__file__).resolve().parent
 
 CODES = [
     ("Project GitHub", "https://github.com/LuckyStrix/Digital-Twins-of-Artifacts", "github_qr.png"),
-    ("EFIP 2026", "https://www.cis.rit.edu/fip/efip2026/index.html", "efip2026_qr.png"),
+    ("Artifact Gallery", "https://digital-twins-of-artifacts.luckystrix.workers.dev", "efip2026_qr.png"),
 ]
 
 FONT_BOLD = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"

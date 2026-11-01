@@ -222,4 +222,5 @@ No install step. From `website/`:
 python3 -m http.server 8000
 ```
 
-See [`website/README.md`](website/README.md).
+Deploying to the live site (Cloudflare) needs Node.js 18+ for
+`npx wrangler`. See [`website/README.md`](website/README.md#deploying).

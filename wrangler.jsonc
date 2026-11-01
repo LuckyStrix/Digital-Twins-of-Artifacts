@@ -1,0 +1,10 @@
+// Cloudflare deploy config for the artifact gallery in website/.
+// Deploy (after `npx wrangler login`):   npx wrangler@4 deploy
+// website/.assetsignore keeps build tools and READMEs off the live site.
+{
+  "name": "digital-twins-of-artifacts",
+  "compatibility_date": "2026-10-23",
+  "assets": {
+    "directory": "./website"
+  }
+}

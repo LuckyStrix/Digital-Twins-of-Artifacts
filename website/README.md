@@ -3,8 +3,8 @@
 The artifact gallery site. Static HTML/CSS/JS — no build tooling, no
 server-side code required to host it.
 
-**Live deployment:** https://www.cis.rit.edu/fip/efip2026/index.html —
-this folder's contents uploaded as-is (see "Deploying" below). The site
+**Live deployment:** https://digital-twins-of-artifacts.luckystrix.workers.dev —
+this folder deployed to Cloudflare (see "Deploying" below). The site
 itself links back to this repo from its header and footer.
 
 ## Structure
@@ -86,9 +86,30 @@ then open `http://localhost:8000/`.
 
 ## Deploying
 
-Upload the contents of this folder as-is to any static host. Just make
-sure `artifacts/manifest.json` is up to date (run the build script)
-before you upload.
+The site is hosted on Cloudflare (Workers static assets, free tier), set up
+by `wrangler.jsonc` in the repo root. From the repo root:
+
+```
+python3 website/tools/build_manifest.py   # refresh manifests
+npx wrangler@4 login                      # once per machine
+npx wrangler@4 deploy                     # uploads website/
+```
+
+`website/.assetsignore` keeps `tools/` and READMEs off the live site.
+
+**Every file must be under 25 MiB** (Cloudflare's per-file limit). Compress
+new models before adding them:
+
+```
+npx @gltf-transform/cli meshopt in.glb out.glb --level high     # meshes / vertex colours
+npx @gltf-transform/cli webp in.glb out.glb --quality 90        # textures
+```
+
+`viewer.js` registers the meshopt decoder, so compressed and uncompressed
+models both load. For papyrus scans, keep normal/roughness/specular maps
+lossless (`--lossless --slots '{normalTexture,metallicRoughnessTexture,specularTexture}'`).
+
+The folder is still plain static files, so any other static host works too.
 
 ## Viewer internals: on-demand rendering
 

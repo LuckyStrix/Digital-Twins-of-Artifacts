@@ -1,6 +1,6 @@
 # Digital-Twins-of-Artifacts
 
-**Live site:** https://www.cis.rit.edu/fip/efip2026/index.html — the deployed artifact gallery from `website/`, viewable without cloning anything.
+**Live site:** https://digital-twins-of-artifacts.luckystrix.workers.dev — the deployed artifact gallery from `website/`, viewable without cloning anything.
 
 Digital Twins of Artifacts is a comprehensive system for creating 2D and 3D models/replicas of historical artifacts in order to help preserve them, as well as make them more accessible to the world, developed by RIT students in collaboration with the RIT Chester F. Carlson Center for Imaging Science and the RIT Cary Graphic Arts Collection, and sponsored in part by the Charles and Karin Hoffman Endowed Fund. 
 

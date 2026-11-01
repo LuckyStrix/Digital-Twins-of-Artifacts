@@ -29,7 +29,7 @@
       "name": "Sample Cuneiform Tablet Replica",
       "type": "tablet",
       "description": "This is a placeholder artifact lent to us by the RIT Cary Graphic Arts Collection to test our systems with, and is a sample of what a real cuneiform tablet may look like.",
-      "model": "mainDemotablet/model.gltf"
+      "model": "mainDemotablet/model.glb"
     },
     {
       "id": "sample-papyrus",

@@ -1,5 +1,6 @@
 import * as THREE from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
+import { MeshoptDecoder } from "three/examples/jsm/libs/meshopt_decoder.module.js";
 import { OBJLoader } from "three/examples/jsm/loaders/OBJLoader.js";
 import { MTLLoader } from "three/examples/jsm/loaders/MTLLoader.js";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
@@ -36,7 +37,11 @@ function loadModel(modelPath, mtlPath, onLoad, onError) {
     return;
   }
 
-  new GLTFLoader().load(modelPath, (gltf) => onLoad(gltf.scene), undefined, onError);
+  // Models are meshopt-compressed (EXT_meshopt_compression) to stay small enough
+  // for static hosting; uncompressed .glb/.gltf still load fine through this too.
+  const gltfLoader = new GLTFLoader();
+  gltfLoader.setMeshoptDecoder(MeshoptDecoder);
+  gltfLoader.load(modelPath, (gltf) => onLoad(gltf.scene), undefined, onError);
 }
 
 // Some papyrus exports carry a baked negative-determinant node transform —

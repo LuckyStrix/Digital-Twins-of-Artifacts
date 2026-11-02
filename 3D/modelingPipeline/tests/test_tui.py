@@ -399,3 +399,19 @@ def test_entry_point_is_the_textual_app():
     from tui.app import main
     assert mod.main is main
     assert "tkinter" not in (SCRIPT_DIR / "app.py").read_text()
+
+
+def test_scale_tab(tmp_path):
+    async def body(app, pilot):
+        from textual.widgets import TabbedContent
+        app.query_one("#tabs", TabbedContent).active = "tab-scale"
+        await pilot.pause()
+        chk = app.query_one("#set-scale_ring_var", Checkbox)
+        assert chk.value is False
+        assert float(app.query_one("#set-scale_ring_inner_var", Input).value) == 200.0
+        app.query_one("#set-scale_ring_outer_var", Input).value = "216.4"
+        chk.value = True
+        await pilot.pause()
+        assert app.settings["scale_ring_var"] is True
+        assert app.settings["scale_ring_outer_var"] == 216.4
+    run(make_app(tmp_path), body)

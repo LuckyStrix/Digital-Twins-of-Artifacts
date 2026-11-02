@@ -31,6 +31,10 @@ the rig): multi-camera capture → COLMAP reconstruction → meshed model. See t
   RANSAC, refined with ICP, into one merged cloud.
 - **Stage 4** runs Open3D Poisson reconstruction on the merged cloud to produce
   the final textured `model.gltf`.
+- **Absolute scale (optional):** with a reference ring on the turntable and the
+  Scale tab on, Stage 2 scales each side to millimeters, so both sides match in
+  size and `model.gltf` comes out in meters. See
+  [Absolute scale](modelingPipeline/README.md#absolute-scale-reference-ring).
 - `src/check_config.sh` runs at startup and reports missing system/Python
   dependencies (with an `apt-get install` suggestion on Debian/Ubuntu), so a
   broken environment fails fast instead of partway through a multi-hour run.

@@ -2992,6 +2992,21 @@ def _load_intrinsics(path: str | Path) -> dict | None:
         return None
 
 
+def _scale_with_ring(colmap_bin: str, model_dirs: list[Path], workspace: Path,
+                     set_label: str) -> None:
+    """Run scale.apply's Stage 2 hook; never fails the run."""
+    try:
+        root = str(Path(__file__).resolve().parent.parent)
+        if root not in sys.path:
+            sys.path.insert(0, root)
+        from scale.apply import scale_from_env
+        scale_from_env(colmap_bin, model_dirs, workspace,
+                       log=lambda msg: print(msg, flush=True))
+    except Exception as exc:
+        print(f"[scale] WARNING: scale step unavailable ({exc}); continuing unscaled",
+              file=sys.stderr)
+
+
 def run_pipeline_for_image_set(
     *,
     args: argparse.Namespace,
@@ -3340,6 +3355,10 @@ def run_pipeline_for_image_set(
     for idx, model_dir in enumerate(model_dirs):
         print(f"  [{idx}] {model_dir} (points3D bytes={points_count(model_dir)})")
 
+    # Absolute scale from the reference ring (FIPMESH_SCALE_RING=1): rescale
+    # the sparse models to millimeters before anything below reads them.
+    _scale_with_ring(args.colmap_bin, model_dirs, workspace, set_label)
+
     # Export best sparse model to TXT and extract camera centers for normal orientation.
     cam_centers_path = dense_cloud_out.parent / "camera_centers.json"
     try:
@@ -3587,6 +3606,12 @@ def main() -> int:
 
     image_sets: list[tuple[str, Path, dict[str, float | str] | None]] = [("primary", images, None)]
     if images_secondary is not None:
+        if os.environ.get("FIPMESH_SCALE_RING", "0").strip() == "1":
+            # The app runs each side on its own; the ring fit only knows one
+            # side's raw photos.
+            print("[scale] WARNING: ring scaling isn't supported with --images-secondary; "
+                  "continuing unscaled", file=sys.stderr)
+            os.environ["FIPMESH_SCALE_RING"] = "0"
         image_sets.append(
             (
                 "secondary",

@@ -36,3 +36,6 @@ __pycache__/
 
 # Cloudflare wrangler local cache
 .wrangler/
+
+# Local planning notes (not committed)
+ABSOLUTE_SCALE_PLAN.md

@@ -17,7 +17,9 @@ folder (``pipeline.log`` and ``pipeline_runs.json``; see ``runlog``).
 from __future__ import annotations
 
 import copy
+import json
 import os
+import re
 import shutil
 import signal
 import subprocess
@@ -69,6 +71,11 @@ def colmap_env(s: Mapping, base_env: Mapping | None = None) -> dict:
     env["FIPMESH_COLMAP_MATCH_GUIDED"]           = _flag(s["match_guided_var"])
     env["FIPMESH_COLMAP_MATCH_MAX_NUM_MATCHES"]  = str(s["match_max_var"])
     env["FIPMESH_SKIP_RECON"]                    = "1"
+    env["FIPMESH_SCALE_RING"]                    = _flag(s["scale_ring_var"])
+    if s["scale_ring_var"]:
+        env["FIPMESH_SCALE_RING_INNER_MM"]       = str(s["scale_ring_inner_var"])
+        env["FIPMESH_SCALE_RING_OUTER_MM"]       = str(s["scale_ring_outer_var"])
+        env["FIPMESH_SCALE_RING_WIDTH_MM"]       = str(s["scale_ring_width_var"])
 
     for key, env_key in [
         ("extract_threads_var", "FIPMESH_COLMAP_EXTRACT_THREADS"),
@@ -202,7 +209,8 @@ def align_cmd(s: Mapping, ply_a: str, ply_b: str, merged_out: Path,
 
 
 def recon_cmd(s: Mapping, input_ply: str, out_obj: str, clean_cloud: str,
-              decimated: str, side1_camera_centers: str = "") -> list[str]:
+              decimated: str, side1_camera_centers: str = "",
+              units: str = "none", scale_json: str = "") -> list[str]:
     # --background transparent has no single flat fill colour to prune by
     # (the "background" there is the real original backdrop photo, not a
     # flat fill) — only white/black produce a colour worth pruning against.
@@ -247,7 +255,27 @@ def recon_cmd(s: Mapping, input_ply: str, out_obj: str, clean_cloud: str,
         cmd.append("--poisson-linear-fit")
     if side1_camera_centers:
         cmd += ["--side1-camera-centers", side1_camera_centers]
+    if units != "none":
+        cmd += ["--units", units]
+    if scale_json:
+        cmd += ["--scale-json", scale_json]
     return cmd
+
+
+def unscale_cmd(workspace: Path) -> list[str]:
+    return [venv_python(), "-m", "scale.apply", "unscale", str(workspace)]
+
+
+# "[set] primary sparse models found: 2" from run_colmap_mvs.py
+_SPLIT_RE = re.compile(r"sparse models found:\s*(\d+)")
+
+
+def read_scale_report(workspace: Path) -> dict | None:
+    """A side's scale.json from Stage 2, or None."""
+    try:
+        return json.loads((Path(workspace) / "scale.json").read_text())
+    except (OSError, ValueError):
+        return None
 
 
 # ── runner ────────────────────────────────────────────────────────────────────
@@ -312,6 +340,7 @@ class PipelineRunner:
             self._run_stage_4_reconstruction,
         ]
         self._on_stage_state(idx, "running", "")
+        self._stage_note = ""
 
         def on_progress(pct: int, text: str = ""):
             self._on_progress(idx, pct, text)
@@ -322,7 +351,7 @@ class PipelineRunner:
             self.log(f"[error] stage {idx + 1}: {exc}")
             ok = False
 
-        self._on_stage_state(idx, "done" if ok else "failed", "")
+        self._on_stage_state(idx, "done" if ok else "failed", self._stage_note if ok else "")
         return ok
 
     def log(self, msg: str) -> None:
@@ -529,6 +558,79 @@ class PipelineRunner:
 
     # ── Stage 2 — COLMAP MVS ──────────────────────────────────────────────────
     def _run_stage_2_colmap(self, on_progress) -> bool:
+        self._splits: dict[str, int] = {}
+        ok = self._run_stage_2_sides(on_progress)
+        if ok:
+            notes = [self._check_scale()] if self.settings["scale_ring_var"] else []
+            if self._splits:
+                notes.append("split: " + ", ".join(f"{k} {v} models" for k, v in self._splits.items()))
+            self._stage_note = " · ".join(["Done"] + [n for n in notes if n]) if notes else ""
+        return ok
+
+    def _watch_split(self, side: str | None, on_line):
+        """Warn when COLMAP splits a side into several separate models."""
+        def watch(line: str):
+            m = _SPLIT_RE.search(line)
+            if m and int(m.group(1)) > 1:
+                n = int(m.group(1))
+                self._splits[side or "scan"] = n
+                self._on_log(f"[warn] {side or 'scan'}: COLMAP split the photos into {n} separate "
+                             "models (they're merged afterwards, but the merge can leave doubled "
+                             "surfaces; check the result)", "output")
+            if on_line:
+                on_line(line)
+        return watch
+
+    def _scale_sides(self) -> list[str | None]:
+        s1, s2 = self.paths.active_sides()
+        return [s for s in (s1, s2) if s] or [None]
+
+    def _check_scale(self) -> str:
+        """After Stage 2: both sides scaled → mm. One side scaled → undo it, so
+        the sides still match. Returns the stage card note."""
+        sides = self._scale_sides()
+        reports = {side: read_scale_report(self.paths.colmap_dir(side)) for side in sides}
+        scaled = [side for side, r in reports.items() if r and r.get("status") == "scaled"]
+        for side, r in reports.items():
+            if not r or r.get("status") != "scaled":
+                why = (r or {}).get("reason") or "no scale.json was written"
+                self._on_log(f"[warn] {side or 'scan'}: not scaled: {why}", "output")
+        if scaled and len(scaled) == len(sides):
+            parts = [f"{side or 'scan'} 1 unit = {reports[side]['scale_mm_per_unit']:.5g} mm"
+                     for side in sides]
+            self.log("[stage 2] scaled to millimeters: " + "; ".join(parts))
+            return "scaled (mm)"
+        for side in scaled:
+            self.log(f"[stage 2] {side} scaled but the other side didn't; reverting it so both match")
+            self._run_proc(unscale_cmd(self.paths.colmap_dir(side)), cwd=SCRIPT_DIR)
+        self._on_log("[warn] scan left unscaled (see the warnings above)", "output")
+        return "unscaled (see log)"
+
+    def _scale_for_recon(self) -> tuple[str, str]:
+        """(units, side 1 scale.json) for Stage 4."""
+        if not self.settings["scale_ring_var"]:
+            return "none", ""
+        sides = self._scale_sides()
+        reports = [read_scale_report(self.paths.colmap_dir(side)) for side in sides]
+        if all(r and r.get("status") == "scaled" for r in reports):
+            return "mm", str(self.paths.colmap_dir(sides[0]) / "scale.json")
+        return "none", ""
+
+    def _write_session_scale(self, units: str) -> None:
+        summary = {"units": "mm" if units == "mm" else "model",
+                   "gltf_units": "m" if units == "mm" else "model",
+                   "sides": {}}
+        for side in self._scale_sides():
+            r = read_scale_report(self.paths.colmap_dir(side)) or {}
+            summary["sides"][side or "scan"] = {
+                k: r.get(k) for k in ("status", "scale_mm_per_unit", "sigma_pct", "reason",
+                                      "sparse_models", "ring_spec")}
+        try:
+            (self.paths.session_dir() / "scale.json").write_text(json.dumps(summary, indent=1))
+        except OSError as e:
+            self.log(f"[stage 4] Warning: couldn't write scale.json ({e})")
+
+    def _run_stage_2_sides(self, on_progress) -> bool:
         s1, s2 = self.paths.active_sides()
         processed = self.paths.processed_dir()
         env = colmap_env(self.settings)
@@ -574,6 +676,10 @@ class PipelineRunner:
         img_dir = processed_root / side
         out_dir = self.paths.colmap_dir(side)
         out_dir.mkdir(parents=True, exist_ok=True)
+        if self.settings["scale_ring_var"]:
+            env["FIPMESH_SCALE_RAW_IMAGES"] = str(Path(str(self.settings["input_var"]).strip()) / side)
+            env["FIPMESH_SCALE_PROCESSED_IMAGES"] = str(img_dir)
+        on_line = self._watch_split(side, on_line)
         # Each side is run through run.sh independently (as its own -i, no
         # -s), so only -m (primary mask) applies here, pointed at this side's
         # mask subfolder — not the shared mask root, which mirrors processed/'s
@@ -586,6 +692,11 @@ class PipelineRunner:
     def _colmap_flat(self, processed_dir: Path, env: dict, on_line=None) -> bool:
         out_dir = self.paths.colmap_dir()
         out_dir.mkdir(parents=True, exist_ok=True)
+        if self.settings["scale_ring_var"]:
+            env = dict(env)
+            env["FIPMESH_SCALE_RAW_IMAGES"] = str(self.settings["input_var"]).strip()
+            env["FIPMESH_SCALE_PROCESSED_IMAGES"] = str(processed_dir)
+        on_line = self._watch_split(None, on_line)
         masks = self.paths.masks_dir()
         cmd = stage2_cmd(processed_dir, out_dir, masks if masks.is_dir() else None)
         rc = self._run_proc(cmd, cwd=SCRIPT_DIR, env=env, on_line=on_line)
@@ -636,10 +747,15 @@ class PipelineRunner:
         decimated_obj = recon_dir / "recon_mesh_recon_decimated.obj"
 
         side1_cam_centers = self.paths.side1_camera_centers_path()
+        units, scale_json = self._scale_for_recon()
         cmd = recon_cmd(
             self.settings,
             str(input_ply), str(out_obj), str(clean_cloud), str(decimated_obj),
-            side1_camera_centers=str(side1_cam_centers) if side1_cam_centers.exists() else "")
+            side1_camera_centers=str(side1_cam_centers) if side1_cam_centers.exists() else "",
+            units=units, scale_json=scale_json)
+        if units == "mm":
+            self.log("[stage 4] input is in millimeters; model.gltf / model_simplified.glb "
+                     "will be in meters")
         self.log(f"[stage 4] Reconstructing mesh from {input_ply.name}…")
         rc = self._run_proc(cmd, cwd=SCRIPT_DIR,
                             on_line=self._parsed(ReconParser(), on_progress))
@@ -683,6 +799,10 @@ class PipelineRunner:
                 self.log(f"[stage 4] Warning: skipped info.txt ({e})")
         else:
             self.log("[stage 4] No artifact name set — skipping info.txt")
+
+        if self.settings["scale_ring_var"]:
+            self._write_session_scale(units)
+            self._stage_note = "Done · " + ("real units (m)" if units == "mm" else "unscaled")
 
         on_progress(100, "Reconstruction complete")
         return True

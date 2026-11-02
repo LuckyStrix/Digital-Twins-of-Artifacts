@@ -422,10 +422,7 @@ def recon_expected(input_ply: Path, recon: Path, prune="white", extra=()):
         "--poisson-depth", "10",
         "--density-trim-quantile", "0.02",
         "--poisson-crop-scale", "1.05",
-        "--fill-holes", "0",
-        "--fill-holes-max-size-ratio", "0.3",
-        "--fill-holes-passes", "4",
-        "--fill-holes-smooth", "0",
+        "--watertight", "1",
         "--simplified-target-vertices", "60000",
         "--component-min-ratio", "0.01",
         "--component-min-triangles", "1000",
@@ -468,7 +465,7 @@ def test_stage4_single_side_camera_centers_and_options(s, tmp_path):
     (col / "camera_centers.json").write_text("{}")
     s.update({
         "side2_var": "", "bg_var": "transparent", "r_poisson_linear": False,
-        "r_fill_holes": True, "r_fill_smooth": True, "r_normalize_pose": True,
+        "r_watertight": False, "r_normalize_pose": True,
         "r_density_trim": 0.003, "r_outlier_std": 2.5, "r_max_input_pts": 1000000,
     })
     r = RecordingRunner(s)
@@ -477,7 +474,7 @@ def test_stage4_single_side_camera_centers_and_options(s, tmp_path):
     exp = recon_expected(col / "fused.ply", out / "recon", prune="none",
                          extra=["--side1-camera-centers", str(col / "camera_centers.json")])
     exp.remove("--poisson-linear-fit")
-    for flag, val in [("--fill-holes", "1"), ("--fill-holes-smooth", "1"),
+    for flag, val in [("--watertight", "0"),
                       ("--normalize-pose", "1"), ("--density-trim-quantile", "0.003"),
                       ("--outlier-std-ratio", "2.5"), ("--max-input-points", "1000000")]:
         exp[exp.index(flag) + 1] = val

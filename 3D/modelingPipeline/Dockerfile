@@ -110,7 +110,7 @@ RUN python3 -m venv /opt/venv && pip install --no-cache-dir --upgrade pip
 
 COPY requirements.txt /tmp/requirements.txt
 RUN pip install --no-cache-dir -r /tmp/requirements.txt \
-    && python3 -c "import open3d, rembg, onnxruntime, textual, cv2"
+    && python3 -c "import open3d, pymeshlab, rembg, onnxruntime, textual, cv2"
 
 COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh

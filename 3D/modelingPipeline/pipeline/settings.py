@@ -211,30 +211,18 @@ REGISTRY: list[Setting] = [
              "and uses more neighbors for normal estimation, so sparsely sampled "
              "areas (rotation axis poles, textureless surfaces) are less likely to "
              "be trimmed away as holes. Overrides density trim quantile, Poisson "
-             "crop scale, and normal max NN above. Pair with hole filling below for "
-             "the remaining gaps.")),
+             "crop scale, and normal max NN above. The watertight repair below "
+             "closes whatever gaps remain.")),
 
-    _S("r_fill_holes_ratio", FLOAT, 0.3, _RC, "Hole filling", "Fill hole size ratio",
-       min=0, max=1.0, step=0.01),
-    _S("r_fill_holes_passes", INT, 4, _RC, "Hole filling", "Fill hole passes", min=1, max=10),
-    _S("r_fill_holes", BOOL, False, _RC, "Hole filling",
-       "Fill remaining holes (boundary triangulation)"),
-    _S("r_fill_smooth", BOOL, False, _RC, "Hole filling",
-       "Smooth the filled patches (experimental)",
-       help=("Hole patches are always re-wound to match the surrounding surface "
-             "(Open3D's filler leaves most of them inverted, which shows as dark or "
-             "oddly shaded flat panels). This option additionally subdivides and "
-             "fairs each well-formed patch into a smooth membrane. Slower, and can "
-             "leave a few dark slivers on thin patches.\n\n"
-             "After cleanup, triangulates any leftover boundary loops to bridge "
-             "gaps directly, rather than relying on loosening the density trim "
-             "threshold. Hole size ratio caps the max hole radius filled, as a "
-             "fraction of the cleaned cloud's bounding-box diagonal — raise it to "
-             "close bigger gaps, lower it to avoid bridging genuinely unscanned "
-             "regions. The fill pass doesn't always converge in one call — "
-             "closing one loop can make a neighboring loop fillable only on the "
-             "next pass — so it repeats up to \"Fill hole passes\" times, "
-             "stopping early once a pass closes nothing more.")),
+    _S("r_watertight", BOOL, True, _RC, "Hole filling",
+       "Make mesh watertight (close all holes, fix winding)",
+       help=("Closes every hole left after cleanup (density trimming cuts slits into "
+             "smooth, sparsely sampled surfaces; decimation and non-manifold cleanup "
+             "can open more) and makes the triangle winding consistent, so every "
+             "exported mesh is a closed surface: 3D-printable, with a valid volume "
+             "and no see-through gaps. Patches are refined to the local edge length "
+             "so they blend in; original vertices never move. Runs on the full, "
+             "decimated and simplified meshes. Needs pymeshlab.")),
 
     _S("r_comp_min_ratio", FLOAT, 0.01, _RC, "Mesh cleanup", "Component min ratio",
        min=0, max=1.0, step=0.005),
@@ -388,7 +376,7 @@ PERSISTED_KEYS = [
     "r_normal_max_nn", "r_normal_orient_k",
     "r_poisson_depth", "r_poisson_linear", "r_density_trim",
     "r_poisson_crop_scale", "r_hole_reduction",
-    "r_fill_holes", "r_fill_holes_ratio", "r_fill_holes_passes", "r_fill_smooth",
+    "r_watertight",
     "r_comp_min_ratio", "r_comp_min_tris", "r_comp_max_count",
     "r_smooth_iters", "r_decimate_tris", "r_simplified_target_verts",
     "r_normalize_pose",
@@ -407,7 +395,7 @@ assert set(PERSISTED_KEYS) == {s.key for s in REGISTRY if s.persisted}
 # aggressive preset: loosening density trim too far let noisy low-confidence
 # surface through in specular/bright spots (which also tend to be low
 # point-density from poor feature matching), hurting geometry there. The
-# hole-filling pass now picks up the remaining true gaps, so this preset can
+# watertight repair now closes the remaining true gaps, so this preset can
 # stay more conservative.
 HOLE_REDUCTION_OFF = {"r_density_trim": 0.02, "r_poisson_crop_scale": 1.05, "r_normal_max_nn": 96}
 HOLE_REDUCTION_ON = {"r_density_trim": 0.003, "r_poisson_crop_scale": 1.08, "r_normal_max_nn": 80}

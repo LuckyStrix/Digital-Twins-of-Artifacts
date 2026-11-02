@@ -30,7 +30,8 @@ sudo apt install exiftool
 python3 -m pip install --break-system-packages -r requirements.txt
 ```
 
-`requirements.txt` pulls `open3d`, `numpy<2.5`, `rembg[gpu]` (use plain `rembg`
+`requirements.txt` pulls `open3d`, `pymeshlab` (watertight mesh repair),
+`numpy<2.5`, `rembg[gpu]` (use plain `rembg`
 on a CPU-only machine) with `onnxruntime-gpu<1.27`, `pillow`,
 `opencv-python-headless` (mask cleanup), `textual` (the terminal UI) and
 `pytest` (tests). `torch` isn't needed (rembg 2.x runs its models through
@@ -341,19 +342,22 @@ Mirrors `src/reconstruct_mesh.py`'s CLI options (`python3 src/reconstruct_mesh.p
   crop scale, and raises normal max NN together, so sparsely sampled areas
   (turntable rotation-axis poles, smooth/textureless surfaces) survive trimming
   instead of becoming holes. Overrides the three fields above when enabled;
-  pair with hole filling below for whatever gaps remain.
-- **Hole filling** (checkbox) — after cleanup, triangulates leftover mesh
-  boundary loops to close remaining gaps directly. **Fill hole size ratio**
-  caps the max hole radius filled, as a fraction of the cloud's bounding-box
-  diagonal. **Fill hole passes** repeats the fill (closing one loop can free up
-  a neighbor) until a pass closes nothing new, up to this cap.
-- **Smooth the filled patches** (checkbox, default off; `--fill-holes-smooth`
-  on the CLI) — hole patches are now **always re-wound** to match the surrounding
-  surface, because Open3D's hole filler leaves most patches inverted, which shows
-  as dark or oddly shaded flat panels. This option additionally subdivides each
-  well-formed patch and fairs it into a smooth membrane (slit-like, degenerate
-  or non-manifold patches are left as filled). Experimental: slower, and can
-  leave a few dark slivers on thin patches.
+  the watertight repair below closes whatever gaps remain.
+- **Make mesh watertight** (checkbox, default **on**; `--watertight 0/1` on the
+  CLI) — closes every hole left after cleanup and makes the triangle winding
+  consistent, so the full, decimated and simplified meshes all come out as
+  closed surfaces (3D-printable, valid volume, no see-through gaps). Density
+  trimming cuts slits into smooth, sparsely sampled surfaces, and decimation and
+  non-manifold cleanup can open more, so it runs on each exported mesh. Each
+  hole is closed with MeshLab's hole filler (via `pymeshlab`); small
+  non-orientable tangles from Poisson noise are cut out and re-closed; then only
+  the patch triangles are subdivided to the surrounding edge length and only the
+  new patch vertices are smoothed, so patches blend in. Original vertices never
+  move, and patch vertices take the colour of the nearest original vertex. The
+  log prints one `watertight <mesh>: yes (...)` line per mesh. This replaces the
+  old Open3D boundary-triangulation hole filling and its size ratio / passes /
+  smoothing options, which left holes behind (size cap, non-convergence, and
+  decimation reopening them).
 - **Mesh cleanup** — **Component min ratio/min triangles** drop small
   disconnected mesh pieces (by relative size and by absolute triangle count);
   **Component max count** caps how many components survive; **Smooth

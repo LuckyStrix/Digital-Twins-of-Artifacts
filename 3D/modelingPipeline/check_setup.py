@@ -58,7 +58,8 @@ def check_python() -> None:
 
 
 def check_modules() -> None:
-    modules = [("numpy", "numpy"), ("open3d", "open3d"), ("cv2", "opencv"),
+    modules = [("numpy", "numpy"), ("open3d", "open3d"), ("pymeshlab", "pymeshlab"),
+               ("cv2", "opencv"),
                ("PIL", "pillow"), ("rembg", "rembg[gpu]"),
                ("onnxruntime", "onnxruntime-gpu"), ("textual", "textual")]
     if sys.platform == "win32":

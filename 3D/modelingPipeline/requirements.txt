@@ -1,5 +1,6 @@
 # Core pipeline dependencies
 open3d
+pymeshlab           # watertight repair: hole closing + orientation fixes in reconstruct_mesh.py
 numpy<2.5           # open3d / onnxruntime have no wheels built against numpy 2.5+ yet
 rembg[gpu]          # background removal; use rembg (no [gpu]) on CPU-only machines
 onnxruntime-gpu<1.27  # rembg GPU backend; 1.27+ requires a newer cuDNN/CUDA combo than we install

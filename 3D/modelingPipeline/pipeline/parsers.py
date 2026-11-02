@@ -229,7 +229,7 @@ class ReconParser:
         (r'\[step\] poisson reconstruction',       57,  "Poisson reconstruction…"),
         (r'\[step\] density trim',                 67,  "Density trim…"),
         (r'\[step\] mesh cleanup',                 73,  "Mesh cleanup…"),
-        (r'\[step\] fill mesh holes',               76,  "Filling holes…"),
+        (r'\[step\] make watertight',               76,  "Making watertight…"),
         (r'\[step\] mesh normal orientation',      79,  "Normal orientation check…"),
         (r'\[step\] normalize pose',                82,  "Centering & flattening pose…"),
         (r'\[step\] optional decimation',          85,  "Decimation…"),

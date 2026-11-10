@@ -26,6 +26,7 @@
   "sift_affine_var": false,
   "match_guided_var": true,
   "match_max_var": 65536,
+  "fusion_mask_erode_var": 6,
   "extract_threads_var": 0,
   "match_threads_var": 0,
   "mapper_threads_var": 0,

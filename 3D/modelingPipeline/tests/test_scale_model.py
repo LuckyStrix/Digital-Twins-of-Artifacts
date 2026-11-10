@@ -11,7 +11,8 @@ import pytest
 
 from scale.colmap_model import (
     Camera, Image, camera_matrix_and_dist, project, read_model_txt, rescale_camera_centers,
-    rescale_images_bin, rescale_model_txt, rescale_ply, rescale_points3d_bin,
+    rescale_depth_map, rescale_frames_bin, rescale_images_bin, rescale_model_txt, rescale_ply,
+    rescale_points3d_bin, rescale_rigs_bin,
     undistort_to_normalized,
 )
 from scale_synth import Scene, render
@@ -155,3 +156,40 @@ def test_rescale_camera_centers(tmp_path):
     p.write_text(json.dumps([[1, 2, 3], [4, 5, 6]]))
     rescale_camera_centers(p, 10)
     assert json.loads(p.read_text()) == [[10, 20, 30], [40, 50, 60]]
+
+
+def test_rescale_frames_rigs_and_depth_maps(tmp_path):
+    # frames.bin (COLMAP 4.x): poses live here, so they must scale too.
+    frames = tmp_path / "frames.bin"
+    buf = struct.pack("<Q", 2)
+    for fid, t in ((1, (1.0, 2.0, 3.0)), (2, (-4.0, 0.5, 8.0))):
+        buf += struct.pack("<II", fid, 1) + struct.pack("<4d", 1, 0, 0, 0) + struct.pack("<3d", *t)
+        buf += struct.pack("<I", 1) + struct.pack("<iIQ", 1, 1, fid)
+    frames.write_bytes(buf)
+    rescale_frames_bin(frames, 3.0)
+    raw = frames.read_bytes()
+    assert struct.unpack_from("<4d", raw, 16) == (1, 0, 0, 0)
+    assert struct.unpack_from("<3d", raw, 48) == (3.0, 6.0, 9.0)
+    assert struct.unpack_from("<3d", raw, 48 + 84) == (-12.0, 1.5, 24.0)
+
+    # rigs.bin: one plain rig, and one with a posed second camera.
+    rigs = tmp_path / "rigs.bin"
+    buf = struct.pack("<Q", 2) + struct.pack("<II", 1, 1) + struct.pack("<iI", 1, 1)
+    buf += struct.pack("<II", 2, 2) + struct.pack("<iI", 1, 2) + struct.pack("<iI", 1, 3) + b"\x01"
+    buf += struct.pack("<4d", 1, 0, 0, 0) + struct.pack("<3d", 10.0, 0.0, -2.0)
+    rigs.write_bytes(buf)
+    rescale_rigs_bin(rigs, 0.5)
+    assert struct.unpack_from("<3d", rigs.read_bytes(), len(buf) - 24) == (5.0, 0.0, -1.0)
+
+    # A layout we don't understand fails loudly instead of corrupting the file.
+    frames.write_bytes(frames.read_bytes() + b"\x00")
+    with pytest.raises(ValueError):
+        rescale_frames_bin(frames, 2.0)
+
+    # Depth maps: header kept, every depth scaled, zero (no depth) stays zero.
+    dm = tmp_path / "a.jpg.geometric.bin"
+    dm.write_bytes(b"2&1&1&" + np.array([0.0, 2.5], "<f4").tobytes())
+    rescale_depth_map(dm, 4.0)
+    raw = dm.read_bytes()
+    assert raw.startswith(b"2&1&1&")
+    assert np.frombuffer(raw[6:], "<f4").tolist() == [0.0, 10.0]

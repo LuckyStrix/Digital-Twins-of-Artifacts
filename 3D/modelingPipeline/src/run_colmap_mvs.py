@@ -1273,6 +1273,71 @@ def list_sparse_models(sparse_root: Path) -> list[Path]:
     raise FileNotFoundError(f"no COLMAP sparse model found under {sparse_root}")
 
 
+FILL_MASK_TOLERANCE = 16      # 0-255: how close to the fill color counts as fill
+
+
+def _fusion_fill_mask_config() -> tuple[str, int]:
+    """(fill color, erode px) for fusion masks made from Stage 1's background
+    fill. FIPMESH_COLMAP_FUSION_MASK_FILL is black, white or none (default
+    none, so the standalone script is unchanged unless asked)."""
+    fill = os.environ.get("FIPMESH_COLMAP_FUSION_MASK_FILL", "none").strip().lower()
+    if fill not in ("black", "white"):
+        fill = "none"
+    return fill, max(0, _env_int("FIPMESH_COLMAP_FUSION_MASK_ERODE", 6))
+
+
+def _prepare_fill_masks(dense_workspace_dir: Path, fill: str, erode_px: int,
+                        base_mask_dir: Path | None = None) -> Path | None:
+    """Fusion masks from the background fill in the undistorted images.
+
+    patch_match_stereo's window straddles the tablet's outline, so depths
+    spill a few pixels past it onto the fill. Fused, those pixels become
+    points colored by a blend of tablet and fill (near-black speckle spread
+    over the whole surface, since every part of the tablet is on the outline
+    in some views). Masking out the fill, shrunk by ``erode_px``, keeps that
+    band out of the cloud. Combined with ``base_mask_dir`` (Stage 1's own
+    masks, undistorted) when given. Returns the mask folder, or None if no
+    images were found."""
+    import cv2
+    import numpy as np
+
+    images_dir = dense_workspace_dir / "images"
+    out_dir = dense_workspace_dir / "fill_masks"
+    if out_dir.exists():
+        shutil.rmtree(out_dir)
+    exts = {".jpg", ".jpeg", ".png", ".tif", ".tiff", ".bmp"}
+    files = [p for p in images_dir.rglob("*") if p.suffix.lower() in exts]
+    if not files:
+        return None
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2 * erode_px + 1, 2 * erode_px + 1))
+    tol = FILL_MASK_TOLERANCE
+
+    def one(src: Path) -> float:
+        im = cv2.imread(str(src), cv2.IMREAD_COLOR)
+        if fill == "black":
+            keep = im.max(axis=2) > tol
+        else:   # white fill; undistortion's own border is pure black, drop it too
+            keep = (im.min(axis=2) < 255 - tol) & (im.max(axis=2) > 0)
+        keep = cv2.morphologyEx(keep.astype(np.uint8), cv2.MORPH_OPEN, np.ones((3, 3), np.uint8))
+        if erode_px > 0:
+            keep = cv2.erode(keep, kernel)
+        rel = src.relative_to(images_dir)
+        if base_mask_dir is not None:
+            base = cv2.imread(str(base_mask_dir / rel.parent / f"{rel.name}.png"), cv2.IMREAD_GRAYSCALE)
+            if base is not None and base.shape == keep.shape:
+                keep &= (base > 0).astype(np.uint8)
+        dst = out_dir / rel.parent / f"{rel.name}.png"
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        cv2.imwrite(str(dst), keep * 255)
+        return float(keep.mean())
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=os.cpu_count() or 4) as pool:
+        kept = list(pool.map(one, files))
+    print(f"prepared fill masks: {len(files)} file(s), {fill} fill, eroded {erode_px}px, "
+          f"median {100 * float(np.median(kept)):.1f}% of each image kept -> {out_dir}")
+    return out_dir
+
+
 def run_dense_for_model(
     colmap_bin: str,
     images: Path,
@@ -1335,6 +1400,16 @@ def run_dense_for_model(
                 file=sys.stderr,
             )
             dense_mask_dir = None
+
+    fill, erode_px = _fusion_fill_mask_config()
+    if fill != "none":
+        print(f"[{model_label}] fusion masks from the {fill} background fill (eroded {erode_px}px)")
+        try:
+            dense_mask_dir = _prepare_fill_masks(dense_workspace_dir, fill, erode_px,
+                                                 dense_mask_dir) or dense_mask_dir
+        except Exception as exc:   # never fail the run over the masks
+            print(f"[{model_label}] warning: fill masks failed ({exc}) — "
+                  "fusing without them", file=sys.stderr)
 
     # 2. Patch Match Stereo
     print(f"[{model_label}] colmap patch_match_stereo")

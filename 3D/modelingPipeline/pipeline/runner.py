@@ -70,6 +70,10 @@ def colmap_env(s: Mapping, base_env: Mapping | None = None) -> dict:
     env["FIPMESH_COLMAP_SIFT_ESTIMATE_AFFINE_SHAPE"] = _flag(s["sift_affine_var"])
     env["FIPMESH_COLMAP_MATCH_GUIDED"]           = _flag(s["match_guided_var"])
     env["FIPMESH_COLMAP_MATCH_MAX_NUM_MATCHES"]  = str(s["match_max_var"])
+    # Fusion masks from Stage 1's background fill (see run_colmap_mvs._prepare_fill_masks).
+    fill = s["bg_var"] if s["bg_var"] in ("black", "white") else "none"
+    env["FIPMESH_COLMAP_FUSION_MASK_FILL"]       = fill if s["fusion_mask_erode_var"] > 0 else "none"
+    env["FIPMESH_COLMAP_FUSION_MASK_ERODE"]      = str(s["fusion_mask_erode_var"])
     env["FIPMESH_SKIP_RECON"]                    = "1"
     env["FIPMESH_SCALE_RING"]                    = _flag(s["scale_ring_var"])
     if s["scale_ring_var"]:

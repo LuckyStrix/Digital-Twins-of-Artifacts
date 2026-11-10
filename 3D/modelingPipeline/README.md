@@ -277,6 +277,13 @@ full detail on any field.
   textureless or highly curved surfaces.
 - **Matching**: **Guided matching** re-matches using estimated geometry for
   higher precision; **Max matches** caps matches kept per image pair.
+- **Dense fusion → Fill mask erode (px)** (default 6, 0 = off) — fusion skips
+  Stage 1's background fill (Background black or white), shrunk inward by this
+  many pixels. PatchMatch's window straddles the tablet's outline, so depths
+  spill a few pixels onto the fill; fused, they become points colored by a
+  blend of tablet and fill — dark specks over the whole surface, since every
+  part of the tablet is on the outline in some view. Masks are written to
+  `dense/fill_masks/` and combined with Stage 1's own masks when those exist.
 - **Threads / Cache** (0 = auto) — per-stage CPU thread counts and PatchMatch/
   fusion GPU cache sizes in GB; raise the caches if you have GPU memory to
   spare and are fusing large scenes, lower them if COLMAP runs out of VRAM.
@@ -508,8 +515,10 @@ python3 -m scale.apply session --session <session> --scan <scan> [--fit-only]
 ```
 
 It fits the ring on every side and, only if all sides fit, rescales each
-side's sparse model, `fused.ply`, dense sparse model and
-`camera_centers.json` to millimeters. `--fit-only` reports without changing
+side's sparse model, `fused.ply`, dense sparse model (including COLMAP 4.x's
+`frames.bin` and `rigs.bin`, where the poses live), depth maps and
+`camera_centers.json` to millimeters, so fusion can still be re-run on the
+workspace afterwards. `--fit-only` reports without changing
 anything. Then turn on the Scale tab and press Run Stage on Stages 3 and 4.
 A side COLMAP split into several models can't be scaled this way.
 

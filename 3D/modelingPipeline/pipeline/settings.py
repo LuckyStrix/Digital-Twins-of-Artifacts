@@ -140,6 +140,13 @@ REGISTRY: list[Setting] = [
     _S("match_max_var", INT, 65536, _CM, "Matching", "Max matches",
        min=1000, max=131072, step=4096),
 
+    _S("fusion_mask_erode_var", INT, 6, _CM, "Dense fusion", "Fill mask erode (px)",
+       min=0, max=50, hint="(0=off)",
+       help=("Fusion skips the background fill around the tablet, shrunk inward by "
+             "this many pixels. Depths spill a few pixels past the outline onto the "
+             "fill; fused, they become dark specks over the whole surface. Uses "
+             "Stage 1's Background color (black or white; off for other fills).")),
+
     *[_S(key, INT, 0, _CM, "Threads / Cache  (0 = auto)", label, min=0, max=256)
       for label, key in [
           ("Extract threads",   "extract_threads_var"),
@@ -368,7 +375,7 @@ PERSISTED_KEYS = [
     "img_stride_var",
     "sift_features_var", "sift_peak_var", "sift_edge_var",
     "sift_dsp_var", "sift_affine_var",
-    "match_guided_var", "match_max_var",
+    "match_guided_var", "match_max_var", "fusion_mask_erode_var",
     "extract_threads_var", "match_threads_var", "mapper_threads_var",
     "fusion_threads_var", "patch_cache_var", "fusion_cache_var",
     "sec_rotate_deg_var", "sec_rotate_axis_var",

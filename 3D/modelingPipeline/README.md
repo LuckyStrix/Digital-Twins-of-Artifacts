@@ -332,6 +332,18 @@ Mirrors `src/reconstruct_mesh.py`'s CLI options (`python3 src/reconstruct_mesh.p
   cloud size (it's the slowest cleanup step).
 - **Normals** — **max NN**/**orient K** control how many neighbors are used to
   estimate and consistently orient surface normals before Poisson.
+- **Poisson engine** (default **meshlab**; `--poisson-engine` on the CLI) —
+  `meshlab` runs pymeshlab's screened Poisson, whose surface is closed and
+  2-manifold as reconstructed. It is kept untrimmed and uncropped, and
+  decimation for the decimated and simplified exports preserves topology (each
+  kept vertex takes the average color of the vertices it replaces, so stray
+  dark points don't become dark spots), so
+  every exported mesh is watertight with no hole patching (the log prints a
+  `closed <mesh>: yes` line per mesh). Density trim, crop scale, linear fit and
+  hole reduction below apply only to `open3d`, the older engine: Open3D's
+  Poisson leaves non-manifold edges where surface sheets touch, cleanup turns
+  them into holes, and the watertight repair then patches them, which showed
+  up as flat spots and spikes on scans.
 - **Poisson reconstruction** — **depth** is the octree resolution (higher =
   more detail, more memory); **linear fit** trades a bit of smoothness for
   sharper detail; **density trim quantile** strips the lowest-confidence
@@ -344,7 +356,8 @@ Mirrors `src/reconstruct_mesh.py`'s CLI options (`python3 src/reconstruct_mesh.p
   instead of becoming holes. Overrides the three fields above when enabled;
   the watertight repair below closes whatever gaps remain.
 - **Make mesh watertight** (checkbox, default **on**; `--watertight 0/1` on the
-  CLI) — closes every hole left after cleanup and makes the triangle winding
+  CLI) — runs only on a mesh that isn't already closed, so in practice only
+  with the `open3d` engine. Closes every hole left after cleanup and makes the triangle winding
   consistent, so the full, decimated and simplified meshes all come out as
   closed surfaces (3D-printable, valid volume, no see-through gaps). Density
   trimming cuts slits into smooth, sparsely sampled surfaces, and decimation and
@@ -420,7 +433,7 @@ set on the Inputs tab).
 
 ### Scale tab
 
-- **Scale to millimeters with the reference ring** (default off) — see
+- **Scale to millimeters with the reference ring** (default on; scans without the ring just stay unscaled, with a warning) — see
   [Absolute scale](#absolute-scale-reference-ring) below.
 - **Inner / Outer diameter (mm)** — the ring's size; defaults 200 / 216 (the
   design). Enter measured values if you have them.

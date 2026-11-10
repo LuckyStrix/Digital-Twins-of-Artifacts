@@ -198,6 +198,13 @@ REGISTRY: list[Setting] = [
     _S("r_normal_max_nn", INT, 96, _RC, "Normals", "Normal max NN", min=0, max=512),
     _S("r_normal_orient_k", INT, 64, _RC, "Normals", "Normal orient K", min=0, max=512),
 
+    _S("r_poisson_engine", CHOICE, "meshlab", _RC, "Poisson reconstruction", "Poisson engine",
+       choices=("meshlab", "open3d"),
+       help=("meshlab (default): pymeshlab's screened Poisson. Its surface is closed and "
+             "2-manifold as reconstructed and is kept untrimmed, so every exported mesh "
+             "is watertight without hole patching; density trim and crop scale don't "
+             "apply. open3d: the older Open3D Poisson, trimmed by density and crop, with "
+             "holes closed afterward by the watertight repair below.")),
     _S("r_poisson_depth", INT, 10, _RC, "Poisson reconstruction", "Poisson depth", min=5, max=14),
     _S("r_poisson_linear", BOOL, True, _RC, "Poisson reconstruction", "Poisson linear fit"),
     _S("r_density_trim", FLOAT, 0.02, _RC, "Poisson reconstruction", "Density trim quantile",
@@ -250,7 +257,7 @@ REGISTRY: list[Setting] = [
              "glb) shares the same pose.")),
 
     # ── Alignment ─────────────────────────────────────────────────────────────
-    _S("align_method_var", CHOICE, "fpfh", _AL, "FPFH alignment settings", "Method",
+    _S("align_method_var", CHOICE, "all", _AL, "FPFH alignment settings", "Method",
        choices=tuple(ALIGN_METHODS)),
     _S("align_voxel_var", STR, "0", _AL, "FPFH alignment settings", "Voxel (0=auto)",
        validate="float"),
@@ -317,7 +324,7 @@ REGISTRY: list[Setting] = [
        help="Useful for re-running alignment with different inputs."),
 
     # ── Scale ─────────────────────────────────────────────────────────────────
-    _S("scale_ring_var", BOOL, False, _SC, "Reference ring",
+    _S("scale_ring_var", BOOL, True, _SC, "Reference ring",
        "Scale to millimeters with the reference ring",
        help=("Stage 2 finds the ring fixed to the turntable in each side's raw "
              "photos and scales that side's reconstruction to millimeters "
@@ -374,7 +381,7 @@ PERSISTED_KEYS = [
     "r_dbscan_max_pts", "r_dbscan_min_pts", "r_dbscan_eps",
     "r_dbscan_keep", "r_dbscan_ratio",
     "r_normal_max_nn", "r_normal_orient_k",
-    "r_poisson_depth", "r_poisson_linear", "r_density_trim",
+    "r_poisson_engine", "r_poisson_depth", "r_poisson_linear", "r_density_trim",
     "r_poisson_crop_scale", "r_hole_reduction",
     "r_watertight",
     "r_comp_min_ratio", "r_comp_min_tris", "r_comp_max_count",

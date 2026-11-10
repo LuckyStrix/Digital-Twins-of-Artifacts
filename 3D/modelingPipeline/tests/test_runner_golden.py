@@ -312,7 +312,7 @@ def test_stage3_defaults(s, fused):
         PY, str(SCRIPT_DIR / "alignment" / "run.py"),
         str(fused / "colmap_side1" / "fused.ply"), str(fused / "colmap_side2" / "fused.ply"),
         "-o", str(fused / "aligned_cloud" / "merged_fpfh.ply"),
-        "--method", "fpfh",
+        "--method", "all",
         "--samples", "60000",
         "--resolve-seam",
         "--seam-mode", "point",
@@ -329,7 +329,7 @@ def test_stage3_defaults(s, fused):
 
 def test_stage3_refine_voxel_and_fallbacks(s, fused):
     s.update({
-        "align_method_var": "all", "align_samples_var": 5000, "align_voxel_var": " 0.02 ",
+        "align_method_var": "fpfh", "align_samples_var": 5000, "align_voxel_var": " 0.02 ",
         "align_seam_var": True, "align_seam_mode_var": "patch",
         "align_seam_tau_var": " ", "align_seam_minconf_var": "", "align_seam_window_var": "",
         "align_seam_minc_var": 5, "align_seam_passes_var": 1,
@@ -340,7 +340,7 @@ def test_stage3_refine_voxel_and_fallbacks(s, fused):
     r = RecordingRunner(s)
     r.execute_stage(2)
     assert r.calls[0][0][6:] == [
-        "--method", "all",
+        "--method", "fpfh",
         "--samples", "5000",
         "--voxel", "0.02",
         "--resolve-seam",
@@ -365,7 +365,7 @@ def test_stage3_no_seam_voxel_zero(s, fused):
     s.update({"align_seam_var": False, "align_voxel_var": "0"})
     r = RecordingRunner(s)
     r.execute_stage(2)
-    assert r.calls[0][0][6:] == ["--method", "fpfh", "--samples", "60000"]
+    assert r.calls[0][0][6:] == ["--method", "all", "--samples", "60000"]
 
 
 def test_stage3_single_side_skipped(s):
@@ -419,6 +419,7 @@ def recon_expected(input_ply: Path, recon: Path, prune="white", extra=()):
         "--dbscan-min-cluster-ratio", "0.02",
         "--normal-max-nn", "96",
         "--normal-orient-k", "64",
+        "--poisson-engine", "meshlab",
         "--poisson-depth", "10",
         "--density-trim-quantile", "0.02",
         "--poisson-crop-scale", "1.05",

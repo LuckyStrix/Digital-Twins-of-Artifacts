@@ -209,12 +209,37 @@ def parse_args() -> argparse.Namespace:
         default=32,
         help="k for consistent normal orientation (default: 32).",
     )
+    parser.add_argument(
+        "--normal-orient",
+        choices=("input", "estimate"),
+        default="input",
+        help=(
+            "input (default): when the cloud has normals (COLMAP fusion writes "
+            "camera-facing ones), keep their sign and only re-estimate the "
+            "direction. estimate: the old behaviour, re-orient globally "
+            "(consistent tangent plane), which can flip patches on thin objects."
+        ),
+    )
 
     parser.add_argument(
         "--poisson-depth",
         type=int,
         default=9,
         help="Poisson octree depth (default: 9).",
+    )
+    parser.add_argument(
+        "--poisson-engine",
+        choices=("open3d", "meshlab"),
+        default=os.environ.get("FIPMESH_POISSON_ENGINE", "meshlab"),
+        help=(
+            "meshlab (default): pymeshlab's screened Poisson, which outputs a closed "
+            "2-manifold surface. It is kept untrimmed and uncropped, so the mesh is "
+            "watertight as reconstructed, and decimation keeps it so (topology-"
+            "preserving); --density-trim-quantile, --poisson-crop-scale and "
+            "--poisson-linear-fit do not apply. open3d: Open3D's built-in screened "
+            "Poisson; its surface has non-manifold edges where sheets touch, which "
+            "cleanup turns into holes for --watertight to close."
+        ),
     )
     parser.add_argument(
         "--poisson-scale",
@@ -593,6 +618,11 @@ def sanitize_point_cloud(
             pcd2.colors = o3d.utility.Vector3dVector(
                 np.clip(colors_valid[unique_local_idx], 0.0, 1.0)
             )
+    if pcd.has_normals():
+        # Keep COLMAP's camera-facing normals (see --normal-orient).
+        normals_valid = np.asarray(pcd.normals, dtype=np.float64)[valid]
+        if len(normals_valid) == len(points_valid):
+            pcd2.normals = o3d.utility.Vector3dVector(normals_valid[unique_local_idx])
 
     removed = int(len(points) - kept_count)
     return pcd2, removed
@@ -919,6 +949,82 @@ def _match_rows(ref: np.ndarray, query: np.ndarray) -> np.ndarray:
     _, first, inv = np.unique(both, return_index=True, return_inverse=True)
     src = first[inv.reshape(-1)[len(ref):]]
     return np.where(src < len(ref), src, -1).astype(np.int64)
+
+
+def poisson_meshlab(pcd: o3d.geometry.PointCloud, depth: int, scale: float) -> o3d.geometry.TriangleMesh:
+    """Screened Poisson via pymeshlab. Unlike Open3D's copy, its iso-surface
+    extraction yields a closed 2-manifold mesh (no non-manifold edges), so the
+    untrimmed surface is watertight as it comes out."""
+    import pymeshlab
+    ms = pymeshlab.MeshSet()
+    ms.add_mesh(pymeshlab.Mesh(vertex_matrix=np.asarray(pcd.points, dtype=np.float64),
+                               v_normals_matrix=np.asarray(pcd.normals, dtype=np.float64)))
+    ms.generate_surface_reconstruction_screened_poisson(
+        depth=int(depth), scale=float(scale), preclean=False, samplespernode=1.5, pointweight=4)
+    cur = ms.current_mesh()
+    return o3d.geometry.TriangleMesh(o3d.utility.Vector3dVector(cur.vertex_matrix()),
+                                     o3d.utility.Vector3iVector(cur.face_matrix()))
+
+
+def decimate(mesh: o3d.geometry.TriangleMesh, target_triangles: int,
+             keep_topology: bool = False) -> o3d.geometry.TriangleMesh:
+    """Quadric decimation. keep_topology uses pymeshlab's topology-preserving edge
+    collapse, so a closed manifold mesh stays closed and manifold (Open3D's
+    decimation can pinch edges into non-manifold ones, which cleanup turns into
+    holes). Vertex colors carry over."""
+    if not keep_topology:
+        return mesh.simplify_quadric_decimation(target_number_of_triangles=int(target_triangles))
+    import pymeshlab
+    has_col = mesh_has_vertex_colors(mesh)
+    V = np.asarray(mesh.vertices, dtype=np.float64)
+    kw = {}
+    if has_col:
+        kw["v_color_matrix"] = np.c_[np.asarray(mesh.vertex_colors, dtype=np.float64), np.ones(len(V))]
+    ms = pymeshlab.MeshSet()
+    ms.add_mesh(pymeshlab.Mesh(vertex_matrix=V, face_matrix=np.asarray(mesh.triangles, dtype=np.int32), **kw))
+    ms.meshing_decimation_quadric_edge_collapse(
+        targetfacenum=int(target_triangles), preservetopology=True, preservenormal=True,
+        qualitythr=0.5, optimalplacement=True, autoclean=True)
+    cur = ms.current_mesh()
+    out = o3d.geometry.TriangleMesh(o3d.utility.Vector3dVector(cur.vertex_matrix()),
+                                    o3d.utility.Vector3iVector(cur.face_matrix()))
+    if has_col:
+        out.vertex_colors = o3d.utility.Vector3dVector(resample_colors(mesh, cur.vertex_matrix()))
+    return out
+
+
+def resample_colors(src: o3d.geometry.TriangleMesh, points: np.ndarray) -> np.ndarray:
+    """Color each point with the mean color of the source vertices it replaces.
+
+    pymeshlab's edge collapse keeps one surviving vertex's color instead of
+    averaging, so a single dark source vertex becomes a dark patch covering
+    many collapsed triangles (a speckled, spotty look). Averaging the k nearest
+    source vertices, k = how many source vertices each output vertex stands in
+    for, gives the area-averaged color instead."""
+    from scipy.spatial import cKDTree
+    S = np.asarray(src.vertices)
+    C = np.asarray(src.vertex_colors)
+    k = int(np.clip(round(1.5 * len(S) / max(len(points), 1)), 1, 256))
+    _, nn = cKDTree(S).query(points, k=k, workers=-1)
+    nn = nn.reshape(len(points), -1)
+    return np.clip(C[nn].mean(axis=1), 0, 1)
+
+
+def is_closed(mesh: o3d.geometry.TriangleMesh) -> bool:
+    """Closed and consistently wound (the repair would leave it unchanged)."""
+    T = np.asarray(mesh.triangles, dtype=np.int64)
+    boundary, conflicts = _mesh_edge_report(T)
+    return len(T) > 0 and boundary == 0 and len(conflicts) == 0
+
+
+def closure_report(mesh: o3d.geometry.TriangleMesh, label: str) -> bool:
+    """Print and return whether the mesh is closed and consistently wound."""
+    T = np.asarray(mesh.triangles, dtype=np.int64)
+    boundary, conflicts = _mesh_edge_report(T)
+    ok = len(T) > 0 and boundary == 0 and len(conflicts) == 0
+    print(f"closed {label + ':':<15} {'yes' if ok else 'NO'} "
+          f"({boundary} boundary edges, {len(conflicts)} mis-wound tris)")
+    return ok
 
 
 def make_watertight(
@@ -1888,13 +1994,22 @@ def main() -> int:
     side1_camera_centers = load_camera_centers(args.side1_camera_centers)
 
     _step("estimate + orient normals")
+    # COLMAP's fused points carry normals that face the cameras that saw them,
+    # a reliable sign everywhere. estimate_normals keeps the sign of existing
+    # normals, so with input normals only the direction is re-estimated, and
+    # the global re-orientation below (which flips whole patches on thin,
+    # sharp-edged objects and makes Poisson build tangled double layers) is
+    # skipped.
+    input_normals = pcd.has_normals() and args.normal_orient == "input"
     pcd.estimate_normals(
         search_param=o3d.geometry.KDTreeSearchParamHybrid(
             radius=normal_radius,
             max_nn=max(10, int(args.normal_max_nn)),
         )
     )
-    if camera_centers:
+    if input_normals:
+        normal_orient_mode = "input normals (camera-facing)"
+    elif camera_centers:
         orient_normals_towards_cameras(pcd, camera_centers)
         normal_orient_mode = "camera_positions"
     else:
@@ -1915,12 +2030,20 @@ def main() -> int:
             print(f"warning: failed to write clean cloud to {clean_cloud_path}", file=sys.stderr)
 
     _step("poisson reconstruction")
-    mesh, densities = o3d.geometry.TriangleMesh.create_from_point_cloud_poisson(
-        pcd,
-        depth=max(5, int(args.poisson_depth)),
-        scale=max(1.0, float(args.poisson_scale)),
-        linear_fit=bool(args.poisson_linear_fit),
-    )
+    if args.poisson_engine == "meshlab":
+        mesh = poisson_meshlab(pcd, depth=max(5, int(args.poisson_depth)),
+                               scale=max(1.0, float(args.poisson_scale)))
+        densities = np.zeros(0)
+        print("poisson engine:      meshlab (closed 2-manifold output)")
+        if args.density_trim_quantile > 0 or args.poisson_crop_scale > 0:
+            print("trim / crop:         skipped (meshlab engine keeps the closed surface)")
+    else:
+        mesh, densities = o3d.geometry.TriangleMesh.create_from_point_cloud_poisson(
+            pcd,
+            depth=max(5, int(args.poisson_depth)),
+            scale=max(1.0, float(args.poisson_scale)),
+            linear_fit=bool(args.poisson_linear_fit),
+        )
     if len(mesh.vertices) == 0 or len(mesh.triangles) == 0:
         print("error: poisson reconstruction produced empty mesh", file=sys.stderr)
         return 5
@@ -1936,7 +2059,7 @@ def main() -> int:
         print(f"density q:           {density_q:.4f}")
         print(f"density cut:         {density_cut:.6f}")
 
-    if len(pcd.points) > 0 and args.poisson_crop_scale > 0:
+    if len(pcd.points) > 0 and args.poisson_crop_scale > 0 and args.poisson_engine != "meshlab":
         aabb = pcd.get_axis_aligned_bounding_box()
         aabb = aabb.scale(max(1.0, float(args.poisson_crop_scale)), aabb.get_center())
         mesh = mesh.crop(aabb)
@@ -1951,7 +2074,7 @@ def main() -> int:
     )
     mesh = cleanup_mesh_topology(mesh)
 
-    if args.watertight and len(mesh.triangles) > 0:
+    if args.watertight and len(mesh.triangles) > 0 and not is_closed(mesh):
         _step("make watertight")
         mesh = make_watertight(mesh, label="mesh")
         save_snapshot(output_path, "03b_watertight", mesh)
@@ -1986,11 +2109,10 @@ def main() -> int:
         and len(mesh.triangles) > args.decimate_target_triangles
     ):
         _step("optional decimation")
-        decimated_mesh = mesh.simplify_quadric_decimation(
-            target_number_of_triangles=max(4, int(args.decimate_target_triangles))
-        )
+        decimated_mesh = decimate(mesh, max(4, int(args.decimate_target_triangles)),
+                                  keep_topology=args.poisson_engine == "meshlab")
         decimated_mesh = cleanup_mesh_topology(decimated_mesh)
-        if args.watertight:
+        if args.watertight and not is_closed(decimated_mesh):
             decimated_mesh = make_watertight(decimated_mesh, label="decimated")
         if len(decimated_mesh.vertices) > 0 and len(decimated_mesh.triangles) > 0:
             decimated_mesh, dec_winding_flipped = orient_mesh_winding_outward(decimated_mesh)
@@ -2033,6 +2155,7 @@ def main() -> int:
 
     _step("write mesh exports")
     primary_mesh = textured_mesh if textured_mesh is not None else mesh
+    closure_report(primary_mesh, "full mesh")
     gltf_unit_scale = 0.001 if args.units == "mm" else 1.0
     if args.units == "mm" and len(primary_mesh.vertices) > 0:
         ext = primary_mesh.get_axis_aligned_bounding_box().get_extent()
@@ -2079,17 +2202,17 @@ def main() -> int:
         # into the triangle-count target quadric decimation actually takes.
         target_triangles = max(4, int(round(simplified_target_vertices * 2)))
         if len(primary_mesh.triangles) > target_triangles:
-            simplified_mesh = primary_mesh.simplify_quadric_decimation(
-                target_number_of_triangles=target_triangles
-            )
+            simplified_mesh = decimate(primary_mesh, target_triangles,
+                                       keep_topology=args.poisson_engine == "meshlab")
         else:
             simplified_mesh = copy.deepcopy(primary_mesh)
         simplified_mesh = cleanup_mesh_topology(simplified_mesh)
-        if args.watertight:
+        if args.watertight and not is_closed(simplified_mesh):
             simplified_mesh = make_watertight(simplified_mesh, label="simplified")
         if len(simplified_mesh.vertices) > 0 and len(simplified_mesh.triangles) > 0:
             simplified_mesh, simplified_winding_flipped = orient_mesh_winding_outward(simplified_mesh)
             simplified_mesh.compute_vertex_normals()
+            closure_report(simplified_mesh, "simplified")
             if write_glb(simplified_mesh, simplified_glb_path, unit_scale=gltf_unit_scale):
                 simplified_output_path_written = simplified_glb_path
                 simplified_vertex_count = len(simplified_mesh.vertices)

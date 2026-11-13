@@ -477,13 +477,37 @@ def test_stage4_single_side_camera_centers_and_options(s, tmp_path):
     assert r.execute_stage(3)
     cmd = r.calls[0][0]
     exp = recon_expected(col / "fused.ply", out / "recon", prune="none",
-                         extra=["--side1-camera-centers", str(col / "camera_centers.json")])
+                         extra=["--side1-camera-centers", str(col / "camera_centers.json"),
+                                "--flat-back", "1"])
     exp.remove("--poisson-linear-fit")
     for flag, val in [("--watertight", "0"),
                       ("--normalize-pose", "1"), ("--density-trim-quantile", "0.003"),
                       ("--outlier-std-ratio", "2.5"), ("--max-input-points", "1000000")]:
         exp[exp.index(flag) + 1] = val
     assert cmd == exp
+
+
+def test_stage4_single_side_flat_back_logged_and_optional(s, tmp_path):
+    out = tmp_path / "out"
+    (out / "colmap_side1").mkdir(parents=True)
+    (out / "colmap_side1" / "fused.ply").write_bytes(b"ply")
+    s["side2_var"] = ""
+    r = RecordingRunner(s)
+    assert r.execute_stage(3)
+    assert r.calls[0][0][-2:] == ["--flat-back", "1"]
+    assert "[stage 4] Single-side scan: closing the back flat" in r.info()
+
+    s["r_flat_back"] = False
+    r = RecordingRunner(s)
+    assert r.execute_stage(3)
+    assert "--flat-back" not in r.calls[0][0]
+    assert not any("closing the back flat" in line for line in r.info())
+
+
+def test_stage4_two_sided_never_flat_back(s, merged):
+    r = RecordingRunner(s)
+    r.execute_stage(3)
+    assert "--flat-back" not in r.calls[0][0]
 
 
 def test_stage4_black_background_prunes_black(s, merged):

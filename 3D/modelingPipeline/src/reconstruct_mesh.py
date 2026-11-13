@@ -323,6 +323,23 @@ def parse_args() -> argparse.Namespace:
             "never move (0/1, default: 1)."
         ),
     )
+    parser.add_argument(
+        "--flat-back",
+        type=int,
+        default=int(os.environ.get("FIPMESH_RECON_FLAT_BACK", "0")),
+        help=(
+            "Single-side scans: keep only the part of the (MeshLab) Poisson surface "
+            "the points support, slice it flat just inside the rim and cap it, "
+            "instead of keeping the smooth hull Poisson invents over the unseen "
+            "back. Forces the meshlab engine; skips density trim, cleanup, watertight "
+            "repair and smoothing, since the capped mesh is already closed (0/1, "
+            "default: 0)."
+        ),
+    )
+    parser.add_argument("--flat-back-support-k", type=float, default=4.0,
+                   help="Flat back: keep faces within k x median point spacing of the cloud (default: 4).")
+    parser.add_argument("--flat-back-margin-k", type=float, default=5.0,
+                   help="Flat back: cut this many point spacings inside the rim's shallowest point (default: 5).")
 
     parser.add_argument(
         "--normalize-pose",
@@ -1189,6 +1206,252 @@ def make_watertight(
     return out
 
 
+FLAT_BACK_GREY = 110 / 255  # neutral grey for the unscanned, flat back
+
+
+def _boundary_loops(tris: np.ndarray) -> tuple[np.ndarray, np.ndarray, dict]:
+    """Boundary edges (each in one face), their loop label, and {label: edge count}."""
+    from scipy.sparse import coo_matrix
+    from scipy.sparse.csgraph import connected_components
+    E = np.sort(np.concatenate([tris[:, [0, 1]], tris[:, [1, 2]], tris[:, [2, 0]]]), axis=1)
+    u, c = np.unique(E, axis=0, return_counts=True)
+    B = u[c == 1]
+    if len(B) == 0:
+        return B, np.zeros(0, dtype=np.int64), {}
+    n = int(tris.max()) + 1
+    _, lab = connected_components(coo_matrix((np.ones(len(B)), (B[:, 0], B[:, 1])), shape=(n, n)),
+                                  directed=False)
+    el = lab[B[:, 0]]
+    ids, sizes = np.unique(el, return_counts=True)
+    return B, el, dict(zip(ids.tolist(), sizes.tolist()))
+
+
+def _walk_loop(edges: np.ndarray) -> list[int] | None:
+    """Ordered vertex cycle from one loop's undirected edges, or None if not a simple cycle."""
+    adj: dict[int, list[int]] = {}
+    for a, b in edges.tolist():
+        adj.setdefault(a, []).append(b)
+        adj.setdefault(b, []).append(a)
+    if any(len(x) != 2 for x in adj.values()):
+        return None
+    start = int(edges[0, 0])
+    loop, prev = [start], None
+    while True:
+        u = loop[-1]
+        w = adj[u][0] if adj[u][0] != prev else adj[u][1]
+        if w == start:
+            break
+        loop.append(w)
+        prev = u
+        if len(loop) > len(adj):
+            return None
+    return loop if len(loop) == len(adj) else None
+
+
+def _fan_fill_loops(tris: np.ndarray) -> np.ndarray | None:
+    """Fan-fill every boundary loop with diagonals that aren't already mesh edges.
+    Returns the new triangles, or None if some loop can't be filled that way."""
+    B, el, sizes = _boundary_loops(tris)
+    E = np.sort(np.concatenate([tris[:, [0, 1]], tris[:, [1, 2]], tris[:, [2, 0]]]), axis=1)
+    existing = set(map(tuple, np.unique(E, axis=0).tolist()))
+    out = []
+    for cid in sizes:
+        loop = _walk_loop(B[el == cid])
+        if not loop or len(loop) < 3:
+            return None
+        for k in range(len(loop)):
+            r = loop[k:] + loop[:k]
+            if not any(tuple(sorted((r[0], r[i]))) in existing for i in range(2, len(r) - 1)):
+                out += [[r[0], r[i], r[i + 1]] for i in range(1, len(r) - 1)]
+                break
+        else:
+            return None
+    return np.array(out, dtype=np.int64).reshape(-1, 3)
+
+
+def _close_leftovers(tris: np.ndarray, max_rounds: int = 6) -> np.ndarray:
+    """Close small leftover holes: fan-fill them, opening a hole up by one ring of faces
+    whenever its loop is pinched (not a simple cycle, or every fan diagonal exists)."""
+    for _ in range(max_rounds):
+        B, _, _ = _boundary_loops(tris)
+        if len(B) == 0:
+            break
+        fill = _fan_fill_loops(tris)
+        if fill is not None:
+            tris = np.vstack([tris, fill])
+            continue
+        tris = tris[~np.isin(tris, np.unique(B)).any(axis=1)]
+    return tris
+
+
+def _largest_piece(n_verts: int, tris: np.ndarray) -> np.ndarray:
+    from scipy.sparse import coo_matrix
+    from scipy.sparse.csgraph import connected_components
+    g = coo_matrix((np.ones(len(tris) * 2), (np.r_[tris[:, 0], tris[:, 1]], np.r_[tris[:, 1], tris[:, 2]])),
+                   shape=(n_verts, n_verts))
+    _, lab = connected_components(g, directed=False)
+    fl = lab[tris[:, 0]]
+    ids, cnt = np.unique(fl, return_counts=True)
+    return tris[fl == ids[np.argmax(cnt)]]
+
+
+def _signed_volume(V: np.ndarray, T: np.ndarray) -> float:
+    return float(np.einsum("ij,ij->i", V[T[:, 0]], np.cross(V[T[:, 1]], V[T[:, 2]])).sum() / 6.0)
+
+
+def flat_back(
+    mesh: o3d.geometry.TriangleMesh,
+    points: np.ndarray,
+    support_k: float = 4.0,
+    margin_k: float = 5.0,
+) -> tuple[o3d.geometry.TriangleMesh, np.ndarray] | None:
+    """Close a single-side scan with a flat back, keeping the scanned surface as-is.
+
+    Screened Poisson on one side's points closes the surface by inventing a smooth
+    hull over everything the cameras never saw. This keeps only the part of the
+    Poisson surface the points support, slices it with a plane fitted to the rim
+    (just inside the rim's shallowest point, so the cut crosses real surface all
+    the way round and the new rim is a clean planar cross-section), and caps that
+    cross-section flat. The input must be the closed, orientable MeshLab Poisson
+    surface: it is only ever cut, never merged, so the result stays orientable.
+
+    Returns (closed mesh, per-vertex bool mask of the flat back), or None if the
+    surface can't be capped cleanly (the caller then falls back to the normal path).
+    """
+    import pymeshlab
+    from scipy.spatial import cKDTree
+    import mapbox_earcut
+
+    V = np.asarray(mesh.vertices, dtype=np.float64)
+    T = np.asarray(mesh.triangles, dtype=np.int64)
+    if len(T) == 0 or len(points) < 10:
+        return None
+
+    # 1. keep only faces the points support
+    tree = cKDTree(points)
+    spacing = float(np.median(tree.query(points, k=2, workers=-1)[0][:, 1]))
+    edge = float(np.median(np.linalg.norm(V[T[:, 0]] - V[T[:, 1]], axis=1)))
+    # a face is supported when the points come within a few spacings of it; never
+    # demand less than one edge length, or coarse meshes over dense points lose everything
+    support = max(support_k * spacing, edge)
+    dist, _ = tree.query(V[T].mean(axis=1), workers=-1)
+    T = T[dist < support]
+    if len(T) == 0:
+        print("flat back:           no faces near the points; not applied")
+        return None
+    T = _largest_piece(len(V), T)
+    print(f"flat back support:   faces within {support:.4f} of the points ({len(T):,} kept)")
+
+    def ms_of(V_, T_):
+        ms_ = pymeshlab.MeshSet()
+        ms_.add_mesh(pymeshlab.Mesh(vertex_matrix=V_, face_matrix=T_.astype(np.int32)))
+        return ms_
+
+    def close_all_but_rim(ms_):
+        # Size limit just above the second-largest loop, not just below the rim:
+        # MeshLab can measure the rim as smaller than its edge count (where it
+        # touches itself) and would close it too.
+        _, _, sizes = _boundary_loops(ms_.current_mesh().face_matrix().astype(np.int64))
+        if len(sizes) > 1:
+            second = sorted(sizes.values())[-2]
+            ms_.meshing_close_holes(maxholesize=int(second + 1),
+                                    newfaceselected=False, selfintersection=False)
+
+    # 2. close the small holes, leaving only the rim open
+    ms = ms_of(V, T)
+    ms.meshing_remove_unreferenced_vertices()
+    close_all_but_rim(ms)
+    V = ms.current_mesh().vertex_matrix().copy()
+    T = ms.current_mesh().face_matrix().astype(np.int64)
+    B, el, sizes = _boundary_loops(T)
+    if not sizes:
+        print("flat back:           surface has no open rim; nothing to cap")
+        return None
+    rim = V[np.unique(B[el == max(sizes, key=sizes.get)])]
+
+    # 3. plane through the rim, normal pointing away from the scanned surface
+    c = rim.mean(axis=0)
+    n = np.linalg.svd(rim - c, full_matrices=False)[2][2]
+    if np.dot(V.mean(axis=0) - c, n) > 0:
+        n = -n
+    depth = (rim - c) @ n
+    origin = c + (depth.min() - max(margin_k * spacing, edge)) * n
+    print(f"flat back rim:       {len(rim):,} verts, out of plane by +/-{np.ptp(depth) / 2:.3f}")
+
+    # 4. slice by deleting every face that reaches behind the plane (the plane sits
+    #    just inside the rim's shallowest point, so it crosses real surface everywhere)
+    side = (V - origin) @ n
+    T = T[(side[T] <= 0).all(axis=1)]
+    if len(T) == 0:
+        print("flat back:           nothing left in front of the cut; not applied")
+        return None
+    T = _largest_piece(len(V), T)
+    ms = ms_of(V, T)
+    ms.meshing_remove_duplicate_faces()
+    ms.meshing_remove_unreferenced_vertices()
+    ms.meshing_repair_non_manifold_edges()
+    ms.meshing_repair_non_manifold_vertices()
+    close_all_but_rim(ms)
+    V = ms.current_mesh().vertex_matrix().copy()
+    T = ms.current_mesh().face_matrix().astype(np.int64)
+
+    # 5. cap: walk the rim, put it exactly on the plane, triangulate it there
+    B, el, sizes = _boundary_loops(T)
+    if not sizes:
+        print("flat back:           cut left no open rim; not applied")
+        return None
+    rim_id = max(sizes, key=sizes.get)
+    loop = _walk_loop(B[el == rim_id])
+    if loop is None:
+        print("warning: flat back skipped: the cut rim isn't a simple loop", file=sys.stderr)
+        return None
+    loop = np.array(loop)
+    V[loop] -= np.outer((V[loop] - origin) @ n, n)
+    e1 = np.cross(n, [1.0, 0, 0] if abs(n[0]) < 0.9 else [0, 1.0, 0])
+    e1 /= np.linalg.norm(e1)
+    e2 = np.cross(n, e1)
+    P2 = np.c_[(V[loop] - origin) @ e1, (V[loop] - origin) @ e2]
+    cap = loop[np.asarray(mapbox_earcut.triangulate_float64(
+        P2, np.array([len(loop)], dtype=np.uint32))).reshape(-1, 3)]
+    T = np.vstack([T, cap])
+
+    # 6. repair where the cap meets the surface, close anything left, orient
+    ms = ms_of(V, T)
+    for _ in range(3):
+        ms.meshing_remove_duplicate_faces()
+        ms.meshing_remove_null_faces()
+        ms.meshing_repair_non_manifold_edges()
+        ms.meshing_repair_non_manifold_vertices()
+        ms.meshing_remove_unreferenced_vertices()
+        ms.meshing_close_holes(maxholesize=200, newfaceselected=False, selfintersection=False)
+        boundary, _ = _mesh_edge_report(ms.current_mesh().face_matrix().astype(np.int64))
+        if boundary == 0:
+            break
+    V = ms.current_mesh().vertex_matrix().copy()
+    T = _close_leftovers(ms.current_mesh().face_matrix().astype(np.int64))
+    ms = ms_of(V, T)
+    ms.meshing_remove_unreferenced_vertices()
+    try:
+        ms.meshing_re_orient_faces_coherently()
+    except pymeshlab.PyMeshLabException as exc:
+        print(f"warning: flat back skipped: {exc}", file=sys.stderr)
+        return None
+    V = ms.current_mesh().vertex_matrix().copy()
+    T = ms.current_mesh().face_matrix().astype(np.int64)
+    if _signed_volume(V, T) < 0:
+        T = T[:, ::-1].copy()
+
+    out = o3d.geometry.TriangleMesh(o3d.utility.Vector3dVector(V), o3d.utility.Vector3iVector(T.astype(np.int32)))
+    boundary, conflicts = _mesh_edge_report(T)
+    if boundary or len(conflicts) or not out.is_orientable():
+        print(f"warning: flat back skipped: result not closed/orientable "
+              f"({boundary} boundary edges, {len(conflicts)} mis-wound)", file=sys.stderr)
+        return None
+    back = np.abs((V - origin) @ n) < 1e-6 * max(1.0, float(np.ptp(V, axis=0).max()))
+    print(f"flat back:           closed, {int(back.sum()):,} verts on the flat back")
+    return out, back
+
+
 def run_texture_hook(
     cmd_template: str,
     mesh_path: Path,
@@ -2030,7 +2293,7 @@ def main() -> int:
             print(f"warning: failed to write clean cloud to {clean_cloud_path}", file=sys.stderr)
 
     _step("poisson reconstruction")
-    if args.poisson_engine == "meshlab":
+    if args.poisson_engine == "meshlab" or args.flat_back:
         mesh = poisson_meshlab(pcd, depth=max(5, int(args.poisson_depth)),
                                scale=max(1.0, float(args.poisson_scale)))
         densities = np.zeros(0)
@@ -2050,38 +2313,52 @@ def main() -> int:
 
     save_snapshot(output_path, "03_poisson_raw", mesh)
 
-    densities_np = np.asarray(densities)
-    density_q = float(np.clip(args.density_trim_quantile, 0.0, 0.99))
-    if density_q > 0 and len(densities_np) == len(mesh.vertices) and len(densities_np) > 0:
-        _step("density trim")
-        density_cut = float(np.quantile(densities_np, density_q))
-        mesh.remove_vertices_by_mask(densities_np < density_cut)
-        print(f"density q:           {density_q:.4f}")
-        print(f"density cut:         {density_cut:.6f}")
+    flat_back_mask = None
+    if args.flat_back:
+        _step("flat back (single-side scan)")
+        fb = flat_back(mesh, np.asarray(pcd.points),
+                       support_k=float(args.flat_back_support_k),
+                       margin_k=float(args.flat_back_margin_k))
+        if fb is not None:
+            mesh, flat_back_mask = fb
+            save_snapshot(output_path, "03c_flat_back", mesh)
+            print("cleanup / repair / smoothing: skipped (flat-back mesh is already closed)")
+        else:
+            print("flat back:           not applied; continuing with the closed Poisson surface")
 
-    if len(pcd.points) > 0 and args.poisson_crop_scale > 0 and args.poisson_engine != "meshlab":
-        aabb = pcd.get_axis_aligned_bounding_box()
-        aabb = aabb.scale(max(1.0, float(args.poisson_crop_scale)), aabb.get_center())
-        mesh = mesh.crop(aabb)
+    if flat_back_mask is None:
+        densities_np = np.asarray(densities)
+        density_q = float(np.clip(args.density_trim_quantile, 0.0, 0.99))
+        if density_q > 0 and len(densities_np) == len(mesh.vertices) and len(densities_np) > 0:
+            _step("density trim")
+            density_cut = float(np.quantile(densities_np, density_q))
+            mesh.remove_vertices_by_mask(densities_np < density_cut)
+            print(f"density q:           {density_q:.4f}")
+            print(f"density cut:         {density_cut:.6f}")
 
-    _step("mesh cleanup")
-    mesh = cleanup_mesh_topology(mesh)
-    mesh = keep_significant_mesh_components(
-        mesh,
-        min_ratio=float(np.clip(args.component_min_ratio, 0.0, 1.0)),
-        min_triangles=max(0, int(args.component_min_triangles)),
-        max_count=max(0, int(args.component_max_count)),
-    )
-    mesh = cleanup_mesh_topology(mesh)
+        if len(pcd.points) > 0 and args.poisson_crop_scale > 0 and args.poisson_engine != "meshlab":
+            aabb = pcd.get_axis_aligned_bounding_box()
+            aabb = aabb.scale(max(1.0, float(args.poisson_crop_scale)), aabb.get_center())
+            mesh = mesh.crop(aabb)
 
-    if args.watertight and len(mesh.triangles) > 0 and not is_closed(mesh):
-        _step("make watertight")
-        mesh = make_watertight(mesh, label="mesh")
-        save_snapshot(output_path, "03b_watertight", mesh)
-
-    if args.smooth_iters > 0 and len(mesh.triangles) > 0:
-        mesh = mesh.filter_smooth_taubin(number_of_iterations=max(1, int(args.smooth_iters)))
+        _step("mesh cleanup")
         mesh = cleanup_mesh_topology(mesh)
+        mesh = keep_significant_mesh_components(
+            mesh,
+            min_ratio=float(np.clip(args.component_min_ratio, 0.0, 1.0)),
+            min_triangles=max(0, int(args.component_min_triangles)),
+            max_count=max(0, int(args.component_max_count)),
+        )
+        mesh = cleanup_mesh_topology(mesh)
+
+        if args.watertight and len(mesh.triangles) > 0 and not is_closed(mesh):
+            _step("make watertight")
+            mesh = make_watertight(mesh, label="mesh")
+            save_snapshot(output_path, "03b_watertight", mesh)
+
+        if args.smooth_iters > 0 and len(mesh.triangles) > 0:
+            mesh = mesh.filter_smooth_taubin(number_of_iterations=max(1, int(args.smooth_iters)))
+            mesh = cleanup_mesh_topology(mesh)
 
     if len(mesh.vertices) == 0 or len(mesh.triangles) == 0:
         print("error: mesh became empty after cleanup", file=sys.stderr)
@@ -2110,7 +2387,7 @@ def main() -> int:
     ):
         _step("optional decimation")
         decimated_mesh = decimate(mesh, max(4, int(args.decimate_target_triangles)),
-                                  keep_topology=args.poisson_engine == "meshlab")
+                                  keep_topology=args.poisson_engine == "meshlab" or flat_back_mask is not None)
         decimated_mesh = cleanup_mesh_topology(decimated_mesh)
         if args.watertight and not is_closed(decimated_mesh):
             decimated_mesh = make_watertight(decimated_mesh, label="decimated")
@@ -2142,6 +2419,10 @@ def main() -> int:
     if pcd_has_colors(pcd):
         _step("textured output (vertex colors)")
         textured_mesh = transfer_vertex_colors_from_point_cloud(mesh, pcd)
+        if textured_mesh is not None and flat_back_mask is not None:
+            cols = np.asarray(textured_mesh.vertex_colors).copy()
+            cols[flat_back_mask] = FLAT_BACK_GREY
+            textured_mesh.vertex_colors = o3d.utility.Vector3dVector(cols)
         if textured_mesh is None:
             print(
                 "warning: failed to transfer vertex colors onto reconstructed mesh",
@@ -2203,7 +2484,7 @@ def main() -> int:
         target_triangles = max(4, int(round(simplified_target_vertices * 2)))
         if len(primary_mesh.triangles) > target_triangles:
             simplified_mesh = decimate(primary_mesh, target_triangles,
-                                       keep_topology=args.poisson_engine == "meshlab")
+                                       keep_topology=args.poisson_engine == "meshlab" or flat_back_mask is not None)
         else:
             simplified_mesh = copy.deepcopy(primary_mesh)
         simplified_mesh = cleanup_mesh_topology(simplified_mesh)

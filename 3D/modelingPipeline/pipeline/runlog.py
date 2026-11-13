@@ -41,7 +41,8 @@ SCHEMA_VERSION = 1
 
 # Packages whose versions are recorded (from the venv the stages run in).
 PACKAGES = ("open3d", "numpy", "rembg", "onnxruntime", "onnxruntime-gpu", "torch",
-            "opencv-python", "opencv-python-headless", "pillow", "trimesh", "pymeshlab")
+            "opencv-python", "opencv-python-headless", "pillow", "trimesh", "pymeshlab",
+            "mapbox_earcut")
 
 # Terminal colour/cursor escapes (onnxruntime, tqdm) that would clutter the file.
 _ANSI = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")

@@ -31,6 +31,7 @@ python3 -m pip install --break-system-packages -r requirements.txt
 ```
 
 `requirements.txt` pulls `open3d`, `pymeshlab` (watertight mesh repair),
+`mapbox_earcut` (the flat back on single-side scans),
 `numpy<2.5`, `rembg[gpu]` (use plain `rembg`
 on a CPU-only machine) with `onnxruntime-gpu<1.27`, `pillow`,
 `opencv-python-headless` (mask cleanup), `textual` (the terminal UI) and
@@ -378,6 +379,23 @@ Mirrors `src/reconstruct_mesh.py`'s CLI options (`python3 src/reconstruct_mesh.p
   old Open3D boundary-triangulation hole filling and its size ratio / passes /
   smoothing options, which left holes behind (size cap, non-convergence, and
   decimation reopening them).
+- **Single-side scans: close the back flat** (checkbox, default **on**;
+  `--flat-back 1` on the CLI, passed only when there is no side 2). With one
+  side scanned, Poisson closes the surface by inventing a smooth hull over
+  everything the cameras never saw, which covers the real detail like a
+  blanket. With this on, Stage 4 always uses the MeshLab engine, keeps only
+  the faces within a few point spacings of the cloud, slices that surface with
+  a plane fitted to its rim (placed just inside the rim's shallowest point, so
+  the cut crosses real surface all the way round; expect it to take roughly
+  10% of the scanned area off the ragged edge), and caps the clean planar
+  cross-section with a flat grey back. The scanned side is never merged or
+  smoothed, so it stays exactly as reconstructed, and the result is closed and
+  consistently wound. Density trim, mesh cleanup, the watertight repair and
+  smoothing are skipped for that mesh; decimation keeps the topology. If the
+  surface can't be capped cleanly the log says so and Stage 4 carries on with
+  the normal closed surface. `--flat-back-support-k` and
+  `--flat-back-margin-k` tune the support distance and cut margin (in point
+  spacings).
 - **Mesh cleanup** — **Component min ratio/min triangles** drop small
   disconnected mesh pieces (by relative size and by absolute triangle count);
   **Component max count** caps how many components survive; **Smooth

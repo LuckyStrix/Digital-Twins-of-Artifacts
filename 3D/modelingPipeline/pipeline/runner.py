@@ -214,7 +214,8 @@ def align_cmd(s: Mapping, ply_a: str, ply_b: str, merged_out: Path,
 
 def recon_cmd(s: Mapping, input_ply: str, out_obj: str, clean_cloud: str,
               decimated: str, side1_camera_centers: str = "",
-              units: str = "none", scale_json: str = "") -> list[str]:
+              units: str = "none", scale_json: str = "",
+              single_side: bool = False) -> list[str]:
     # --background transparent has no single flat fill colour to prune by
     # (the "background" there is the real original backdrop photo, not a
     # flat fill) — only white/black produce a colour worth pruning against.
@@ -261,6 +262,8 @@ def recon_cmd(s: Mapping, input_ply: str, out_obj: str, clean_cloud: str,
         cmd += ["--units", units]
     if scale_json:
         cmd += ["--scale-json", scale_json]
+    if single_side and s["r_flat_back"]:
+        cmd += ["--flat-back", "1"]
     return cmd
 
 
@@ -750,11 +753,14 @@ class PipelineRunner:
 
         side1_cam_centers = self.paths.side1_camera_centers_path()
         units, scale_json = self._scale_for_recon()
+        single_side = not self.paths.active_sides()[1]
         cmd = recon_cmd(
             self.settings,
             str(input_ply), str(out_obj), str(clean_cloud), str(decimated_obj),
             side1_camera_centers=str(side1_cam_centers) if side1_cam_centers.exists() else "",
-            units=units, scale_json=scale_json)
+            units=units, scale_json=scale_json, single_side=single_side)
+        if single_side and self.settings["r_flat_back"]:
+            self.log("[stage 4] Single-side scan: closing the back flat")
         if units == "mm":
             self.log("[stage 4] input is in millimeters; model.gltf / model_simplified.glb "
                      "will be in meters")

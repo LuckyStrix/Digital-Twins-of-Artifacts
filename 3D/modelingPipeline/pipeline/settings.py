@@ -237,6 +237,14 @@ REGISTRY: list[Setting] = [
              "and no see-through gaps. Patches are refined to the local edge length "
              "so they blend in; original vertices never move. Runs on the full, "
              "decimated and simplified meshes. Needs pymeshlab.")),
+    _S("r_flat_back", BOOL, True, _RC, "Hole filling",
+       "Single-side scans: close the back flat",
+       help=("With only one side scanned, Poisson closes the surface by inventing a "
+             "smooth hull over everything the cameras never saw. With this on, Stage 4 "
+             "keeps only the surface the points support, slices it flat just inside "
+             "the rim and caps it with a grey flat back, so the scanned side stays "
+             "exactly as reconstructed and the mesh is still closed. Two-sided scans "
+             "are not affected. Needs mapbox_earcut.")),
 
     _S("r_comp_min_ratio", FLOAT, 0.01, _RC, "Mesh cleanup", "Component min ratio",
        min=0, max=1.0, step=0.005),
@@ -390,7 +398,7 @@ PERSISTED_KEYS = [
     "r_normal_max_nn", "r_normal_orient_k",
     "r_poisson_engine", "r_poisson_depth", "r_poisson_linear", "r_density_trim",
     "r_poisson_crop_scale", "r_hole_reduction",
-    "r_watertight",
+    "r_watertight", "r_flat_back",
     "r_comp_min_ratio", "r_comp_min_tris", "r_comp_max_count",
     "r_smooth_iters", "r_decimate_tris", "r_simplified_target_verts",
     "r_normalize_pose",

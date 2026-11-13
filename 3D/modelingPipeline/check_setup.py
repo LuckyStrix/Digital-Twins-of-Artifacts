@@ -59,6 +59,7 @@ def check_python() -> None:
 
 def check_modules() -> None:
     modules = [("numpy", "numpy"), ("open3d", "open3d"), ("pymeshlab", "pymeshlab"),
+               ("mapbox_earcut", "mapbox_earcut"),
                ("cv2", "opencv"),
                ("PIL", "pillow"), ("rembg", "rembg[gpu]"),
                ("onnxruntime", "onnxruntime-gpu"), ("textual", "textual")]

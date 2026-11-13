@@ -295,12 +295,16 @@ class CaptureApp:
         return "" if port in ("", NO_TURNTABLE) else port
 
     def _refresh_ports(self):
+        if not SERIAL_AVAILABLE:
+            self._log("⚠ pyserial is not installed, so no Arduino ports can be listed "
+                      "(Debian/Ubuntu: sudo apt install python3-serial).")
         ports = [p.device for p in serial.tools.list_ports.comports()] if SERIAL_AVAILABLE else []
         self.port_combo["values"] = [NO_TURNTABLE] + ports
-        # Keep the current selection if it is still present; otherwise auto-pick
-        # an Arduino-looking port, and fall back to "no turntable" rather than a
+        # Keep the current selection if it is a port that is still present;
+        # otherwise (including "no turntable", the startup default) auto-pick an
+        # Arduino-looking port, and fall back to "no turntable" rather than a
         # random tty so a phone-only setup works without touching this box.
-        if self.port_var.get() not in [NO_TURNTABLE] + ports:
+        if self.port_var.get() not in ports:
             self.port_var.set(NO_TURNTABLE)
             for p in ports:
                 if any(tag in p.upper() for tag in ("ACM", "USB", "COM")):

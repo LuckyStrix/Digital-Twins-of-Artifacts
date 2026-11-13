@@ -345,6 +345,63 @@ def rescale_images_bin(path: Path, s: float) -> None:
     Path(path).write_bytes(bytes(buf))
 
 
+def rescale_frames_bin(path: Path, s: float) -> None:
+    """Multiply every frame's rig_from_world translation in a COLMAP 4.x
+    frames.bin by ``s``. COLMAP reads camera poses from frames.bin (images.bin
+    only keeps a copy), so a model with frames.bin isn't rescaled until this
+    file is too."""
+    buf = bytearray(Path(path).read_bytes())
+    (n,) = struct.unpack_from("<Q", buf, 0)
+    off = 8
+    for _ in range(n):
+        off += 4 + 4 + 32                              # frame_id, rig_id, quaternion
+        t = struct.unpack_from("<3d", buf, off)
+        struct.pack_into("<3d", buf, off, *(v * s for v in t))
+        off += 24
+        (nd,) = struct.unpack_from("<I", buf, off)
+        off += 4 + nd * 16                             # (sensor type, sensor id, data id)
+    if off != len(buf):
+        raise ValueError(f"{path}: unexpected frames.bin layout ({off} of {len(buf)} bytes read)")
+    Path(path).write_bytes(bytes(buf))
+
+
+def rescale_rigs_bin(path: Path, s: float) -> None:
+    """Multiply the sensor_from_rig translation of every non-reference sensor
+    in a COLMAP 4.x rigs.bin by ``s`` (a calibrated rig's camera offsets)."""
+    buf = bytearray(Path(path).read_bytes())
+    (n,) = struct.unpack_from("<Q", buf, 0)
+    off = 8
+    for _ in range(n):
+        (_, n_sensors) = struct.unpack_from("<II", buf, off)
+        off += 8
+        if n_sensors > 0:
+            off += 8                                   # reference sensor (type, id)
+        for _ in range(max(0, n_sensors - 1)):
+            off += 8                                   # sensor type, id
+            has_pose = buf[off]
+            off += 1
+            if has_pose:
+                off += 32                              # quaternion
+                t = struct.unpack_from("<3d", buf, off)
+                struct.pack_into("<3d", buf, off, *(v * s for v in t))
+                off += 24
+    if off != len(buf):
+        raise ValueError(f"{path}: unexpected rigs.bin layout ({off} of {len(buf)} bytes read)")
+    Path(path).write_bytes(bytes(buf))
+
+
+def rescale_depth_map(path: Path, s: float) -> None:
+    """Multiply every depth in a COLMAP depth map (``W&H&C&`` text header, then
+    float32 values) by ``s``. Zero means no depth and stays zero."""
+    raw = Path(path).read_bytes()
+    amp = 0
+    for _ in range(3):
+        amp = raw.index(b"&", amp) + 1
+    d = np.frombuffer(raw, dtype="<f4", offset=amp).copy()
+    d *= np.float32(s)
+    Path(path).write_bytes(raw[:amp] + d.tobytes())
+
+
 def rescale_points3d_bin(path: Path, s: float) -> None:
     buf = bytearray(Path(path).read_bytes())
     (n,) = struct.unpack_from("<Q", buf, 0)

@@ -140,6 +140,13 @@ REGISTRY: list[Setting] = [
     _S("match_max_var", INT, 65536, _CM, "Matching", "Max matches",
        min=1000, max=131072, step=4096),
 
+    _S("fusion_mask_erode_var", INT, 6, _CM, "Dense fusion", "Fill mask erode (px)",
+       min=0, max=50, hint="(0=off)",
+       help=("Fusion skips the background fill around the tablet, shrunk inward by "
+             "this many pixels. Depths spill a few pixels past the outline onto the "
+             "fill; fused, they become dark specks over the whole surface. Uses "
+             "Stage 1's Background color (black or white; off for other fills).")),
+
     *[_S(key, INT, 0, _CM, "Threads / Cache  (0 = auto)", label, min=0, max=256)
       for label, key in [
           ("Extract threads",   "extract_threads_var"),
@@ -198,6 +205,13 @@ REGISTRY: list[Setting] = [
     _S("r_normal_max_nn", INT, 96, _RC, "Normals", "Normal max NN", min=0, max=512),
     _S("r_normal_orient_k", INT, 64, _RC, "Normals", "Normal orient K", min=0, max=512),
 
+    _S("r_poisson_engine", CHOICE, "meshlab", _RC, "Poisson reconstruction", "Poisson engine",
+       choices=("meshlab", "open3d"),
+       help=("meshlab (default): pymeshlab's screened Poisson. Its surface is closed and "
+             "2-manifold as reconstructed and is kept untrimmed, so every exported mesh "
+             "is watertight without hole patching; density trim and crop scale don't "
+             "apply. open3d: the older Open3D Poisson, trimmed by density and crop, with "
+             "holes closed afterward by the watertight repair below.")),
     _S("r_poisson_depth", INT, 10, _RC, "Poisson reconstruction", "Poisson depth", min=5, max=14),
     _S("r_poisson_linear", BOOL, True, _RC, "Poisson reconstruction", "Poisson linear fit"),
     _S("r_density_trim", FLOAT, 0.02, _RC, "Poisson reconstruction", "Density trim quantile",
@@ -223,6 +237,14 @@ REGISTRY: list[Setting] = [
              "and no see-through gaps. Patches are refined to the local edge length "
              "so they blend in; original vertices never move. Runs on the full, "
              "decimated and simplified meshes. Needs pymeshlab.")),
+    _S("r_flat_back", BOOL, True, _RC, "Hole filling",
+       "Single-side scans: close the back flat",
+       help=("With only one side scanned, Poisson closes the surface by inventing a "
+             "smooth hull over everything the cameras never saw. With this on, Stage 4 "
+             "keeps only the surface the points support, slices it flat just inside "
+             "the rim and caps it with a grey flat back, so the scanned side stays "
+             "exactly as reconstructed and the mesh is still closed. Two-sided scans "
+             "are not affected. Needs mapbox_earcut.")),
 
     _S("r_comp_min_ratio", FLOAT, 0.01, _RC, "Mesh cleanup", "Component min ratio",
        min=0, max=1.0, step=0.005),
@@ -250,7 +272,7 @@ REGISTRY: list[Setting] = [
              "glb) shares the same pose.")),
 
     # ── Alignment ─────────────────────────────────────────────────────────────
-    _S("align_method_var", CHOICE, "fpfh", _AL, "FPFH alignment settings", "Method",
+    _S("align_method_var", CHOICE, "all", _AL, "FPFH alignment settings", "Method",
        choices=tuple(ALIGN_METHODS)),
     _S("align_voxel_var", STR, "0", _AL, "FPFH alignment settings", "Voxel (0=auto)",
        validate="float"),
@@ -317,7 +339,7 @@ REGISTRY: list[Setting] = [
        help="Useful for re-running alignment with different inputs."),
 
     # ── Scale ─────────────────────────────────────────────────────────────────
-    _S("scale_ring_var", BOOL, False, _SC, "Reference ring",
+    _S("scale_ring_var", BOOL, True, _SC, "Reference ring",
        "Scale to millimeters with the reference ring",
        help=("Stage 2 finds the ring fixed to the turntable in each side's raw "
              "photos and scales that side's reconstruction to millimeters "
@@ -361,7 +383,7 @@ PERSISTED_KEYS = [
     "img_stride_var",
     "sift_features_var", "sift_peak_var", "sift_edge_var",
     "sift_dsp_var", "sift_affine_var",
-    "match_guided_var", "match_max_var",
+    "match_guided_var", "match_max_var", "fusion_mask_erode_var",
     "extract_threads_var", "match_threads_var", "mapper_threads_var",
     "fusion_threads_var", "patch_cache_var", "fusion_cache_var",
     "sec_rotate_deg_var", "sec_rotate_axis_var",
@@ -374,9 +396,9 @@ PERSISTED_KEYS = [
     "r_dbscan_max_pts", "r_dbscan_min_pts", "r_dbscan_eps",
     "r_dbscan_keep", "r_dbscan_ratio",
     "r_normal_max_nn", "r_normal_orient_k",
-    "r_poisson_depth", "r_poisson_linear", "r_density_trim",
+    "r_poisson_engine", "r_poisson_depth", "r_poisson_linear", "r_density_trim",
     "r_poisson_crop_scale", "r_hole_reduction",
-    "r_watertight",
+    "r_watertight", "r_flat_back",
     "r_comp_min_ratio", "r_comp_min_tris", "r_comp_max_count",
     "r_smooth_iters", "r_decimate_tris", "r_simplified_target_verts",
     "r_normalize_pose",

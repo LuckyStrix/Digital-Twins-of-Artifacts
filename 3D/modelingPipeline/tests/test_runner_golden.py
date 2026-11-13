@@ -123,6 +123,8 @@ GOLDEN_COLMAP_ENV_DEFAULTS = {
     "FIPMESH_COLMAP_SIFT_ESTIMATE_AFFINE_SHAPE": "0",
     "FIPMESH_COLMAP_MATCH_GUIDED": "1",
     "FIPMESH_COLMAP_MATCH_MAX_NUM_MATCHES": "65536",
+    "FIPMESH_COLMAP_FUSION_MASK_FILL": "white",
+    "FIPMESH_COLMAP_FUSION_MASK_ERODE": "6",
     "FIPMESH_SKIP_RECON": "1",
     "FIPMESH_SCALE_RING": "0",
     "FIPMESH_COLMAP_SECONDARY_ROTATE_DEG": "180",
@@ -204,6 +206,8 @@ def test_stage2_env_non_default(s, tmp_path):
         "FIPMESH_COLMAP_SIFT_ESTIMATE_AFFINE_SHAPE": "1",
         "FIPMESH_COLMAP_MATCH_GUIDED": "0",
         "FIPMESH_COLMAP_MATCH_MAX_NUM_MATCHES": "32768",
+        "FIPMESH_COLMAP_FUSION_MASK_FILL": "white",
+        "FIPMESH_COLMAP_FUSION_MASK_ERODE": "6",
         "FIPMESH_SKIP_RECON": "1",
         "FIPMESH_SCALE_RING": "0",
         "FIPMESH_COLMAP_EXTRACT_THREADS": "4",
@@ -312,7 +316,7 @@ def test_stage3_defaults(s, fused):
         PY, str(SCRIPT_DIR / "alignment" / "run.py"),
         str(fused / "colmap_side1" / "fused.ply"), str(fused / "colmap_side2" / "fused.ply"),
         "-o", str(fused / "aligned_cloud" / "merged_fpfh.ply"),
-        "--method", "fpfh",
+        "--method", "all",
         "--samples", "60000",
         "--resolve-seam",
         "--seam-mode", "point",
@@ -329,7 +333,7 @@ def test_stage3_defaults(s, fused):
 
 def test_stage3_refine_voxel_and_fallbacks(s, fused):
     s.update({
-        "align_method_var": "all", "align_samples_var": 5000, "align_voxel_var": " 0.02 ",
+        "align_method_var": "fpfh", "align_samples_var": 5000, "align_voxel_var": " 0.02 ",
         "align_seam_var": True, "align_seam_mode_var": "patch",
         "align_seam_tau_var": " ", "align_seam_minconf_var": "", "align_seam_window_var": "",
         "align_seam_minc_var": 5, "align_seam_passes_var": 1,
@@ -340,7 +344,7 @@ def test_stage3_refine_voxel_and_fallbacks(s, fused):
     r = RecordingRunner(s)
     r.execute_stage(2)
     assert r.calls[0][0][6:] == [
-        "--method", "all",
+        "--method", "fpfh",
         "--samples", "5000",
         "--voxel", "0.02",
         "--resolve-seam",
@@ -365,7 +369,7 @@ def test_stage3_no_seam_voxel_zero(s, fused):
     s.update({"align_seam_var": False, "align_voxel_var": "0"})
     r = RecordingRunner(s)
     r.execute_stage(2)
-    assert r.calls[0][0][6:] == ["--method", "fpfh", "--samples", "60000"]
+    assert r.calls[0][0][6:] == ["--method", "all", "--samples", "60000"]
 
 
 def test_stage3_single_side_skipped(s):
@@ -419,6 +423,7 @@ def recon_expected(input_ply: Path, recon: Path, prune="white", extra=()):
         "--dbscan-min-cluster-ratio", "0.02",
         "--normal-max-nn", "96",
         "--normal-orient-k", "64",
+        "--poisson-engine", "meshlab",
         "--poisson-depth", "10",
         "--density-trim-quantile", "0.02",
         "--poisson-crop-scale", "1.05",
@@ -472,13 +477,37 @@ def test_stage4_single_side_camera_centers_and_options(s, tmp_path):
     assert r.execute_stage(3)
     cmd = r.calls[0][0]
     exp = recon_expected(col / "fused.ply", out / "recon", prune="none",
-                         extra=["--side1-camera-centers", str(col / "camera_centers.json")])
+                         extra=["--side1-camera-centers", str(col / "camera_centers.json"),
+                                "--flat-back", "1"])
     exp.remove("--poisson-linear-fit")
     for flag, val in [("--watertight", "0"),
                       ("--normalize-pose", "1"), ("--density-trim-quantile", "0.003"),
                       ("--outlier-std-ratio", "2.5"), ("--max-input-points", "1000000")]:
         exp[exp.index(flag) + 1] = val
     assert cmd == exp
+
+
+def test_stage4_single_side_flat_back_logged_and_optional(s, tmp_path):
+    out = tmp_path / "out"
+    (out / "colmap_side1").mkdir(parents=True)
+    (out / "colmap_side1" / "fused.ply").write_bytes(b"ply")
+    s["side2_var"] = ""
+    r = RecordingRunner(s)
+    assert r.execute_stage(3)
+    assert r.calls[0][0][-2:] == ["--flat-back", "1"]
+    assert "[stage 4] Single-side scan: closing the back flat" in r.info()
+
+    s["r_flat_back"] = False
+    r = RecordingRunner(s)
+    assert r.execute_stage(3)
+    assert "--flat-back" not in r.calls[0][0]
+    assert not any("closing the back flat" in line for line in r.info())
+
+
+def test_stage4_two_sided_never_flat_back(s, merged):
+    r = RecordingRunner(s)
+    r.execute_stage(3)
+    assert "--flat-back" not in r.calls[0][0]
 
 
 def test_stage4_black_background_prunes_black(s, merged):

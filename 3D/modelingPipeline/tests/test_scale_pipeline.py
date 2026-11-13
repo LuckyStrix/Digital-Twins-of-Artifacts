@@ -38,7 +38,7 @@ def write_scale(ws, status, s=0.5, **extra):
 def test_scale_tab_settings():
     assert "Scale" in S.TABS
     d = S.Settings.defaults()
-    assert d["scale_ring_var"] is False
+    assert d["scale_ring_var"] is True
     assert (d["scale_ring_inner_var"], d["scale_ring_outer_var"], d["scale_ring_width_var"]) == \
         (200.0, 216.0, 0.0)
     for k in ("scale_ring_var", "scale_ring_inner_var", "scale_ring_outer_var", "scale_ring_width_var"):

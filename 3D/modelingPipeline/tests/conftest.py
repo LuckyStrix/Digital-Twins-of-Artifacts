@@ -69,7 +69,11 @@ def no_inherited_fipmesh_env(monkeypatch):
 
 @pytest.fixture
 def settings():
-    return Settings.defaults()
+    s = Settings.defaults()
+    # Scale is on by default, but most runner tests model a scan without the
+    # ring; tests of the scale path turn it on themselves.
+    s["scale_ring_var"] = False
+    return s
 
 
 @pytest.fixture

@@ -31,6 +31,7 @@ python3 -m pip install --break-system-packages -r requirements.txt
 ```
 
 `requirements.txt` pulls `open3d`, `pymeshlab` (watertight mesh repair),
+`mapbox_earcut` (the flat back on single-side scans),
 `numpy<2.5`, `rembg[gpu]` (use plain `rembg`
 on a CPU-only machine) with `onnxruntime-gpu<1.27`, `pillow`,
 `opencv-python-headless` (mask cleanup), `textual` (the terminal UI) and
@@ -277,6 +278,13 @@ full detail on any field.
   textureless or highly curved surfaces.
 - **Matching**: **Guided matching** re-matches using estimated geometry for
   higher precision; **Max matches** caps matches kept per image pair.
+- **Dense fusion → Fill mask erode (px)** (default 6, 0 = off) — fusion skips
+  Stage 1's background fill (Background black or white), shrunk inward by this
+  many pixels. PatchMatch's window straddles the tablet's outline, so depths
+  spill a few pixels onto the fill; fused, they become points colored by a
+  blend of tablet and fill — dark specks over the whole surface, since every
+  part of the tablet is on the outline in some view. Masks are written to
+  `dense/fill_masks/` and combined with Stage 1's own masks when those exist.
 - **Threads / Cache** (0 = auto) — per-stage CPU thread counts and PatchMatch/
   fusion GPU cache sizes in GB; raise the caches if you have GPU memory to
   spare and are fusing large scenes, lower them if COLMAP runs out of VRAM.
@@ -332,6 +340,18 @@ Mirrors `src/reconstruct_mesh.py`'s CLI options (`python3 src/reconstruct_mesh.p
   cloud size (it's the slowest cleanup step).
 - **Normals** — **max NN**/**orient K** control how many neighbors are used to
   estimate and consistently orient surface normals before Poisson.
+- **Poisson engine** (default **meshlab**; `--poisson-engine` on the CLI) —
+  `meshlab` runs pymeshlab's screened Poisson, whose surface is closed and
+  2-manifold as reconstructed. It is kept untrimmed and uncropped, and
+  decimation for the decimated and simplified exports preserves topology (each
+  kept vertex takes the average color of the vertices it replaces, so stray
+  dark points don't become dark spots), so
+  every exported mesh is watertight with no hole patching (the log prints a
+  `closed <mesh>: yes` line per mesh). Density trim, crop scale, linear fit and
+  hole reduction below apply only to `open3d`, the older engine: Open3D's
+  Poisson leaves non-manifold edges where surface sheets touch, cleanup turns
+  them into holes, and the watertight repair then patches them, which showed
+  up as flat spots and spikes on scans.
 - **Poisson reconstruction** — **depth** is the octree resolution (higher =
   more detail, more memory); **linear fit** trades a bit of smoothness for
   sharper detail; **density trim quantile** strips the lowest-confidence
@@ -344,7 +364,8 @@ Mirrors `src/reconstruct_mesh.py`'s CLI options (`python3 src/reconstruct_mesh.p
   instead of becoming holes. Overrides the three fields above when enabled;
   the watertight repair below closes whatever gaps remain.
 - **Make mesh watertight** (checkbox, default **on**; `--watertight 0/1` on the
-  CLI) — closes every hole left after cleanup and makes the triangle winding
+  CLI) — runs only on a mesh that isn't already closed, so in practice only
+  with the `open3d` engine. Closes every hole left after cleanup and makes the triangle winding
   consistent, so the full, decimated and simplified meshes all come out as
   closed surfaces (3D-printable, valid volume, no see-through gaps). Density
   trimming cuts slits into smooth, sparsely sampled surfaces, and decimation and
@@ -358,6 +379,23 @@ Mirrors `src/reconstruct_mesh.py`'s CLI options (`python3 src/reconstruct_mesh.p
   old Open3D boundary-triangulation hole filling and its size ratio / passes /
   smoothing options, which left holes behind (size cap, non-convergence, and
   decimation reopening them).
+- **Single-side scans: close the back flat** (checkbox, default **on**;
+  `--flat-back 1` on the CLI, passed only when there is no side 2). With one
+  side scanned, Poisson closes the surface by inventing a smooth hull over
+  everything the cameras never saw, which covers the real detail like a
+  blanket. With this on, Stage 4 always uses the MeshLab engine, keeps only
+  the faces within a few point spacings of the cloud, slices that surface with
+  a plane fitted to its rim (placed just inside the rim's shallowest point, so
+  the cut crosses real surface all the way round; expect it to take roughly
+  10% of the scanned area off the ragged edge), and caps the clean planar
+  cross-section with a flat grey back. The scanned side is never merged or
+  smoothed, so it stays exactly as reconstructed, and the result is closed and
+  consistently wound. Density trim, mesh cleanup, the watertight repair and
+  smoothing are skipped for that mesh; decimation keeps the topology. If the
+  surface can't be capped cleanly the log says so and Stage 4 carries on with
+  the normal closed surface. `--flat-back-support-k` and
+  `--flat-back-margin-k` tune the support distance and cut margin (in point
+  spacings).
 - **Mesh cleanup** — **Component min ratio/min triangles** drop small
   disconnected mesh pieces (by relative size and by absolute triangle count);
   **Component max count** caps how many components survive; **Smooth
@@ -420,7 +458,7 @@ set on the Inputs tab).
 
 ### Scale tab
 
-- **Scale to millimeters with the reference ring** (default off) — see
+- **Scale to millimeters with the reference ring** (default on; scans without the ring just stay unscaled, with a warning) — see
   [Absolute scale](#absolute-scale-reference-ring) below.
 - **Inner / Outer diameter (mm)** — the ring's size; defaults 200 / 216 (the
   design). Enter measured values if you have them.
@@ -495,8 +533,10 @@ python3 -m scale.apply session --session <session> --scan <scan> [--fit-only]
 ```
 
 It fits the ring on every side and, only if all sides fit, rescales each
-side's sparse model, `fused.ply`, dense sparse model and
-`camera_centers.json` to millimeters. `--fit-only` reports without changing
+side's sparse model, `fused.ply`, dense sparse model (including COLMAP 4.x's
+`frames.bin` and `rigs.bin`, where the poses live), depth maps and
+`camera_centers.json` to millimeters, so fusion can still be re-run on the
+workspace afterwards. `--fit-only` reports without changing
 anything. Then turn on the Scale tab and press Run Stage on Stages 3 and 4.
 A side COLMAP split into several models can't be scaled this way.
 

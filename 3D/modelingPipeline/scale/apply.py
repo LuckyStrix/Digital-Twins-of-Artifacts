@@ -35,7 +35,8 @@ import sys
 from pathlib import Path
 
 from .colmap_model import (
-    read_model_txt, rescale_camera_centers, rescale_images_bin, rescale_model_txt,
+    read_model_txt, rescale_camera_centers, rescale_depth_map, rescale_frames_bin,
+    rescale_images_bin, rescale_model_txt, rescale_rigs_bin,
     rescale_ply, rescale_points3d_bin,
 )
 from .ring import RingFit, RingSpec, fit_ring
@@ -151,18 +152,24 @@ def _rescale_sparse(colmap_bin: str, model_dirs: list[Path], scales: list[float]
 
 
 def _rescale_dense(workspace: Path, k: float) -> None:
-    """Multiply the finished outputs Stage 3/4 read by ``k``: the fused
-    clouds, the dense sparse models and camera_centers.json. Depth maps are
-    left alone (nothing after Stage 2 reads them)."""
-    clouds = [workspace / "fused.ply"] + sorted((workspace / "dense").glob("fused_component_*.ply"))
+    """Multiply everything in a finished dense workspace by ``k``: the fused
+    clouds, the dense sparse models (poses in frames.bin, rig offsets in
+    rigs.bin, the images.bin copy and the points) and camera_centers.json.
+    Depth maps are rescaled too, so the poses and depths still agree and
+    fusion can be re-run (e.g. with masks) on a rescaled workspace."""
+    dense = workspace / "dense"
+    clouds = [workspace / "fused.ply"] + sorted(dense.glob("fused_component_*.ply"))
     for p in clouds:
         if p.is_file() and p.stat().st_size > 0:
             rescale_ply(p, k)
-    for sp in [workspace / "dense" / "sparse"] + sorted((workspace / "dense").glob("component_*/sparse")):
-        if (sp / "images.bin").is_file():
-            rescale_images_bin(sp / "images.bin", k)
-        if (sp / "points3D.bin").is_file():
-            rescale_points3d_bin(sp / "points3D.bin", k)
+    for sp in [dense / "sparse"] + sorted(dense.glob("component_*/sparse")):
+        for name, fn in (("images.bin", rescale_images_bin), ("frames.bin", rescale_frames_bin),
+                         ("rigs.bin", rescale_rigs_bin), ("points3D.bin", rescale_points3d_bin)):
+            if (sp / name).is_file():
+                fn(sp / name, k)
+    for stereo in [dense / "stereo"] + sorted(dense.glob("component_*/stereo")):
+        for dm in (stereo / "depth_maps").rglob("*.bin") if (stereo / "depth_maps").is_dir() else []:
+            rescale_depth_map(dm, k)
     cc = workspace / "camera_centers.json"
     if cc.is_file():
         rescale_camera_centers(cc, k)

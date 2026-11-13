@@ -305,7 +305,10 @@ def test_run_all_through_four_stages(tmp_path, two_side_scan, fake_runner):
         await pilot.press("r")
         await wait_idle(app, pilot)
         assert [c.state for c in app.cards] == ["done"] * 4
-        assert [c.status for c in app.cards] == ["Done"] * 4
+        # Scale is on by default; the fake scan has no ring, so stages 2 and 4
+        # finish unscaled.
+        assert [c.status for c in app.cards] == [
+            "Done", "Done · unscaled (see log)", "Done", "Done · unscaled"]
         assert not any(app.query_one(f"#view-{i}").disabled for i in range(4))
         assert app.query_one("#stop").disabled and not app.query_one("#run-all").disabled
         # Long commands (Windows paths) wrap, even mid-word, so compare
@@ -407,11 +410,11 @@ def test_scale_tab(tmp_path):
         app.query_one("#tabs", TabbedContent).active = "tab-scale"
         await pilot.pause()
         chk = app.query_one("#set-scale_ring_var", Checkbox)
-        assert chk.value is False
+        assert chk.value is True
         assert float(app.query_one("#set-scale_ring_inner_var", Input).value) == 200.0
         app.query_one("#set-scale_ring_outer_var", Input).value = "216.4"
-        chk.value = True
+        chk.value = False
         await pilot.pause()
-        assert app.settings["scale_ring_var"] is True
+        assert app.settings["scale_ring_var"] is False
         assert app.settings["scale_ring_outer_var"] == 216.4
     run(make_app(tmp_path), body)

@@ -119,6 +119,17 @@ def main():
             print(f"[seam] audit cloud -> {base}_seam_audit.ply")
     align.save_merged(A, B, T, args.out, keepA, keepB)
     print(f"Saved merged -> {args.out}")
+    # The side-B → side-A transform in the sides' own (uncentered) frames,
+    # so later steps can move B's cameras too, not just its points.
+    import numpy as np
+    to_a, from_b = np.eye(4), np.eye(4)
+    to_a[:3, 3] = A.centroid
+    from_b[:3, 3] = -B.centroid
+    world = to_a @ np.asarray(T) @ from_b
+    tf_path = os.path.splitext(os.path.abspath(args.out))[0] + "_transform.json"
+    with open(tf_path, "w") as fh:
+        json.dump(world.tolist(), fh, indent=1)
+    print(f"Saved B->A transform -> {tf_path}")
 
     if args.view:
         import open3d as o3d

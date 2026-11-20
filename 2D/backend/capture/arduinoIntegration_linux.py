@@ -110,7 +110,18 @@ def convert_raws():
     failed = []
     for tmp in pending_raw:
         tiff = os.path.splitext(tmp)[0] + ".tiff"
-        result = subprocess.run(["dcraw", *DCRAW_ARGS, tmp], cwd=img_dir)
+        try:
+            result = subprocess.run(["dcraw", *DCRAW_ARGS, tmp], cwd=img_dir)
+        except OSError as exc:
+            # dcraw missing or not runnable: no frame can be converted. Report
+            # it and return normally, so the RAW files are still archived and
+            # the Arduino still gets its FINISH message below.
+            remaining = pending_raw[pending_raw.index(tmp):]
+            failed.extend(remaining)
+            print(f"  ERROR: could not run dcraw ({exc}). {len(remaining)} RAW "
+                  "file(s) left unconverted; they are kept in tmpArchive/ and can "
+                  "be converted later with the same dcraw flags.")
+            break
         if result.returncode != 0 or not os.path.exists(os.path.join(img_dir, tiff)):
             failed.append(tmp)
             print(f"  WARNING: dcraw could not convert {tmp} (exit code "
@@ -124,6 +135,14 @@ def convert_raws():
 
 def capture_image(filename):
     tmp = f"{filename}.tmp"
+    # Re-shooting into a folder that already holds a set (Steps 0a/0b always
+    # write to cal/) must not leave the previous run's frame behind when this
+    # shot fails - the set would look complete with one stale light. It also
+    # stops gphoto2 from pausing to ask whether to overwrite.
+    for stale in (tmp, f"{filename}.tiff"):
+        stale_path = os.path.join(img_dir, stale)
+        if os.path.exists(stale_path):
+            os.remove(stale_path)
     # On Linux gphoto2 is a native tool, so call it directly (no msys2 shim).
     # We run it synchronously and let its output stream through so its errors are
     # visible in the log, then hand the downloaded .tmp to dcraw.

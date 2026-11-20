@@ -120,6 +120,10 @@ Coordinate convention (pixel space):
 ─────────────────────────────────────────────────────────────────────────────
 """
 
+# Lets annotations like `Path | None` work on Python 3.9 (they are not
+# evaluated at definition time); 3.9-3.12 are all supported.
+from __future__ import annotations
+
 import json
 import os
 import sys

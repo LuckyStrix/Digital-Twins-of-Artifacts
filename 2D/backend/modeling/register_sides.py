@@ -23,9 +23,15 @@ both models also get identical plane dimensions.
                                        behind, green = aligned side2, yellow =
                                        both. A good result is almost all yellow.
 
-Re-running is safe: when the maps are already this script's output it starts
-again from unregistered/, and when modeling has since rewritten them (newer
-than registration.json) those fresh maps become the new originals.
+Re-running is safe. registration.json records a fingerprint (size + modified
+time) of every map this script wrote and of side1's mask it aligned to:
+  - side2's maps still match -> they are this script's output; it starts again
+    from unregistered/ (or does nothing if side1 has not changed either);
+  - they do not match -> modeling rewrote them; they become the new originals;
+  - side1's mask changed -> side2 is re-aligned to the new outline.
+Writes are crash-safe: the aligned maps are written to temporary files first
+and swapped in under a marker file, so an interrupted run is detected next
+time and redone from the untouched originals.
 
 HOW THE MATCH IS FOUND
   1. Both masks are reduced to ~512 px and every rotation 0-359° (1° steps) is
@@ -45,13 +51,16 @@ NORMAL MAP
 
 Usage:
     python register_sides.py SIDE1_MAPS_DIR SIDE2_MAPS_DIR [--min-iou 0.8]
+    python register_sides.py --check SIDE1_MAPS_DIR SIDE2_MAPS_DIR
 
 Exit codes: 0 aligned (or already up to date), 1 bad input, 2 match too poor
-to apply (side2's maps are left as they were).
+to apply (side2's maps are left as they were). With --check nothing is
+changed: 0 = alignment is current, 3 = it needs (re)doing.
 """
 
 import argparse
 import json
+import os
 import shutil
 import sys
 from pathlib import Path
@@ -73,6 +82,8 @@ MASK_NAME    = "AlphaMask_render.tiff"
 ORIG_SUBDIR  = "unregistered"
 INFO_NAME    = "registration.json"
 OVERLAY_NAME = "registration_overlay.png"
+MARKER_NAME  = ".registration_in_progress"   # exists only while maps are swapped
+TEMP_SUFFIX  = ".aligned-tmp"
 
 COARSE_PX   = 512     # long side for the exhaustive rotation search
 FINE_PX     = 1024    # long side for the ECC refinement
@@ -198,18 +209,60 @@ def warp_map(img: np.ndarray, kind: str, A: np.ndarray, shape) -> np.ndarray:
     return np.round(enc).astype(img.dtype)
 
 
+def fingerprint(path: Path):
+    """(size, mtime_ns) - changes whenever a file is rewritten."""
+    st = path.stat()
+    return [st.st_size, st.st_mtime_ns]
+
+
+def read_info(side2: Path) -> dict:
+    try:
+        return json.loads((side2 / INFO_NAME).read_text())
+    except (OSError, ValueError):
+        return {}
+
+
+def maps_are_ours(side2: Path, info: dict) -> bool:
+    """True when side2's maps are exactly what this script last wrote."""
+    if not info.get("applied") or (side2 / MARKER_NAME).exists():
+        return False
+    written = info.get("written", {})
+    present = [n for n in MAPS if (side2 / n).is_file()]
+    return bool(present) and all(
+        written.get(n) == fingerprint(side2 / n) for n in present)
+
+
+def is_current(side1: Path, side2: Path) -> bool:
+    """Alignment is applied, untouched since, and made against this side1."""
+    info = read_info(side2)
+    mask1 = side1 / MASK_NAME
+    return (maps_are_ours(side2, info) and mask1.is_file()
+            and info.get("side1_mask") == fingerprint(mask1))
+
+
 def originals_dir(side2: Path) -> Path:
-    """Folder holding side2's unaligned maps, refreshing it if modeling has
-    rewritten the maps since the last registration."""
+    """Folder holding side2's unaligned maps.
+
+    Refreshed from side2's current maps only when those are NOT this script's
+    output - i.e. modeling rewrote them. After an interrupted run (marker file
+    still present) the maps are a half-swapped mix, so unregistered/, which was
+    complete before any swap began, is used as is.
+    """
     orig = side2 / ORIG_SUBDIR
-    info = side2 / INFO_NAME
-    present = [side2 / n for n in MAPS if (side2 / n).is_file()]
-    fresh = (not info.is_file()
-             or any(p.stat().st_mtime > info.stat().st_mtime for p in present))
-    if fresh and present:
-        orig.mkdir(exist_ok=True)
-        for p in present:
-            shutil.copy2(p, orig / p.name)
+    for leftover in side2.glob("*" + TEMP_SUFFIX):
+        leftover.unlink()
+    interrupted = (side2 / MARKER_NAME).exists()
+    if interrupted and (orig / MASK_NAME).is_file():
+        print("Previous alignment was interrupted - redoing it from "
+              f"{orig.name}/.")
+        return orig
+    if not maps_are_ours(side2, read_info(side2)):
+        present = [side2 / n for n in MAPS if (side2 / n).is_file()]
+        if present:
+            orig.mkdir(exist_ok=True)
+            for p in present:
+                shutil.copy2(p, orig / p.name)
+    (side2 / MARKER_NAME).unlink(missing_ok=True)
     return orig
 
 
@@ -230,26 +283,32 @@ def main() -> int:
     ap.add_argument("side2", type=Path, help="side2's maps/ folder (gets aligned)")
     ap.add_argument("--min-iou", type=float, default=0.8,
                     help="refuse to apply a match with less overlap (default 0.8)")
+    ap.add_argument("--check", action="store_true",
+                    help="only report whether the alignment is current (exit 0) "
+                         "or needs doing (exit 3); change nothing")
     args = ap.parse_args()
+
+    if args.check:
+        return 0 if is_current(args.side1, args.side2) else 3
 
     for d in (args.side1, args.side2):
         if not (d / MASK_NAME).is_file():
             print(f"ERROR: {d / MASK_NAME} not found - run modeling on both sides first.")
             return 1
 
+    info_path = args.side2 / INFO_NAME
+    if is_current(args.side1, args.side2):
+        prev = read_info(args.side2)
+        print(f"side2 is already aligned to side1 (rotation "
+              f"{prev['rotation_deg_ccw']:+.1f}° ccw, overlap {prev['iou']:.3f}) - "
+              "nothing to do.")
+        return 0
+    if maps_are_ours(args.side2, read_info(args.side2)):
+        print("side1 has changed since side2 was aligned - re-aligning.")
     orig = originals_dir(args.side2)
     if not (orig / MASK_NAME).is_file():
         print(f"ERROR: no unaligned maps in {orig}.")
         return 1
-    info_path = args.side2 / INFO_NAME
-    if info_path.is_file() and info_path.stat().st_mtime >= max(
-            (orig / n).stat().st_mtime for n in MAPS if (orig / n).is_file()):
-        prev = json.loads(info_path.read_text())
-        if prev.get("applied"):
-            print(f"side2 is already aligned to side1 (rotation "
-                  f"{prev['rotation_deg_ccw']:+.1f}° ccw, overlap {prev['iou']:.3f}) - "
-                  "nothing to do.")
-            return 0
 
     front = load_mask(args.side1 / MASK_NAME)
     back = load_mask(orig / MASK_NAME)
@@ -282,18 +341,31 @@ def main() -> int:
         info_path.write_text(json.dumps(info, indent=2))
         return 2
 
+    # 1. Write every aligned map to a temporary file; side2's maps are not
+    #    touched until all of them have succeeded.
+    temps = {}
     for name, kind in MAPS.items():
         src = orig / name
         if not src.is_file():
             print(f"  {name}: not found - skipped")
             continue
         img = tifffile.imread(str(src))
-        out = warp_map(img, kind, A, front.shape)
-        tifffile.imwrite(str(args.side2 / name), out)
+        tmp = args.side2 / (name + TEMP_SUFFIX)
+        tifffile.imwrite(str(tmp), warp_map(img, kind, A, front.shape))
+        temps[name] = tmp
         print(f"  {name}: aligned ({kind})")
 
+    # 2. Swap them in under the marker, then record exactly what was written.
+    #    A crash anywhere in here leaves the marker, which the next run sees.
+    marker = args.side2 / MARKER_NAME
+    marker.write_text("alignment in progress - delete only if no run is active\n")
+    for name, tmp in temps.items():
+        os.replace(tmp, args.side2 / name)
     info["applied"] = True
-    info_path.write_text(json.dumps(info, indent=2))   # written last: marks done
+    info["written"] = {n: fingerprint(args.side2 / n) for n in temps}
+    info["side1_mask"] = fingerprint(args.side1 / MASK_NAME)
+    info_path.write_text(json.dumps(info, indent=2))
+    marker.unlink()
     if score < WARN_IOU:
         print(f"WARNING: overlap {score:.3f} is lower than usual (<{WARN_IOU}). "
               f"Check {args.side2 / OVERLAY_NAME} before publishing.")

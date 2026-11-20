@@ -100,6 +100,10 @@ depend on the physical rig. Before modeling, the launcher lists any missing
 calibration and asks before running without it.
 """
 
+# Lets annotations like `Path | None` work on Python 3.9 (they are not
+# evaluated at definition time); 3.9-3.12 are all supported.
+from __future__ import annotations
+
 import json
 import os
 import queue
@@ -340,7 +344,6 @@ LENS_GUIDE = (
 
 # Aligns side2's render maps to side1 for two-sided scans.
 REGISTER_SCRIPT = MODELING_DIR / "register_sides.py"
-REGISTRATION_INFO = "registration.json"
 
 class PipelineApp:
     """The launcher. Subclassed once per platform (run.py / run_linux.py),
@@ -677,7 +680,7 @@ class PipelineApp:
         sides = self._side_dirs()
         if self._is_two_sided(sides) and self._has_maps(sides[1]):
             self.log("  Sides aligned for the website flip: "
-                     + ("yes" if self._registration_current(sides[1])
+                     + ("yes" if self._registration_current(sides)
                         else "no (Step 2, Step 3 or Run Everything will do it)"))
         self._log_cal_status(self.active_dir)
         self.log("  Description: " + (TXT_NAME if self._has_txt() else "no " + TXT_NAME))
@@ -1567,11 +1570,15 @@ class PipelineApp:
         why it lives beside the scan rather than in launcher state: a scan
         stays reprocessable later, and modeling finds it with no extra input.
         """
-        # Save into the calibration set this working folder already resolves
-        # to (its own cal/, a shared parent cal/, or the global set). Always
-        # writing <working>/cal/ would create a folder holding only this file,
-        # which would then shadow the real flat-field set and break modeling.
-        dest = self._cal_dir() / GEO_CAL_NAME
+        # Save into the calibration set(s) modeling will actually read: the
+        # one each side folder resolves to (side/cal, then <working>/cal, then
+        # the global set) - for a single-sided folder that is just the working
+        # folder's own resolution. Resolving from the working folder instead
+        # can disagree in two-sided mode (it would look at <working>/../cal).
+        # Never create a new cal/ for it: a folder holding only this file would
+        # shadow the real flat-field set and break modeling.
+        dests = list(dict.fromkeys(self._cal_dir(side) / GEO_CAL_NAME
+                                   for side in self._side_dirs()))
         cached = photos / GEO_CAL_PHOTO_CACHE
         self.log("LENS CALIBRATION")
         self.log(f"Checkerboard photos: {photos}")
@@ -1594,13 +1601,14 @@ class PipelineApp:
                          "lens-distortion correction until this succeeds.")
                 return
 
-        try:
-            dest.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(cached, dest)
-        except OSError as e:
-            self.log(f"ERROR: could not save {dest}: {e}")
-            return
-        self.log(f"Saved lens calibration -> {dest}")
+        for dest in dests:
+            try:
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(cached, dest)
+            except OSError as e:
+                self.log(f"ERROR: could not save {dest}: {e}")
+                return
+            self.log(f"Saved lens calibration -> {dest}")
         self.log("The modeling pipeline (Stage 1b) will undistort every scan "
                  "that uses this calibration set.")
 
@@ -1609,21 +1617,19 @@ class PipelineApp:
         return [s.name for s in sides] == list(SIDE_SUBDIRS) and all(
             s.parent == self.active_dir for s in sides)
 
-    def _registration_current(self, side2: Path) -> bool:
-        """True when side2's maps are register_sides.py's (applied) output and
-        modeling has not rewritten them since."""
-        maps = self._maps_dir(side2)
-        info = maps / REGISTRATION_INFO
-        if not info.is_file():
-            return False
+    def _registration_current(self, sides: list) -> bool:
+        """True when side2's maps are aligned to side1's CURRENT outline and
+        untouched since. Asks register_sides.py --check, so the launcher and
+        the script share one definition (fingerprints in registration.json)."""
+        side1, side2 = sides
         try:
-            if not json.loads(info.read_text()).get("applied"):
-                return False
-        except (OSError, ValueError):
+            return subprocess.run(
+                [sys.executable, str(REGISTER_SCRIPT), "--check",
+                 str(self._maps_dir(side1)), str(self._maps_dir(side2))],
+                cwd=str(MODELING_DIR), stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL, timeout=120).returncode == 0
+        except Exception:
             return False
-        t = info.stat().st_mtime
-        return all((maps / n).stat().st_mtime <= t
-                   for n in RENDER_MAPS if (maps / n).is_file())
 
     def _register_sides(self, sides: list) -> bool:
         """Align side2's maps to side1. True when aligned (or not needed)."""
@@ -1633,7 +1639,7 @@ class PipelineApp:
         if not (self._has_maps(side1) and self._has_maps(side2)):
             self.log("Side alignment skipped: both sides need maps first.")
             return False
-        if self._registration_current(side2):
+        if self._registration_current(sides):
             self.log("side2 is already aligned to side1.")
             return True
         self.log("=" * 64)
@@ -1719,7 +1725,7 @@ class PipelineApp:
 
     def step_build_model(self):
         sides = self._side_dirs()
-        if self._is_two_sided(sides) and not self._registration_current(sides[1]):
+        if self._is_two_sided(sides) and not self._registration_current(sides):
             self._register_sides(sides)
         for side in sides:
             label = self._side_label(side)

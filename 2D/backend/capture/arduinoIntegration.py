@@ -53,11 +53,35 @@ def message_arduino(n, e, s, w, g, b, step, dir):
         if response == b'e':
             break
 
+# RAW files waiting for dcraw. Conversion is deferred until every frame has
+# been shot and the polariser is back, so the rig does one thing at a time and
+# the lighting sequence is not stretched out by ~2 s of conversion per frame.
+pending_raw = []
+
+
+def convert_raws():
+    """Convert every captured RAW (.tmp) to TIFF with dcraw, one at a time."""
+    print(f"Converting {len(pending_raw)} RAW file(s) to TIFF with dcraw...")
+    failed = []
+    for tmp in pending_raw:
+        tiff = os.path.splitext(tmp)[0] + ".tiff"
+        result = subprocess.run(["dcraw", *DCRAW_ARGS, tmp], cwd=img_dir)
+        if result.returncode != 0 or not os.path.exists(os.path.join(img_dir, tiff)):
+            failed.append(tmp)
+            print(f"  WARNING: dcraw could not convert {tmp} (exit code "
+                  f"{result.returncode}); its RAW file is kept in tmpArchive/.")
+        else:
+            print(f"  {tmp} -> {tiff}")
+    if failed:
+        print(f"WARNING: {len(failed)} frame(s) were not converted.")
+    print(" ")
+
+
 def capture_image(filename):
     tmp = f"{filename}.tmp"
     # -defterm -no-start runs gphoto2 synchronously in this process instead of
     # spawning a detached mintty window. Without it, msys2_shell.cmd returns
-    # immediately (the window runs in the background), so dcraw below fires
+    # immediately (the window runs in the background), so the check below runs
     # before the .tmp has been downloaded — fine from an interactive terminal,
     # but it races and fails when launched from the GUI (run.py). We also let
     # gphoto2's output stream through so its errors are visible in the log.
@@ -66,13 +90,12 @@ def capture_image(filename):
     subprocess.run(cmd, shell=True, cwd=img_dir)
 
     if not os.path.exists(os.path.join(img_dir, tmp)):
-        print(f"WARNING: {tmp} was not created by gphoto2 — skipping dcraw. "
+        print(f"WARNING: {tmp} was not created by gphoto2 — this frame will be missing. "
               "Check that the camera is connected and gphoto2 can reach it.")
         print(" ")
         return
     message_arduino(0, 0, 0, 0, 0, 1, 0, 1)
-    #subprocess.run(f"exiftool -Orientation=1 -n {filename}.tmp", cwd=img_dir, shell=True)
-    subprocess.run(["dcraw", *DCRAW_ARGS, tmp], cwd=img_dir)
+    pending_raw.append(tmp)   # converted after the whole sequence, see convert_raws()
     print(filename + " captured!")
     print(" ")
 
@@ -203,6 +226,9 @@ if __name__ == "__main__":
     message_arduino(0, 0, 0, 0, 0, 1, 1, 0)
     print("Scanning Complete!")
     print(" ")
+
+    #CONVERT — all RAW files, now that the rig is done moving
+    convert_raws()
 
     #SORT IMAGES — move the RAW .tmp files into a tmpArchive/ subfolder, leaving
     #the converted .tiff files in the capture folder.

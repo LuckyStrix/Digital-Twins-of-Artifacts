@@ -41,10 +41,9 @@ stage to turn into a textured 3D model.
     mirror-smooth appearance.
 
   Stage 3 - Height Map Generation
-    Runs photometric stereo on the calibrated images to recover surface normals,
-    then integrates them into height maps via weighted Frankot-Chellappa.
-    Six methods are computed (cross-pol, co-pol, specular component, 8-light
-    combined, per-RGB-channel, plus integration of the Stage 2 normal map).
+    Runs photometric stereo on all eight calibrated images (cross- and
+    co-polarised together) to recover surface normals, then integrates them
+    into the height map via weighted Frankot-Chellappa.
 
   Stage 4 - Prep for Rendering
     Rotates all maps 90° counter-clockwise and pads spatial dimensions to the
@@ -94,13 +93,8 @@ OUTPUTS WRITTEN BY THIS SCRIPT (into output/ next to this file):
       SpecularMap_Cal_stretched.tiff
       RoughnessMap_Cal.tiff
 
-    3_height_maps/       ← Stage 3: height maps from six photometric stereo methods
-      normalmap_cal_weighted_frankot_u16.tiff
-      cross_ps_theta36.98_weighted_frankot_u16.tiff
-      co_ps_theta36.98_weighted_frankot_u16.tiff
-      specular_component_theta36.98_weighted_frankot_u16.tiff
-      combined_8light_theta36.98_weighted_frankot_u16.tiff   ← fed into Stage 4
-      cross_ps_channelR/G/B_theta36.98_weighted_frankot_u16.tiff
+    3_height_maps/       ← Stage 3: the 8-light photometric-stereo height map
+      combined_8light_theta36_u16.tiff   ← fed into Stage 4 (name: see Stage 4)
 
     4_render_ready/      ← Stage 4: rotated + power-of-two padded, ready for renderer
       AlphaMask_render.tiff
@@ -432,7 +426,7 @@ def run_alpha_mask() -> None:
 
     mask     = _postprocess_mask(raw_mask, dilate_px=MASK_DILATE_PX)
     out_path = MASKS_DIR / "AlphaMask.tiff"
-    cv2.imwrite(str(out_path), mask)
+    write_tiff(out_path, mask)
 
     print(f"\n  Saved: {out_path}  ({mask.shape[1]}×{mask.shape[0]} px)")
     print("\nStage 0 complete.")
@@ -470,6 +464,16 @@ def load16(path: Path) -> np.ndarray:
     if img is None:
         raise FileNotFoundError(f"Cannot load: {path}")
     return img
+
+
+def write_tiff(path: Path, img: np.ndarray) -> bool:
+    """cv2.imwrite for intermediate TIFFs, WITHOUT compression.
+
+    cv2 LZW-compresses TIFFs by default. For these 24 MP 16-bit frames that
+    costs ~4 s per write (vs ~0.2 s) and makes every later read 3-5x slower,
+    to save ~25% disk on files that are deleted after the build anyway.
+    """
+    return cv2.imwrite(str(path), img, [cv2.IMWRITE_TIFF_COMPRESSION, 1])
 
 
 def illumination_envelope(cal_linear_bgr: np.ndarray) -> np.ndarray:
@@ -770,7 +774,7 @@ def run_calibration() -> None:
 
         stem, ext = os.path.splitext(name)
         out_path  = CAL_OUT / f"{stem}_cal{ext}"
-        cv2.imwrite(str(out_path), u16)
+        write_tiff(out_path, u16)
         print(f"    ->  {out_path.name}   "
               f"p50={np.median(corrected):.3f} p99.9={np.percentile(corrected, 99.9):.3f} "
               f"max={corrected.max():.3f}" +
@@ -891,7 +895,7 @@ def run_geo_cal() -> None:
                 raise ValueError(f"{src.name} is {img.shape[1]}x{img.shape[0]}, "
                                  f"expected {w}x{h} like the alpha mask.")
             out = cv2.remap(img, map1, map2, interp, borderMode=cv2.BORDER_CONSTANT)
-            if not cv2.imwrite(str(dst), out):
+            if not write_tiff(dst, out):
                 raise OSError(f"Could not write {dst}")
             print(f"  {src.name}  ->  {dst.name}  (undistorted)")
 
@@ -1042,7 +1046,7 @@ def run_core_maps() -> None:
         _encode_normal_uint16(ny),
         _encode_normal_uint16(nx),
     ], axis=2)
-    cv2.imwrite(str(MAPS_OUT / "NormalMap_Cal.tiff"), normal_bgr)
+    write_tiff(MAPS_OUT / "NormalMap_Cal.tiff", normal_bgr)
     print(f"  Saved NormalMap_Cal.tiff")
 
     # ── Diffuse Map ───────────────────────────────────────────────────────────
@@ -1054,7 +1058,7 @@ def run_core_maps() -> None:
         np.where(mask_3ch, (cross_N + cross_S + cross_E + cross_W) / 4.0, 0.0),
         0.0, 1.0
     ) * 65535).astype(np.uint16)
-    cv2.imwrite(str(MAPS_OUT / "DiffuseMap_Cal.tiff"), diffuse_16)
+    write_tiff(MAPS_OUT / "DiffuseMap_Cal.tiff", diffuse_16)
     print(f"  Saved DiffuseMap_Cal.tiff")
 
     # ── Specular Map ──────────────────────────────────────────────────────────
@@ -1075,13 +1079,13 @@ def run_core_maps() -> None:
         0.0,
     )
     specular_16_stretched = _normalize_to_uint16(specular_avg, mask_bool)
-    cv2.imwrite(str(MAPS_OUT / "SpecularMap_Cal_stretched.tiff"), specular_16_stretched)
+    write_tiff(MAPS_OUT / "SpecularMap_Cal_stretched.tiff", specular_16_stretched)
     print(f"  Saved SpecularMap_Cal_stretched.tiff")
 
     specular_16 = (np.clip(
         np.where(mask_bool, specular_avg * SPECULAR_BOOST, 0.0), 0.0, 1.0
     ) * 65535).astype(np.uint16)
-    cv2.imwrite(str(MAPS_OUT / "SpecularMap_Cal.tiff"), specular_16)
+    write_tiff(MAPS_OUT / "SpecularMap_Cal.tiff", specular_16)
     print(f"  Saved SpecularMap_Cal.tiff (boosted x{SPECULAR_BOOST})")
 
     # ── Roughness Map ─────────────────────────────────────────────────────────
@@ -1099,14 +1103,14 @@ def run_core_maps() -> None:
     # The 0.6 floor keeps ink from looking mirror-smooth.
     roughness  = np.where(mask_bool, np.maximum(1.0 - spec_norm, 0.6), 1.0)
     roughness_16 = (roughness * 65535).astype(np.uint16)
-    cv2.imwrite(str(MAPS_OUT / "RoughnessMap_Cal.tiff"), roughness_16)
+    write_tiff(MAPS_OUT / "RoughnessMap_Cal.tiff", roughness_16)
     print(f"  Saved RoughnessMap_Cal.tiff")
 
     print("\nStage 2 complete.")
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# STAGE 3 - HEIGHT MAP GENERATION  (photometric stereo × 6 methods)
+# STAGE 3 - HEIGHT MAP GENERATION  (8-light photometric stereo)
 # ═══════════════════════════════════════════════════════════════════════════════
 #
 # HOW PHOTOMETRIC STEREO WORKS:
@@ -1124,12 +1128,18 @@ def run_core_maps() -> None:
 #   integration.  Weighting by the z-component of the normal down-weights
 #   grazing-angle normals that are geometrically less reliable.
 
+#   Only the 8-light solve (all cross- and co-polarised images together) is
+#   computed: it is the best-conditioned system and the one rendering uses.
+#   Earlier versions also produced cross-only, co-only, specular-component,
+#   per-RGB-channel and Stage-2-normal-map height maps for comparison; nothing
+#   consumed them and they cost ~45 s per side, so they were removed (see git
+#   history if they are ever needed again).
+
 # NOTE: these loaders read through tifffile, NOT PIL.  PIL opens a 16-bit RGB
 # TIFF as mode "RGB" and silently returns the HIGH BYTE only (verified:
-# PIL_array == tifffile_array >> 8), so every one of these used to hand
-# photometric stereo an 8-bit truncation of 16-bit data.  tifffile returns the
-# file's channels in stored order, which is the same RGB order PIL gave, so the
-# luminance weights and channel indices below are unchanged - only precision is.
+# PIL_array == tifffile_array >> 8), which handed photometric stereo an 8-bit
+# truncation of 16-bit data.  tifffile returns the file's channels in stored
+# order (RGB), which the luminance weights below assume.
 
 def _load_gray(path: Path) -> np.ndarray:
     """Load a calibrated image as linear float32 luminance, headroom restored.
@@ -1141,16 +1151,6 @@ def _load_gray(path: Path) -> np.ndarray:
     if img.ndim == 3:
         img = 0.2126 * img[..., 0] + 0.7152 * img[..., 1] + 0.0722 * img[..., 2]
     return img / 65535.0 * np.float32(_stage1_headroom())
-
-
-def _load_rgb(path: Path) -> np.ndarray:
-    """Load an RGB map as float32 in [0, 1].
-
-    NO headroom scaling: this reads NormalMap_Cal.tiff, a Stage 2 output where
-    the channels encode a direction over the full [0,1] range, not a Stage 1a/1b
-    calibrated image.
-    """
-    return tifffile.imread(str(path)).astype(np.float32) / 65535.0
 
 
 def _load_mask(path: Path) -> np.ndarray:
@@ -1183,23 +1183,6 @@ def _save_u16(height: np.ndarray, path: Path, mask: np.ndarray | None = None) ->
     out_path = path.parent / (path.stem + "_u16.tiff")
     tifffile.imwrite(str(out_path), h_u16, photometric="minisblack")
     print(f"    Saved {out_path.name}")
-
-
-def decode_normal_map(rgb01: np.ndarray) -> np.ndarray:
-    """Convert an RGB normal-map encoding in [0, 1] to unit normals (H, W, 3).
-
-    Takes [0, 1] rather than uint8 levels so it is independent of the source
-    bit depth: it previously hardcoded 2.0/255.0 and only survived the 16-bit
-    switch because the caller scaled back up by 255 first.
-    """
-    n  = rgb01.astype(np.float32) * 2.0 - 1.0
-    nz = np.clip(n[..., 2], 1e-6, 1.0)
-    return n / nz[..., None]
-
-
-def normals_to_gradients(normals: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-    """Convert surface normals to height-map gradients: p = dz/dx, q = dz/dy."""
-    return -normals[..., 0], -normals[..., 1]
 
 
 def frankot_chellappa(p: np.ndarray, q: np.ndarray) -> np.ndarray:
@@ -1285,12 +1268,11 @@ def _ps_to_height(ns: np.ndarray, mask: np.ndarray, label: str) -> None:
 
 
 def run_height_maps() -> None:
-    """Stage 3: photometric stereo -> height maps using six methods."""
+    """Stage 3: 8-light photometric stereo -> the height map for rendering."""
     print("\n")
     print("  STAGE 3 - HEIGHT MAP GENERATION")
     print("\n")
     print(f"  Calibrated images : {GEO_CAL_OUT}")
-    print(f"  Normal map        : {MAPS_OUT}")
     print(f"  Alpha mask        : {ALIGNED_MASK}")
     print(f"  Output            : {HM_OUT}")
     print(f"  Light elevation   : {THETA}°\n")
@@ -1298,85 +1280,16 @@ def run_height_maps() -> None:
     HM_OUT.mkdir(parents=True, exist_ok=True)
 
     mask = _load_mask(ALIGNED_MASK)
-    L    = build_light_matrix(THETA)
+    L    = build_light_matrix(THETA)   # rows: N, S, E, W
 
-    # ── Method 1: integrate the Stage 2 gradient-based normal map ─────────────
-    # Provides a baseline to compare against the photometric stereo results.
-    print("Method 1: Integrate from NormalMap_Cal.tiff (Stage 2 output)")
-    nm_rgb       = _load_rgb(MAPS_OUT / "NormalMap_Cal.tiff")
-    normals_cal  = decode_normal_map(nm_rgb)
-    p_cal, q_cal = normals_to_gradients(normals_cal)
-    nz_cal       = np.clip(nm_rgb[..., 2] * 2.0 - 1.0, 1e-6, 1.0)
-    print("  Integrating [normalmap_cal]...")
-    _save_u16(weighted_frankot_chellappa(p_cal, q_cal, nz_cal),
-              HM_OUT / "normalmap_cal_weighted_frankot", mask)
-
-    # ── Method 2: photometric stereo from cross-polarised images ─────────────
-    # Cross-pol suppresses specular highlights, giving a cleaner diffuse signal.
-    print("\nMethod 2: Photometric stereo - cross-polarised")
-    I_cross = np.stack([
-        _load_gray(GEO_CAL_OUT / "ncross_cal.tiff"),
-        _load_gray(GEO_CAL_OUT / "scross_cal.tiff"),
-        _load_gray(GEO_CAL_OUT / "ecross_cal.tiff"),
-        _load_gray(GEO_CAL_OUT / "wcross_cal.tiff"),
-    ], axis=0)
-    ns_cross, _ = photometric_stereo(I_cross, L, mask)
-    _ps_to_height(ns_cross, mask, f"cross_ps_theta{THETA}")
-
-    # ── Method 3: photometric stereo from co-polarised images ────────────────
-    # Co-pol preserves specular highlights (ink reflectance), which may carry
-    # additional surface information.
-    print("\nMethod 3: Photometric stereo - co-polarised")
-    I_co = np.stack([
-        _load_gray(GEO_CAL_OUT / "nco_cal.tiff"),
-        _load_gray(GEO_CAL_OUT / "sco_cal.tiff"),
-        _load_gray(GEO_CAL_OUT / "eco_cal.tiff"),
-        _load_gray(GEO_CAL_OUT / "wco_cal.tiff"),
-    ], axis=0)
-    ns_co, _ = photometric_stereo(I_co, L, mask)
-    _ps_to_height(ns_co, mask, f"co_ps_theta{THETA}")
-
-    # ── Method 4: specular component = co minus cross ─────────────────────────
-    # The difference isolates specular (ink) geometry - height variation driven
-    # by ink layer relief rather than underlying paper surface texture.
-    print("\nMethod 4: Photometric stereo - specular component (co - cross)")
-    # Clamp negatives only. The old 1.0 ceiling assumed the inputs topped out at
-    # 1.0; with headroom restored they legitimately run higher, and capping here
-    # would flatten exactly the bright ink pixels this method exists to measure.
-    I_diff     = np.maximum(I_co - I_cross, 0.0)
-    ns_diff, _ = photometric_stereo(I_diff, L, mask)
-    _ps_to_height(ns_diff, mask, f"specular_component_theta{THETA}")
-
-    # ── Method 5: 8-light combined (co + cross) ───────────────────────────────
-    # Stacking both polarisation states doubles the light constraints, improving
-    # the condition number of the linear system and averaging out independent
-    # noise sources between the two polarisation modes.
-    print("\nMethod 5: Photometric stereo - 8-light combined (co + cross)")
-    I_8     = np.concatenate([I_cross, I_co], axis=0)
-    L8      = np.concatenate([L, L], axis=0)
-    ns_8, _ = photometric_stereo(I_8, L8, mask)
+    # Stacking both polarisation states gives 8 constraints per pixel instead
+    # of 4, improving the conditioning of the solve and averaging out noise
+    # that is independent between the two sets.
+    print("Photometric stereo - 8 lights (cross- + co-polarised)")
+    names = [f"{d}{pol}_cal.tiff" for pol in ("cross", "co") for d in "nsew"]
+    I_8 = np.stack([_load_gray(GEO_CAL_OUT / n) for n in names], axis=0)
+    ns_8, _ = photometric_stereo(I_8, np.concatenate([L, L], axis=0), mask)
     _ps_to_height(ns_8, mask, f"combined_8light_theta{THETA}")
-
-    # ── Method 6: per-channel RGB photometric stereo (cross-polarised) ────────
-    # Ink on papyrus may reflect differently in R, G, and B.  Per-channel stereo
-    # reveals ink layer geometry that averages out in luminance-based methods.
-    print("\nMethod 6: Per-channel RGB photometric stereo (cross-polarised)")
-    def _load_channel(path: Path, ch: int) -> np.ndarray:
-        # tifffile, not PIL - see the note above _load_gray.  Channel order on
-        # disk is RGB, so ch 0/1/2 are R/G/B as the loop below assumes.
-        # Reads Stage 1b output, so restore the headroom like _load_gray does.
-        return (tifffile.imread(str(path)).astype(np.float32)[..., ch]
-                / 65535.0 * np.float32(_stage1_headroom()))
-
-    for ch_idx, ch_name in enumerate(["R", "G", "B"]):
-        I_ch = np.stack([
-            _load_channel(GEO_CAL_OUT / "ncross_cal.tiff", ch_idx),
-            _load_channel(GEO_CAL_OUT / "scross_cal.tiff", ch_idx),
-            _load_channel(GEO_CAL_OUT / "ecross_cal.tiff", ch_idx),
-            _load_channel(GEO_CAL_OUT / "wcross_cal.tiff", ch_idx),
-        ], axis=0)
-        ns_ch, _ = photometric_stereo(I_ch, L, mask)
-        _ps_to_height(ns_ch, mask, f"cross_ps_channel{ch_name}_theta{THETA}")
 
     print("\nStage 3 complete.")
 

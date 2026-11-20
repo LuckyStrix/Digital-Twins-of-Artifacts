@@ -3,7 +3,7 @@
 Node.js / Vite + three.js app that bakes the modeling-stage texture maps into a
 textured 3D model (`render.glb`). Part of the `2D/` pipeline; see the
 [repo setup guide](../../../SETUP.md) for first-time install. Normally invoked
-by `2D/run.py`'s "Build 3D Model" step.
+by the launcher's "Build 3D Model" step (`2D/run.py` / `2D/run_linux.py`).
 
 ## Prerequisites
 

@@ -84,8 +84,9 @@ artifacts/papyrus-014/
 
 The alphabetically-first `.glb` is the front, so name the pair in the
 order you want them seen. The 2D capture pipeline's "Scan both sides"
-option writes `side1/model/render.glb` and `side2/model/render.glb` —
-copy those in as `side1.glb` and `side2.glb`.
+option writes `side1.glb` and `side2.glb` next to the `side1/` and `side2/`
+scan folders — copy those two in. The pipeline has already aligned side2 to
+side1's outline, so the flip turns the sheet over in place.
 
 This applies to exactly two `.glb` files. A folder with three or more,
 or with a loose `.gltf`/`.obj`, still resolves to a single model — the

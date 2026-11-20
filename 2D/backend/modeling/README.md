@@ -3,11 +3,12 @@
 Turns a folder of directional-light scroll scans into render-ready texture maps
 (normals, albedo, etc.) using photometric stereo. Part of the `2D/` pipeline;
 see the [repo setup guide](../../../SETUP.md) for first-time install. Normally
-run from `2D/run.py`, but can be installed and run standalone.
+run from the launcher (`2D/run.py` / `2D/run_linux.py`), but can be installed and
+run standalone.
 
 ## Prerequisites
 
-- **OS: Windows**, Python 3.9–3.12 (not 3.13/3.14 — the pinned `numpy<2.0`
+- Windows or Linux, Python 3.9–3.12 (not 3.13/3.14 — the pinned `numpy<2.0`
   and the other pins only ship prebuilt wheels through 3.12).
 - The Python packages in `requirements.txt`.
 
@@ -55,6 +56,7 @@ modeling_pipeline.py    Main photometric-stereo pipeline
 geometrically_calibrate_camera.py   Fit lens distortion from checkerboard photos
 geometrically_calibrate_image.py    Undistort images with that fit (CLI; Stage 1b
                                     imports its helpers)
+register_sides.py       Align side2's render maps to side1 (two-sided scans)
 rotate_images.py        Image-rotation helper
 requirements.txt        Python dependencies (see notes above)
 ```

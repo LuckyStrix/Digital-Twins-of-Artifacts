@@ -36,7 +36,10 @@ DCRAW_ARGS = ["-T", "-6", "-W", "-g", "1", "1", "-o", "0", "-q", "0", "-t", "0"]
 
 CAPTURE_INFO_NAME = "capture_info.json"
 
-ser = serial.Serial('COM3', baudrate=115200, timeout=2.5)
+# Serial port: COM3 unless PAPYRUS_SERIAL_PORT says otherwise (the launcher's
+# dependency check reports which COM ports are present).
+SERIAL_PORT = os.environ.get("PAPYRUS_SERIAL_PORT") or "COM3"
+ser = serial.Serial(SERIAL_PORT, baudrate=115200, timeout=2.5)
 time.sleep(2)
 
 def message_arduino(n, e, s, w, g, b, step, dir):

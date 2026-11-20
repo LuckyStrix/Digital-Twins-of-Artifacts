@@ -35,7 +35,7 @@ except ImportError:                      # Pillow is installed via the modeling 
     RESAMPLE = None
 
 # ── Hardware config — keep in sync with arduinoIntegration.py ────────────────
-SERIAL_PORT = "COM3"
+SERIAL_PORT = os.environ.get("PAPYRUS_SERIAL_PORT") or "COM3"
 BAUD_RATE   = 115200
 MSYS2_SHELL = r"C:\msys64\msys2_shell.cmd"
 

@@ -43,7 +43,7 @@ install them into one shared environment.
 ## Windows or Linux (for `2D/`)
 
 The `2D/` papyrus pipeline is a desktop application with two builds of the same
-launcher:
+launcher (both wrap the shared `2D/pipeline_app.py`):
 
 - **Windows** — run `2D/run.py` (gphoto2 through msys2, serial port `COM3`).
 - **Linux** — run `2D/run_linux.py` (native `gphoto2`/`dcraw` on PATH, serial

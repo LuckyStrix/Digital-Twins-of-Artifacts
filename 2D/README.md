@@ -5,33 +5,46 @@ needs fine surface detail but no real depth). A single Tkinter launcher ties the
 sub-stages together. See the [repo setup guide](../SETUP.md) for first-time
 install.
 
-There are two builds of the launcher that share the same modeling and rendering
-code and differ only in how they drive the capture rig:
+There are two builds of the launcher. Both are thin wrappers around one shared
+app, `pipeline_app.py`, and differ only in how they drive the capture rig:
 
 - **`run.py`** — Windows build (gphoto2 through msys2, serial port `COM3`).
 - **`run_linux.py`** — Linux build (native gphoto2/dcraw on PATH, serial port
   `/dev/ttyACM0`). See [Linux](#linux) below.
+
+Every step, the window layout and the dependency check live in
+`pipeline_app.py`, so a change there reaches both builds. Only put
+platform-specific code in `run.py` / `run_linux.py`.
 
 ## How it works
 
 <img src="../docs/diagrams/2d-pipeline.svg" alt="Diagram: the DSLR + Arduino lighting rig feeds the 5-stage photometric-stereo pipeline (0 Segment, 1 Calibrate, 2 Core maps, 3 Height, 4 Bake), which produces the render.glb model.">
 
 **How it runs day to day:**
-- `run.py` / `run_linux.py` is a single launcher whose buttons run top to
-  bottom: select a working image set → (optional) Open Focus Viewer → Capture
-  Calibration (Step 0a, flat copy paper) → Capture Colour Chart (0b) → Fit
-  Colour Matrix (0c) → Lens Calibration (0d, Linux build) → Capture Scroll → Run
-  Modeling Pipeline → Build 3D Model → Open Viewer. Steps 0a–0c are the same on
-  Windows and Linux. Calibration is stored beside the scan set (`<working>/cal/`,
-  with the fitted matrix in `cal/ccm.json` and the lens fit in
-  `cal/geo_calibration.json`), and the pipeline applies whatever is there
-  automatically. Shoot 0a and 0b at the same exposure.
-- **Lens calibration (0d):** photograph the 8 × 9-square, 45 mm checkerboard
-  10–30 times at different positions and tilts with the same lens, zoom and
-  focus as the scans, then pick that folder in Step 0d. The fit is cached in the
-  photo folder as `calibration.json` (delete it to re-fit). Modeling Stage 1b
-  then removes lens distortion from the calibrated images and the alpha mask
-  together; without the file it skips that correction and says so in the log.
+- The launcher's controls are on the left, grouped and run top to bottom, with
+  the log on the right. First pick a **working folder** (and tick "Scan both
+  sides" for two-sided objects). Then:
+  - **Setup:** Check / Install Dependencies, Open Focus Viewer.
+  - **Calibration**, once per camera setup: 0a Capture Calibration (flat copy
+    paper) → 0b Capture Colour Chart → 0c Fit Colour Matrix → 0d Lens
+    Calibration.
+  - **Artifact:** 1 Capture Scroll → 2 Run Modeling Pipeline → 3 Build 3D
+    Model → 4 Generate Artifact Description.
+
+  Calibration is stored beside the scan set (`<working>/cal/`, with the fitted
+  matrix in `cal/ccm.json` and the lens fit in `cal/geo_calibration.json`), and
+  the pipeline applies whatever is there automatically. Shoot 0a and 0b at the
+  same exposure. Before modeling, the launcher lists any calibration the scan
+  lacks and asks before running without it. It refuses to run with no
+  flat-field at all, since modeling would fail.
+- **Lens calibration (0d):** clicking 0d first shows a short guide. Photograph
+  the 8 × 9-square, 45 mm checkerboard 10–30 times, at different positions and
+  tilts covering the whole frame, with the same lens, zoom and focus as the
+  scans. Then pick that folder. A folder with fewer than 5 photos is refused
+  before anything runs. The fit is cached in the photo folder as
+  `calibration.json` (delete it to re-fit). Modeling Stage 1b then removes lens
+  distortion from the calibrated images and the alpha mask together. Without
+  the file it skips that correction and says so in the log.
 - **Colour fit environment (once per machine):** the fit needs contrib OpenCV,
   which clashes with the pipeline's OpenCV, so it has its own virtualenv,
   `.venv-colorfit` at the repo root. **Check / Install Dependencies** creates it
@@ -45,10 +58,25 @@ code and differ only in how they drive the capture rig:
   for you to flip the object) into `side1/`/`side2/` subfolders, and modeling
   + rendering then run once per side. Leaving it unticked keeps the older
   single-scan-set behavior.
+- **Two-sided alignment:** the sheet is flipped by hand between the two
+  captures, so side2 lands at a different position and angle. After modeling,
+  `backend/modeling/register_sides.py` aligns side2's maps to side1's outline,
+  as seen from behind. That way the website's "Flip to other side" turns the
+  sheet over in place. Step 2, Step 3 and Run Everything all do this
+  automatically. It is skipped when already done and redone when side2 is
+  re-modelled.
+  - The originals are kept in `side2/maps/unregistered/`.
+  - `side2/maps/registration_overlay.png` shows the match: red is side1, green
+    is side2 and yellow is where they overlap. A good match is almost all
+    yellow.
+  - If the outlines overlap less than 80% the maps are left unchanged and the
+    log says why. That usually means one side's alpha mask is wrong.
+  - A nearly symmetric outline, such as a clean rectangle, can be matched the
+    wrong way round, so check the overlay for those.
 - The individual numbered steps always force a re-run; **"Run Everything"**
-  and selecting a working image set instead skip any stage whose output
-  already exists in that folder — handy for resuming after Stage 2 or 3 fails
-  without redoing an earlier stage.
+  instead skips any stage whose output already exists in that folder — handy
+  for resuming after Stage 2 or 3 fails without redoing an earlier stage.
+  Selecting a working image set only reports what the folder already has.
 - Stage 0 (background removal) auto-detects the GPU: the run log prints
   `Device : CUDA` when `onnxruntime` reports a `CUDAExecutionProvider`, or
   `Device : CPU` otherwise — no config needed either way, only the installed
@@ -116,19 +144,35 @@ driver is replaced with **WinUSB** using [Zadig](https://zadig.akeo.ie/)
 
 ## Setup
 
-`run.py` self-installs most dependencies. Launch it and click
-**Check / Install Dependencies**, which runs `pip install -r
-backend/modeling/requirements.txt pyserial`, creates the separate `.venv-colorfit`
-environment for the colour fit (Step 0c) from
-`backend/modeling/requirements-colorfit.txt`, and runs `npm install` in the
-renderer for you:
+The launcher sets up most dependencies itself. Launch it and click **Check /
+Install Dependencies**. It checks, and installs or repairs where it can:
+
+- **Python version.** It must be 3.9–3.12.
+- **Python packages**, including their version pins: `numpy<2.0` and
+  `rembg==2.0.65`. Missing or off-pin packages are fixed with
+  `pip install -r backend/modeling/requirements.txt pyserial`.
+- **OpenCV checkerboard detector**, used by Step 0d.
+- **Background-removal model weights**, about 1 GB, downloaded once.
+- **Colour-fit environment.** It creates or repairs `.venv-colorfit` (Step 0c)
+  from `backend/modeling/requirements-colorfit.txt`.
+- **Renderer.** Node.js must be 20.19 or newer for Vite. It runs
+  `npm install` and installs Puppeteer's headless browser.
+- **Capture rig:** gphoto2 (inside msys2 on Windows), dcraw, and the Arduino's
+  serial port, including Linux `dialout` permission.
+- **Calibration** present for the current working folder. This is reported but
+  does not count toward readiness.
+
+It ends with a per-area summary and one final line, either **READY** or **NOT
+READY for: …**. A machine without the rig attached is expected to show
+"NOT READY for: Capture" and can still model and build.
 
 ```bash
-python run.py
+python run.py          # Windows
+python3 run_linux.py   # Linux
 ```
 
-The only things it can't install are Node.js, gphoto2 (msys2 on Windows), and
-dcraw — see Prerequisites above. To install the Python deps manually instead, see
+The only things it can't install are Python itself, Node.js, gphoto2 (msys2 on
+Windows), dcraw and the Zadig camera driver — see Prerequisites above. To install the Python deps manually instead, see
 [`backend/modeling/README.md`](backend/modeling/README.md).
 
 ### GPU acceleration (optional — CUDA / `nvcc`)
@@ -182,16 +226,18 @@ The pipeline auto-detects the GPU: when `onnxruntime` reports a
 ## Usage
 
 Run `python run.py` (Windows) or `python3 run_linux.py` (Linux) and click the
-buttons top to bottom (select working image set → capture → run modeling → build
-model → open viewer). The active working folder holds one scan set and receives
-all pipeline output, so each set is self-contained. Full flow is documented in
-the module docstring at the top of the launcher.
+buttons top to bottom (select working image set → calibrate → capture → run
+modeling → build model → describe). The active working folder holds one scan set
+and receives all pipeline output, so each set is self-contained. The full flow
+is documented in the module docstring at the top of `pipeline_app.py`. Finished
+`.glb` files are published through the repo's `website/` (see
+`website/artifacts/README.md`).
 
 ### Linux
 
-The Linux build is `run_linux.py`. It is the same launcher as `run.py` and runs
-the identical modeling and rendering stages; the only difference is the capture
-scripts it invokes (`backend/capture/arduinoIntegration_linux.py` and
+The Linux build is `run_linux.py`. It is the same launcher as `run.py` (both
+wrap `pipeline_app.py`) and runs the identical modeling and rendering stages; the
+only difference is the capture scripts it invokes (`backend/capture/arduinoIntegration_linux.py` and
 `focusViewer_linux.py`), which call gphoto2/dcraw natively and default to the
 `/dev/ttyACM0` serial port:
 
@@ -202,8 +248,9 @@ python3 run_linux.py
 ## Structure
 
 ```
-run.py                                Windows launcher + dependency installer
-run_linux.py                          Linux launcher (native gphoto2/dcraw)
+pipeline_app.py                       The launcher: UI, every step, dependency check (shared)
+run.py                                Windows entry point (msys2 gphoto2, COM3, npm.cmd)
+run_linux.py                          Linux entry point (native gphoto2/dcraw, /dev/ttyACM0)
 backend/capture/                      DSLR + Arduino capture rig — see backend/capture/README.md
   arduinoIntegration.py               Windows capture loop (gphoto2 via msys2)
   arduinoIntegration_linux.py         Linux capture loop (native gphoto2)

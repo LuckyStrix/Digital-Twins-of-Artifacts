@@ -218,6 +218,10 @@ TXT_SCRIPT = BACKEND / "create_artifact_info.py"
 TXT_NAME = "info.txt"
 
 
+# Script that calibrates the camera based off of reference images
+CAMERA_CALIBRATION_SCRIPT = MODELING_DIR / "geometrically_calibrate_camera.py"
+IMG_GEO_CAL_SCRIPT = MODELING_DIR / "geometrically_calibrate_image.py"
+
 class PipelineApp:
     def __init__(self, root: tk.Tk):
         self.root = root
@@ -236,6 +240,7 @@ class PipelineApp:
         # specific scan folder inside it with "Select working image set".
         CAPTURE_DATA_DIR.mkdir(parents=True, exist_ok=True)
         self.active_dir = CAPTURE_DATA_DIR
+        self.cam_cal_dir = None
 
         # Whether Capture scans both sides of the object (see SIDE_SUBDIRS).
         self.two_sides_var = tk.BooleanVar(value=False)
@@ -272,6 +277,26 @@ class PipelineApp:
         )
         subtitle.pack(pady=(2, 6))
 
+        # Camera Calibration folder mini section
+        active_frame = tk.Frame(self.root, relief=tk.GROOVE, borderwidth=1)
+        active_frame.pack(fill=tk.X, padx=10, pady=(0, 10))
+
+        path_row = tk.Frame(active_frame)
+        path_row.pack(fill=tk.X, padx=8, pady=(6, 2))
+        tk.Label(path_row, text="Geometric Camera Calibration set:", anchor="w",
+                 font=("TkDefaultFont", 9, "bold")).pack(side=tk.LEFT)
+        self.cam_cal_dir_var = tk.StringVar(value=str(self.cam_cal_dir))
+        tk.Label(path_row, textvariable=self.cam_cal_dir_var, anchor="w",
+                 fg="#1a5fb4").pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(6, 0))
+
+        select_btn = tk.Button(active_frame,
+                               text="Select camera calibration set (choose folder with geometric camera calibration photos)",
+                               command=self.on_select_cam_cal_dir, anchor="w")
+        select_btn.pack(fill=tk.X, padx=8, pady=(2, 4))
+        self.buttons.append(select_btn)
+
+
+
         # ── Working-folder mini section ──────────────────────────────────────
         active_frame = tk.Frame(self.root, relief=tk.GROOVE, borderwidth=1)
         active_frame.pack(fill=tk.X, padx=10, pady=(0, 10))
@@ -289,6 +314,7 @@ class PipelineApp:
                                command=self.on_select_folder, anchor="w")
         select_btn.pack(fill=tk.X, padx=8, pady=(2, 4))
         self.buttons.append(select_btn)
+        
 
         # When ticked, Capture (and Run Everything) scans both sides of the
         # object into side1/ and side2/ subfolders, and the modeling / rendering
@@ -303,6 +329,7 @@ class PipelineApp:
 
         button_frame = tk.Frame(self.root)
         button_frame.pack(fill=tk.X, padx=10)
+
 
         def add_button(text, command, **kwargs):
             b = tk.Button(button_frame, text=text, command=command, anchor="w", **kwargs)
@@ -436,6 +463,23 @@ class PipelineApp:
     def on_install_deps(self):
         self.run_in_background(self.step_install_deps, "dependency check & setup")
 
+    def on_select_cam_cal_dir(self):
+        # Just point the pipeline at a different folder; nothing runs until the
+        # user clicks a step or "Run Everything".
+        if self.busy:
+            self.log("Busy — please wait for the current step to finish.")
+            return
+        start = self.cam_cal_dir if self.cam_cal_dir is not None else ROOT
+        folder = filedialog.askdirectory(
+            initialdir=str(start), title="Select the image set to calibrate with")
+        if not folder:
+            self.log("Folder selection cancelled.")
+            return
+        self.cam_cal_dir = Path(folder)
+        self.cam_cal_file = self.cam_cal_dir / "calibration.json"
+        self.cam_cal_dir_var.set(str(self.cam_cal_dir))
+        self.log(f"Camera callibration set: {self.cam_cal_dir}")
+
     def on_select_folder(self):
         # Just point the pipeline at a different folder; nothing runs until the
         # user clicks a step or "Run Everything".
@@ -462,6 +506,7 @@ class PipelineApp:
             self.log(prefix + ", ".join(have) + ".")
         self.log("  Description: " + (TXT_NAME if self._has_txt() else "no " + TXT_NAME))
         self.log("Click a step or 'Run Everything' to process it.")
+    
 
     def on_open_focus_viewer(self):
         self.run_in_background(self.step_open_focus_viewer, "focus viewer")
@@ -700,6 +745,24 @@ class PipelineApp:
     def _txt_path(self, side: Path = None) -> Path:
         return (side or self.active_dir) / TXT_NAME
 
+
+
+    def _run_cam_cal_script(self) -> int:
+        # check if .json already exists:
+        # if it does, skip to application
+        # if it does not, generate it
+        if self._has_json():
+            self.log("Calibration file present. Skipping generation...")
+        else:
+            self.log("No calibration file found, generating file from images...")
+            if not CAMERA_CALIBRATION_SCRIPT.exists():
+                self.log(f"ERROR: camera calibration script not found at {CAMERA_CALIBRATION_SCRIPT}")
+                return
+            self.log("Calibrating the camera from provided calibration photos...")
+            rc = self.run_command([sys.executable, "-u", str(CAMERA_CALIBRATION_SCRIPT), self.cam_cal_dir, "-o", self.cam_cal_file])
+    
+
+
     # ── Calibration folders ──────────────────────────────────────────────────
     # Calibration is zoom-specific: the flat-field envelope is a per-pixel
     # spatial fit and the modeling pipeline hard-errors if its shape does not
@@ -718,6 +781,11 @@ class PipelineApp:
             if candidate.is_dir():
                 return candidate
         return CALIBRATION_IMAGES
+
+    def _has_json(self) -> bool:
+        # true when a cam cal photo set already has the generated calibration.json file
+        return (self.cam_cal_dir / "calibration.json").exists()
+
 
     def _has_cal(self, d: Path = None) -> bool:
         """True when a calibration set has the full flat-field paper series."""
@@ -828,6 +896,8 @@ class PipelineApp:
                       + ", ".join(missing))
         self.log(f"Imported {copied}/{len(CAPTURE_TIFFS)} images into {label}.")
         return copied
+    
+    
 
     def step_open_focus_viewer(self):
         if not FOCUS_SCRIPT.exists():
@@ -1188,10 +1258,14 @@ class PipelineApp:
         env["PAPYRUS_SCROLL_DIR"] = str(side)
         env["PAPYRUS_RENDER_OUT"] = str(maps_dir)
         env["PAPYRUS_CAL_DIR"]    = str(cal_dir)
+        env["JSON"] = str(self.cam_cal_file)
 
         self.log(f"Running modeling pipeline on {side} "
                   "(this can take several minutes)...")
         self.log(f"Render-ready maps -> {maps_dir}")
+        self._run_cam_cal_script()
+        
+
         if cal_dir == CALIBRATION_IMAGES:
             self.log(f"Calibration      -> {cal_dir} (shared global set — this scan "
                      "has no cal/ of its own, so the flat-field may not match "

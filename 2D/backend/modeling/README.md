@@ -52,6 +52,9 @@ Reads the active folder's scans and writes maps into `<active folder>/maps/`.
 
 ```
 modeling_pipeline.py    Main photometric-stereo pipeline
+geometrically_calibrate_camera.py   Fit lens distortion from checkerboard photos
+geometrically_calibrate_image.py    Undistort images with that fit (CLI; Stage 1b
+                                    imports its helpers)
 rotate_images.py        Image-rotation helper
 requirements.txt        Python dependencies (see notes above)
 ```

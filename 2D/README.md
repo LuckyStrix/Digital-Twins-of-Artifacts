@@ -20,11 +20,18 @@ code and differ only in how they drive the capture rig:
 - `run.py` / `run_linux.py` is a single launcher whose buttons run top to
   bottom: select a working image set → (optional) Open Focus Viewer → Capture
   Calibration (Step 0a, flat copy paper) → Capture Colour Chart (0b) → Fit
-  Colour Matrix (0c) → Capture Scroll → Run Modeling Pipeline → Build 3D Model →
-  Open Viewer. Steps 0a–0c are the same on Windows and Linux. Calibration is
-  stored beside the scan set (`<working>/cal/`, with the fitted matrix in
-  `cal/ccm.json`), and the pipeline applies it automatically. Shoot 0a and 0b at
-  the same exposure.
+  Colour Matrix (0c) → Lens Calibration (0d, Linux build) → Capture Scroll → Run
+  Modeling Pipeline → Build 3D Model → Open Viewer. Steps 0a–0c are the same on
+  Windows and Linux. Calibration is stored beside the scan set (`<working>/cal/`,
+  with the fitted matrix in `cal/ccm.json` and the lens fit in
+  `cal/geo_calibration.json`), and the pipeline applies whatever is there
+  automatically. Shoot 0a and 0b at the same exposure.
+- **Lens calibration (0d):** photograph the 8 × 9-square, 45 mm checkerboard
+  10–30 times at different positions and tilts with the same lens, zoom and
+  focus as the scans, then pick that folder in Step 0d. The fit is cached in the
+  photo folder as `calibration.json` (delete it to re-fit). Modeling Stage 1b
+  then removes lens distortion from the calibrated images and the alpha mask
+  together; without the file it skips that correction and says so in the log.
 - **Colour fit environment (once per machine):** the fit needs contrib OpenCV,
   which clashes with the pipeline's OpenCV, so it has its own virtualenv,
   `.venv-colorfit` at the repo root. **Check / Install Dependencies** creates it

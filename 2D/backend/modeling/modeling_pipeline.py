@@ -217,6 +217,11 @@ CAL_HEADROOM            = None    # None = derive per run; or pin to e.g. 4.0
 CAL_HEADROOM_PERCENTILE = 99.99   # clip at most this fraction of pixels
 CAL_HEADROOM_MIN        = 1.0
 CAL_HEADROOM_MAX        = 16.0    # refuse to spend more than 4 bits on headroom
+# The headroom pass measures every Nth row and column only (1/N² of the
+# pixels). The values are computed exactly, just fewer of them; the estimate
+# can only err slightly high (measured 0-5% on a real scan), and the result is
+# rounded up to the next 0.5 anyway - same headroom, ~14x less work. 1 = all.
+CAL_HEADROOM_STRIDE     = 4
 
 # Fraction of a calibration frame allowed to be at/near full scale before Stage 1a
 # complains. A blown-out copy-paper shot makes illumination_envelope fit a
@@ -702,14 +707,19 @@ def run_calibration() -> None:
                   "Specular map will show emboss artifacts if co/cross are offset.")
 
     def corrected_image(name: str, report: bool = False,
-                        register: bool = False) -> np.ndarray:
+                        register: bool = False, stride: int = 1) -> np.ndarray:
         """Linearise -> flat-field -> colour-correct -> register to allLight.
 
         Registration is off for the headroom-measuring pass: a shift of a few
         pixels cannot move a 99.99th percentile, and it saves 8 phase
-        correlations.
+        correlations. `stride` > 1 keeps every stride-th row and column of
+        the image AND its envelope (the headroom pass only); never combine it
+        with registration, which needs the full frame.
         """
         raw = load16(SCROLL_DIR / name)
+        envelope = envelopes[name]
+        if stride > 1:
+            raw, envelope = raw[::stride, ::stride], envelope[::stride, ::stride]
         if report:
             # Per-CHANNEL, unlike the calibration check: a warm subject under a
             # warm light saturates red long before the image looks bright, and a
@@ -722,7 +732,7 @@ def run_calibration() -> None:
                           "saturated in the capture itself. Colour cannot be "
                           "recovered there - re-shoot with less exposure.")
         linear  = cc.to_linear(raw.astype(np.float32) / 65535.0, scan_enc)
-        divided = apply_correction(linear, envelopes[name])
+        divided = apply_correction(linear, envelope)
         out     = corr_bgr.apply(divided)   # identity until fitted
 
         # Shift into allLight's frame. The envelope above was measured in the
@@ -748,11 +758,12 @@ def run_calibration() -> None:
         print(f"\nHeadroom pinned to {headroom:g} by configuration.")
     else:
         print(f"\nMeasuring headroom (p{CAL_HEADROOM_PERCENTILE:g} across all "
-              "8 images)...")
+              f"8 images, every {CAL_HEADROOM_STRIDE}th pixel)...")
         peaks = {}
         for name in LIGHT_IMAGES:
-            peaks[name] = float(np.percentile(corrected_image(name),
-                                              CAL_HEADROOM_PERCENTILE))
+            peaks[name] = float(np.percentile(
+                corrected_image(name, stride=CAL_HEADROOM_STRIDE),
+                CAL_HEADROOM_PERCENTILE))
         hottest  = max(peaks, key=peaks.get)
         headroom = float(np.clip(np.ceil(max(peaks.values()) * 2) / 2,
                                  CAL_HEADROOM_MIN, CAL_HEADROOM_MAX))
@@ -785,6 +796,7 @@ def run_calibration() -> None:
     (CAL_OUT / "stage1_info.json").write_text(json.dumps({
         "headroom": headroom,
         "headroom_source": "pinned" if CAL_HEADROOM is not None else "derived",
+        "headroom_stride": None if CAL_HEADROOM is not None else CAL_HEADROOM_STRIDE,
         "domain": "linear",
         "scan_encoding": scan_enc.kind,
         "cal_encoding": cal_enc.kind,

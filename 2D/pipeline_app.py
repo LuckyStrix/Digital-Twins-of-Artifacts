@@ -345,6 +345,21 @@ LENS_GUIDE = (
 # Aligns side2's render maps to side1 for two-sided scans.
 REGISTER_SCRIPT = MODELING_DIR / "register_sides.py"
 
+
+def _load_registration_state():
+    """backend/modeling/registration_state.py - the alignment state rules,
+    shared with register_sides.py. Standard library only, so loading it here
+    costs nothing (no OpenCV in the launcher process)."""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(
+        "registration_state", MODELING_DIR / "registration_state.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+registration_state = _load_registration_state()
+
 class PipelineApp:
     """The launcher. Subclassed once per platform (run.py / run_linux.py),
     which override the attributes and hook methods in this first block."""
@@ -1618,17 +1633,13 @@ class PipelineApp:
             s.parent == self.active_dir for s in sides)
 
     def _registration_current(self, sides: list) -> bool:
-        """True when side2's maps are aligned to side1's CURRENT outline and
-        untouched since. Asks register_sides.py --check, so the launcher and
-        the script share one definition (fingerprints in registration.json)."""
+        """True when side2's maps are aligned to side1's CURRENT outline (see
+        backend/modeling/registration_state.py for the rules)."""
         side1, side2 = sides
         try:
-            return subprocess.run(
-                [sys.executable, str(REGISTER_SCRIPT), "--check",
-                 str(self._maps_dir(side1)), str(self._maps_dir(side2))],
-                cwd=str(MODELING_DIR), stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL, timeout=120).returncode == 0
-        except Exception:
+            return registration_state.is_current(self._maps_dir(side1),
+                                                 self._maps_dir(side2))
+        except OSError:
             return False
 
     def _register_sides(self, sides: list) -> bool:
@@ -1648,17 +1659,19 @@ class PipelineApp:
         rc = self.run_command([sys.executable, "-u", str(REGISTER_SCRIPT),
                                str(self._maps_dir(side1)), str(self._maps_dir(side2))],
                               cwd=MODELING_DIR)
+        # Either way side2's maps may have changed (aligned, or put back to
+        # the originals after a failure), so a side2 model built earlier is
+        # out of date.
+        glb = self._glb_path(side2)
+        if glb.exists():
+            glb.unlink()
+            self.log(f"Removed {glb.name} (built from side2's previous maps) — "
+                     "rebuild it with Step 3.")
         if rc != 0:
             self.log(f"Side alignment FAILED (exit code {rc}) — see above. "
                      "side2 keeps its unaligned maps, so the two sides will not "
                      "line up when flipped on the website.")
             return False
-        # A side2 model built from the unaligned maps is now out of date.
-        glb = self._glb_path(side2)
-        if glb.exists():
-            glb.unlink()
-            self.log(f"Removed {glb.name} (built before alignment) — rebuild it "
-                     "with Step 3.")
         return True
 
     def step_run_modeling(self):

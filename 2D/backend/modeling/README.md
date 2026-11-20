@@ -57,6 +57,7 @@ geometrically_calibrate_camera.py   Fit lens distortion from checkerboard photos
 geometrically_calibrate_image.py    Undistort images with that fit (CLI; Stage 1b
                                     imports its helpers)
 register_sides.py       Align side2's render maps to side1 (two-sided scans)
+registration_state.py   Alignment state rules (shared by the pipeline, register_sides.py, launcher)
 rotate_images.py        Image-rotation helper
 requirements.txt        Python dependencies (see notes above)
 ```

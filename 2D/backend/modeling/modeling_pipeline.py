@@ -136,6 +136,7 @@ import scipy.fft as sfft
 import shutil
 import color_correction as cc
 import geometrically_calibrate_image as gci
+import registration_state
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -1415,6 +1416,11 @@ def run_prep_for_rendering() -> None:
     print(f"  Output         : {RENDER_OUT}\n")
 
     RENDER_OUT.mkdir(parents=True, exist_ok=True)
+    # These maps are fresh, so any two-sided alignment state in this folder
+    # (side2's unregistered/ originals, registration.json, a crash marker)
+    # describes the OLD maps - drop it. Only modeling can know this, which is
+    # why register_sides.py never guesses it from timestamps.
+    registration_state.clear(RENDER_OUT)
 
     # The 8-light combined height map is the most constrained (8 images,
     # both polarisation states) and is therefore used as the primary height

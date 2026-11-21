@@ -428,6 +428,17 @@ def parse_args() -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--ring-crop",
+        type=int,
+        default=int(os.environ.get("FIPMESH_RECON_RING_CROP", "1")),
+        help=(
+            "With --scale-json on a scaled side, drop points on the reference ring "
+            "and the turntable outside it (0/1, default 1). Turn off for an object "
+            "that lies on the ring and overhangs it, which the crop would cut. "
+            "Env: FIPMESH_RECON_RING_CROP."
+        ),
+    )
+    parser.add_argument(
         "--scale-json",
         default=os.environ.get("FIPMESH_RECON_SCALE_JSON", ""),
         help=(
@@ -2139,7 +2150,7 @@ def main() -> int:
             return 3
         save_snapshot(output_path, "00_fill_color_pruned", pcd)
 
-    ring = load_ring(args.scale_json) if args.units == "mm" else None
+    ring = load_ring(args.scale_json) if args.units == "mm" and args.ring_crop else None
     if ring is not None:
         _step("remove reference ring points")
         pcd, removed_ring = crop_ring(pcd, ring)

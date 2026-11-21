@@ -262,6 +262,8 @@ def recon_cmd(s: Mapping, input_ply: str, out_obj: str, clean_cloud: str,
         cmd += ["--units", units]
     if scale_json:
         cmd += ["--scale-json", scale_json]
+    if scale_json and not s["r_ring_crop"]:
+        cmd += ["--ring-crop", "0"]
     if single_side and s["r_flat_back"]:
         cmd += ["--flat-back", "1"]
     return cmd

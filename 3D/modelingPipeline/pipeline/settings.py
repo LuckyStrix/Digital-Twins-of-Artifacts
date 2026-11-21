@@ -245,6 +245,12 @@ REGISTRY: list[Setting] = [
              "the rim and caps it with a grey flat back, so the scanned side stays "
              "exactly as reconstructed and the mesh is still closed. Two-sided scans "
              "are not affected. Needs mapbox_earcut.")),
+    _S("r_ring_crop", BOOL, True, _RC, "Hole filling",
+       "Remove the reference ring and turntable outside it",
+       help=("On scaled scans, Stage 4 drops points on the reference ring's band and "
+             "on the turntable outside it, in case background removal kept them. "
+             "Turn this off for an object that lies on the ring and overhangs it "
+             "(e.g. a long palm-leaf manuscript): the crop would cut off its ends.")),
 
     _S("r_comp_min_ratio", FLOAT, 0.01, _RC, "Mesh cleanup", "Component min ratio",
        min=0, max=1.0, step=0.005),
@@ -398,7 +404,7 @@ PERSISTED_KEYS = [
     "r_normal_max_nn", "r_normal_orient_k",
     "r_poisson_engine", "r_poisson_depth", "r_poisson_linear", "r_density_trim",
     "r_poisson_crop_scale", "r_hole_reduction",
-    "r_watertight", "r_flat_back",
+    "r_watertight", "r_flat_back", "r_ring_crop",
     "r_comp_min_ratio", "r_comp_min_tris", "r_comp_max_count",
     "r_smooth_iters", "r_decimate_tris", "r_simplified_target_verts",
     "r_normalize_pose",

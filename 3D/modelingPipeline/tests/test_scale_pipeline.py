@@ -131,6 +131,18 @@ def test_stage4_units_mm_when_both_scaled(s, merged):
     summary = json.loads((merged / "scale.json").read_text())
     assert summary["units"] == "mm" and summary["gltf_units"] == "m"
     assert summary["sides"]["side2"]["scale_mm_per_unit"] == 0.25
+    assert "--ring-crop" not in cmd
+
+
+def test_stage4_ring_crop_can_be_turned_off(s, merged):
+    s["scale_ring_var"] = True
+    s["r_ring_crop"] = False
+    write_scale(merged / "colmap_side1", "scaled", 0.5)
+    write_scale(merged / "colmap_side2", "scaled", 0.25)
+    r = RecordingRunner(s)
+    assert r.execute_stage(3)
+    cmd = r.calls[0][0]
+    assert cmd[cmd.index("--ring-crop") + 1] == "0"
 
 
 def test_stage4_unscaled_when_a_side_reverted(s, merged):
